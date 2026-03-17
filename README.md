@@ -16,14 +16,14 @@
     <a href="#api-reference">API</a>
   </p>
   <p align="center">
-    <a href="https://github.com/Awuqing/GoogleDriverBackupEveryDay/stargazers"><img src="https://img.shields.io/github/stars/Awuqing/GoogleDriverBackupEveryDay?style=flat-square&color=f5c542" alt="Stars"></a>
-    <a href="https://github.com/Awuqing/GoogleDriverBackupEveryDay/releases"><img src="https://img.shields.io/github/v/release/Awuqing/GoogleDriverBackupEveryDay?style=flat-square&color=brightgreen" alt="Release"></a>
+    <a href="https://github.com/Awuqing/BackupX/stargazers"><img src="https://img.shields.io/github/stars/Awuqing/BackupX?style=flat-square&color=f5c542" alt="Stars"></a>
+    <a href="https://github.com/Awuqing/BackupX/releases"><img src="https://img.shields.io/github/v/release/Awuqing/BackupX?style=flat-square&color=brightgreen" alt="Release"></a>
     <img src="https://img.shields.io/badge/Go-1.21+-00ADD8?style=flat-square&logo=go" alt="Go">
     <img src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react" alt="React">
     <img src="https://img.shields.io/badge/TypeScript-5-3178C6?style=flat-square&logo=typescript" alt="TypeScript">
     <img src="https://img.shields.io/badge/SQLite-embedded-003B57?style=flat-square&logo=sqlite" alt="SQLite">
-    <a href="LICENSE"><img src="https://img.shields.io/github/license/Awuqing/GoogleDriverBackupEveryDay?style=flat-square" alt="License"></a>
-    <a href="https://github.com/Awuqing/GoogleDriverBackupEveryDay/issues"><img src="https://img.shields.io/github/issues/Awuqing/GoogleDriverBackupEveryDay?style=flat-square" alt="Issues"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/github/license/Awuqing/BackupX?style=flat-square" alt="License"></a>
+    <a href="https://github.com/Awuqing/BackupX/issues"><img src="https://img.shields.io/github/issues/Awuqing/BackupX?style=flat-square" alt="Issues"></a>
   </p>
 </p>
 
@@ -92,8 +92,8 @@ BackupX 是一个面向 **Linux / macOS 服务器**的自托管备份管理平�
 
 ```bash
 # 克隆项目
-git clone https://github.com/Awuqing/GoogleDriverBackupEveryDay.git
-cd GoogleDriverBackupEveryDay
+git clone https://github.com/Awuqing/BackupX.git
+cd BackupX
 
 # 一键构建前后端
 make build
@@ -217,7 +217,7 @@ Master 提供 `GET /api/nodes/:id/fs/list?path=/` 接口，可远程浏览节点
 ## Project Structure
 
 ```
-GoogleDriverBackupEveryDay/
+BackupX/
 ├── server/                        # Go 后端
 │   ├── cmd/backupx/               #   程序入口
 │   ├── internal/
