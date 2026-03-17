@@ -1,0 +1,24 @@
+# config.yaml
+server:
+  host: "0.0.0.0"
+  port: 8340
+  mode: "release"              # debug | release
+
+database:
+  path: "./data/backupx.db"    # SQLite 数据库路径
+
+security:
+  jwt_secret: ""               # 留空则自动生成
+  jwt_expire: "24h"
+  encryption_key: ""           # AES 加密密钥，留空自动生成
+
+backup:
+  temp_dir: "./data/tmp/backupx"     # 临时文件目录
+  max_concurrent: 2            # 最大并发备份数
+
+log:
+  level: "info"                # debug | info | warn | error
+  file: "./data/backupx.log"
+  max_size: 100                # MB
+  max_backups: 3
+  max_age: 30                  # 天
