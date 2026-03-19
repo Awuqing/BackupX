@@ -35,6 +35,32 @@ Supports **multi-node cluster management** for unified control of backup tasks a
 
 > **For**: Individual developers / small teams / DevOps with Linux servers
 
+## Screenshots
+
+### Login
+![Login](screenshots/login.png)
+
+### Dashboard
+![Dashboard](screenshots/dashboard.png)
+
+### Backup Tasks
+![Backup Tasks](screenshots/backup-tasks.png)
+
+### Backup Records
+![Backup Records](screenshots/backup-records.png)
+
+### Storage Targets
+![Storage Targets](screenshots/storage-targets.png)
+
+### Node Management
+![Node Management](screenshots/nodes.png)
+
+### Notification Settings
+![Notification Settings](screenshots/notifications.png)
+
+### System Settings
+![System Settings](screenshots/settings.png)
+
 ## Features
 
 ### 📦 Multiple Backup Types
