@@ -23,6 +23,7 @@ import (
 	"backupx/server/internal/storage/googledrive"
 	"backupx/server/internal/storage/localdisk"
 	storageAliyun "backupx/server/internal/storage/aliyun"
+	storageFTP "backupx/server/internal/storage/ftp"
 	storageTencent "backupx/server/internal/storage/tencent"
 	storageQiniu "backupx/server/internal/storage/qiniu"
 	storageS3 "backupx/server/internal/storage/s3"
@@ -76,12 +77,13 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 		storageAliyun.NewFactory(),
 		storageTencent.NewFactory(),
 		storageQiniu.NewFactory(),
+		storageFTP.NewFactory(),
 	)
 	storageTargetService := service.NewStorageTargetService(storageTargetRepo, oauthSessionRepo, storageRegistry, configCipher)
 	storageTargetService.SetBackupTaskRepository(backupTaskRepo)
 	storageTargetService.SetBackupRecordRepository(backupRecordRepo)
 	backupTaskService := service.NewBackupTaskService(backupTaskRepo, storageTargetRepo, configCipher)
-	backupRunnerRegistry := backup.NewRegistry(backup.NewFileRunner(), backup.NewSQLiteRunner(), backup.NewMySQLRunner(nil), backup.NewPostgreSQLRunner(nil))
+	backupRunnerRegistry := backup.NewRegistry(backup.NewFileRunner(), backup.NewSQLiteRunner(), backup.NewMySQLRunner(nil), backup.NewPostgreSQLRunner(nil), backup.NewSAPHANARunner(nil))
 	logHub := backup.NewLogHub()
 	retentionService := backupretention.NewService(backupRecordRepo)
 	notifyRegistry := notify.NewRegistry(notify.NewEmailNotifier(), notify.NewWebhookNotifier(), notify.NewTelegramNotifier())

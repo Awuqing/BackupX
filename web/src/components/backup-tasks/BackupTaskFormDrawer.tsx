@@ -106,11 +106,11 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       type: value,
       sourcePath: value === 'file' ? current.sourcePath : '',
       excludePatterns: value === 'file' ? current.excludePatterns : [],
-      dbHost: value === 'mysql' || value === 'postgresql' ? current.dbHost : '',
-      dbPort: value === 'mysql' || value === 'postgresql' ? current.dbPort || getDefaultPort(value) : 0,
-      dbUser: value === 'mysql' || value === 'postgresql' ? current.dbUser : '',
-      dbPassword: value === 'mysql' || value === 'postgresql' ? current.dbPassword : '',
-      dbName: value === 'mysql' || value === 'postgresql' ? current.dbName : '',
+      dbHost: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbHost : '',
+      dbPort: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbPort || getDefaultPort(value) : 0,
+      dbUser: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbUser : '',
+      dbPassword: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbPassword : '',
+      dbName: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbName : '',
       dbPath: value === 'sqlite' ? current.dbPath : '',
     }))
     if (value !== 'file') {

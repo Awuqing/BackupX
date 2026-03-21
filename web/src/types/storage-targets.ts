@@ -1,4 +1,4 @@
-export type StorageTargetType = 'local_disk' | 'google_drive' | 's3' | 'webdav' | 'aliyun_oss' | 'tencent_cos' | 'qiniu_kodo'
+export type StorageTargetType = 'local_disk' | 'google_drive' | 's3' | 'webdav' | 'aliyun_oss' | 'tencent_cos' | 'qiniu_kodo' | 'ftp'
 export type StorageTestStatus = 'unknown' | 'success' | 'failed'
 export type StorageFieldType = 'input' | 'password' | 'switch'
 

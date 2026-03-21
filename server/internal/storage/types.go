@@ -19,6 +19,7 @@ const (
 	ProviderTypeAliyunOSS   ProviderType = "aliyun_oss"
 	ProviderTypeTencentCOS  ProviderType = "tencent_cos"
 	ProviderTypeQiniuKodo   ProviderType = "qiniu_kodo"
+	ProviderTypeFTP         ProviderType = "ftp"
 )
 
 const (
@@ -29,6 +30,7 @@ const (
 	TypeAliyunOSS   = string(ProviderTypeAliyunOSS)
 	TypeTencentCOS  = string(ProviderTypeTencentCOS)
 	TypeQiniuKodo   = string(ProviderTypeQiniuKodo)
+	TypeFTP         = string(ProviderTypeFTP)
 )
 
 type ObjectInfo struct {
@@ -118,3 +120,13 @@ func (cfg GoogleDriveConfig) Normalize() GoogleDriveConfig {
 	}
 	return cfg
 }
+
+type FTPConfig struct {
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+	BasePath string `json:"basePath"`
+	UseTLS   bool   `json:"useTLS"`
+}
+

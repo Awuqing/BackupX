@@ -216,6 +216,50 @@ const FIELD_CONFIG_MAP: Record<StorageTargetType, StorageTargetFieldConfig[]> = 
       placeholder: '输入新的 SecretKey',
     },
   ],
+  ftp: [
+    {
+      key: 'host',
+      label: '主机地址',
+      type: 'input',
+      required: true,
+      placeholder: 'ftp.example.com',
+    },
+    {
+      key: 'port',
+      label: '端口',
+      type: 'input',
+      placeholder: '21',
+      description: '默认 FTP 端口为 21。',
+    },
+    {
+      key: 'username',
+      label: '用户名',
+      type: 'input',
+      required: true,
+      placeholder: 'backup_user',
+    },
+    {
+      key: 'password',
+      label: '密码',
+      type: 'password',
+      required: true,
+      sensitive: true,
+      placeholder: '输入新的 FTP 密码',
+    },
+    {
+      key: 'basePath',
+      label: '基础目录',
+      type: 'input',
+      placeholder: '/backups',
+      description: 'FTP 服务器上的目标目录，留空使用根目录。',
+    },
+    {
+      key: 'useTLS',
+      label: '使用 TLS (FTPS)',
+      type: 'switch',
+      description: '启用 Explicit TLS 加密连接。',
+    },
+  ],
 }
 
 export function getStorageTargetFieldConfigs(type: StorageTargetType) {
@@ -238,6 +282,8 @@ export function getStorageTargetTypeLabel(type: StorageTargetType) {
       return '腾讯云 COS'
     case 'qiniu_kodo':
       return '七牛云 Kodo'
+    case 'ftp':
+      return 'FTP'
     default:
       return type
   }
@@ -251,4 +297,5 @@ export const storageTargetTypeOptions = [
   { label: 'S3 Compatible', value: 's3' },
   { label: 'Google Drive', value: 'google_drive' },
   { label: 'WebDAV', value: 'webdav' },
+  { label: 'FTP', value: 'ftp' },
 ] as const
