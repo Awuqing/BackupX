@@ -1,16 +1,20 @@
 package backup
 
 import (
+	"archive/tar"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // SAPHANARunner implements the BackupRunner interface for SAP HANA databases.
-// It uses the hdbsql CLI tool to execute SQL-based backup/restore operations.
+// It uses hdbsql to issue BACKUP DATA USING FILE commands for proper data-level
+// backup (SAP best practice), rather than logical SQL export.
 type SAPHANARunner struct {
 	executor CommandExecutor
 }
@@ -28,24 +32,30 @@ func (r *SAPHANARunner) Type() string {
 	return "saphana"
 }
 
-// Run executes a SAP HANA backup using hdbsql.
-// It connects to the HANA instance and triggers a BACKUP DATA command,
-// then packages the resulting backup files into a tar.gz archive.
+// Run executes a SAP HANA data-level backup using hdbsql + BACKUP DATA USING FILE.
+// The backup files are written to a temporary directory, then packaged into a tar
+// archive as the artifact for BackupX to compress/encrypt/upload.
 func (r *SAPHANARunner) Run(ctx context.Context, task TaskSpec, writer LogWriter) (*RunResult, error) {
 	if _, err := r.executor.LookPath("hdbsql"); err != nil {
 		return nil, fmt.Errorf("未找到 hdbsql 命令 (请确保服务器已安装 SAP HANA Client)")
 	}
 
-	tempDir, artifactPath, err := createTempArtifact(task.TempDir, task.Name, "sql")
+	startedAt := task.StartedAt
+	if startedAt.IsZero() {
+		startedAt = time.Now().UTC()
+	}
+
+	// Create a temp directory for the tar artifact output.
+	tempDir, artifactPath, err := createTempArtifact(task.TempDir, task.Name, "tar")
 	if err != nil {
 		return nil, err
 	}
 
-	file, err := os.Create(artifactPath)
-	if err != nil {
-		return nil, fmt.Errorf("create SAP HANA dump file: %w", err)
+	// Create a sub-directory where HANA will write its backup data files.
+	backupDir := filepath.Join(tempDir, "hana_data")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create HANA backup directory: %w", err)
 	}
-	defer file.Close()
 
 	dbNames := normalizeDatabaseNames(task.Database.Names)
 	tenantDB := "SYSTEMDB"
@@ -61,78 +71,56 @@ func (r *SAPHANARunner) Run(ctx context.Context, task TaskSpec, writer LogWriter
 	writer.WriteLine(fmt.Sprintf("连接到 SAP HANA: %s:%d", task.Database.Host, port))
 	writer.WriteLine(fmt.Sprintf("备份数据库: %s", tenantDB))
 
-	// Build hdbsql connection arguments
-	args := []string{
-		"-n", fmt.Sprintf("%s:%d", task.Database.Host, port),
-		"-u", task.Database.User,
-		"-p", task.Database.Password,
-		"-d", tenantDB,
-		"-j",  // disable auto-commit
-		"-A",  // disable column alignment
-		"-xC", // suppress column headers and separator
+	// Build backup prefix — HANA will create files like <prefix>_databackup_<N>_1.
+	timestamp := startedAt.UTC().Format("20060102_150405")
+	backupPrefix := filepath.Join(backupDir, fmt.Sprintf("hana_%s_%s", strings.ToLower(tenantDB), timestamp))
+
+	// Build `BACKUP DATA USING FILE` SQL.
+	backupSQL := fmt.Sprintf(`BACKUP DATA USING FILE ('%s')`, backupPrefix)
+	if strings.ToUpper(tenantDB) != "SYSTEMDB" {
+		backupSQL = fmt.Sprintf(`BACKUP DATA FOR %s USING FILE ('%s')`, tenantDB, backupPrefix)
 	}
 
-	// Export schema using SELECT statements for each table.
-	// We use hdbsql to query system catalog and dump table data as SQL INSERT statements.
-	exportSQL := fmt.Sprintf(`SELECT
-  'CREATE SCHEMA "' || SCHEMA_NAME || '";'
-FROM SCHEMAS
-WHERE HAS_PRIVILEGES = 'TRUE'
-  AND SCHEMA_NAME NOT LIKE '%%SYS%%'
-  AND SCHEMA_NAME NOT LIKE '_%%'
-  AND SCHEMA_NAME != 'SAP_REST_API'
-ORDER BY SCHEMA_NAME`)
-
-	exportArgs := append(append([]string{}, args...), exportSQL)
+	// Construct hdbsql connection arguments.
+	args := buildHdbsqlArgs(task.Database.Host, port, task.Database.User, task.Database.Password, tenantDB, backupSQL)
 
 	stderrWriter := newLogLineWriter(writer, "hdbsql")
-	writer.WriteLine("开始执行 SAP HANA 数据导出")
+	writer.WriteLine("开始执行 SAP HANA BACKUP DATA USING FILE")
 
-	if err := r.executor.Run(ctx, "hdbsql", exportArgs, CommandOptions{
-		Stdout: file,
+	if err := r.executor.Run(ctx, "hdbsql", args, CommandOptions{
 		Stderr: stderrWriter,
 	}); err != nil {
-		return nil, fmt.Errorf("run hdbsql export: %w: %s", err, stderrWriter.collected())
+		return nil, fmt.Errorf("run hdbsql BACKUP DATA: %w: %s", err, stderrWriter.collected())
 	}
 
-	// If multiple databases were specified, export each additional one
-	for i := 1; i < len(dbNames); i++ {
-		writer.WriteLine(fmt.Sprintf("导出额外数据库: %s", dbNames[i]))
-		if _, writeErr := file.WriteString(fmt.Sprintf("\n-- Database: %s\n", dbNames[i])); writeErr != nil {
-			return nil, fmt.Errorf("write database separator: %w", writeErr)
-		}
+	writer.WriteLine("SAP HANA BACKUP DATA 命令执行完成，开始打包备份文件")
 
-		additionalArgs := []string{
-			"-n", fmt.Sprintf("%s:%d", task.Database.Host, port),
-			"-u", task.Database.User,
-			"-p", task.Database.Password,
-			"-d", dbNames[i],
-			"-j", "-A", "-xC",
-			exportSQL,
-		}
-		if err := r.executor.Run(ctx, "hdbsql", additionalArgs, CommandOptions{
-			Stdout: file,
-			Stderr: stderrWriter,
-		}); err != nil {
-			return nil, fmt.Errorf("run hdbsql export for %s: %w", dbNames[i], err)
-		}
+	// Package all generated backup files into a tar archive.
+	if err := packageBackupFiles(backupDir, artifactPath, writer); err != nil {
+		return nil, fmt.Errorf("package HANA backup files: %w", err)
 	}
 
-	info, _ := file.Stat()
+	info, _ := os.Stat(artifactPath)
 	sizeStr := "未知"
+	var fileSize int64
 	if info != nil {
-		sizeStr = formatFileSize(info.Size())
+		fileSize = info.Size()
+		sizeStr = formatFileSize(fileSize)
 	}
-	writer.WriteLine(fmt.Sprintf("SAP HANA 导出完成（文件大小: %s）", sizeStr))
+	writer.WriteLine(fmt.Sprintf("SAP HANA 备份完成（归档大小: %s）", sizeStr))
 
 	return &RunResult{
 		ArtifactPath: artifactPath,
 		FileName:     filepath.Base(artifactPath),
 		TempDir:      tempDir,
+		Size:         fileSize,
+		StorageKey:   BuildStorageKey("saphana", startedAt, filepath.Base(artifactPath)),
 	}, nil
 }
 
-// Restore executes a SAP HANA restore using hdbsql to replay the SQL dump file.
+// Restore executes a SAP HANA restore using RECOVER DATA USING FILE.
+// It extracts the tar archive to get the original backup files, then issues
+// the recovery SQL command via hdbsql.
 func (r *SAPHANARunner) Restore(ctx context.Context, task TaskSpec, artifactPath string, writer LogWriter) error {
 	if _, err := r.executor.LookPath("hdbsql"); err != nil {
 		return fmt.Errorf("未找到 hdbsql 命令 (请确保服务器已安装 SAP HANA Client)")
@@ -151,27 +139,39 @@ func (r *SAPHANARunner) Restore(ctx context.Context, task TaskSpec, artifactPath
 
 	writer.WriteLine(fmt.Sprintf("开始恢复 SAP HANA 数据库: %s", tenantDB))
 
-	input, err := os.Open(filepath.Clean(artifactPath))
+	// Extract the tar archive to a temporary directory.
+	restoreDir, err := os.MkdirTemp("", "backupx-hana-restore-*")
 	if err != nil {
-		return fmt.Errorf("open SAP HANA restore file: %w", err)
+		return fmt.Errorf("create restore temp dir: %w", err)
 	}
-	defer input.Close()
+	defer os.RemoveAll(restoreDir)
 
-	args := []string{
-		"-n", fmt.Sprintf("%s:%d", task.Database.Host, port),
-		"-u", task.Database.User,
-		"-p", task.Database.Password,
-		"-d", tenantDB,
-		"-j",
-		"-I", artifactPath,
+	if err := extractTarArchive(artifactPath, restoreDir); err != nil {
+		return fmt.Errorf("extract HANA backup tar: %w", err)
 	}
+
+	// Find the backup prefix by locating backup data files.
+	prefix, err := findBackupPrefix(restoreDir)
+	if err != nil {
+		return fmt.Errorf("find backup prefix: %w", err)
+	}
+
+	writer.WriteLine(fmt.Sprintf("找到备份前缀: %s", filepath.Base(prefix)))
+
+	// Build RECOVER DATA SQL.
+	recoverSQL := fmt.Sprintf(`RECOVER DATA USING FILE ('%s') CLEAR LOG`, prefix)
+	if strings.ToUpper(tenantDB) != "SYSTEMDB" {
+		recoverSQL = fmt.Sprintf(`RECOVER DATA FOR %s USING FILE ('%s') CLEAR LOG`, tenantDB, prefix)
+	}
+
+	args := buildHdbsqlArgs(task.Database.Host, port, task.Database.User, task.Database.Password, tenantDB, recoverSQL)
 
 	stderrWriter := newLogLineWriter(writer, "hdbsql")
 	if err := r.executor.Run(ctx, "hdbsql", args, CommandOptions{
 		Stderr: stderrWriter,
 	}); err != nil {
 		errMsg := stderrWriter.collected()
-		return fmt.Errorf("run hdbsql restore: %w: %s", err, strings.TrimSpace(errMsg))
+		return fmt.Errorf("run hdbsql RECOVER DATA: %w: %s", err, strings.TrimSpace(errMsg))
 	}
 
 	writer.WriteLine("SAP HANA 恢复完成")
@@ -186,4 +186,154 @@ func hanaInstanceNumber(port int) string {
 		return strconv.Itoa(instance)
 	}
 	return "00"
+}
+
+// buildHdbsqlArgs constructs the common hdbsql CLI arguments.
+func buildHdbsqlArgs(host string, port int, user, password, database, sql string) []string {
+	return []string{
+		"-n", fmt.Sprintf("%s:%d", host, port),
+		"-u", user,
+		"-p", password,
+		"-d", database,
+		"-j",  // disable auto-commit
+		"-A",  // disable column alignment
+		"-xC", // suppress column headers and separator
+		sql,
+	}
+}
+
+// packageBackupFiles creates a tar archive from all files in the given directory.
+func packageBackupFiles(sourceDir, targetPath string, writer LogWriter) error {
+	file, err := os.Create(targetPath)
+	if err != nil {
+		return fmt.Errorf("create tar file: %w", err)
+	}
+	defer file.Close()
+
+	tw := tar.NewWriter(file)
+	defer tw.Close()
+
+	fileCount := 0
+	walkErr := filepath.Walk(sourceDir, func(currentPath string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if currentPath == sourceDir {
+			return nil
+		}
+
+		relPath, err := filepath.Rel(sourceDir, currentPath)
+		if err != nil {
+			return err
+		}
+
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = filepath.ToSlash(relPath)
+
+		if err := tw.WriteHeader(header); err != nil {
+			return err
+		}
+
+		if info.Mode().IsRegular() {
+			f, err := os.Open(currentPath)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			if _, err := io.CopyN(tw, f, info.Size()); err != nil && err != io.EOF {
+				return err
+			}
+			fileCount++
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return walkErr
+	}
+
+	if fileCount == 0 {
+		return fmt.Errorf("HANA 备份目录中未找到任何备份文件")
+	}
+
+	writer.WriteLine(fmt.Sprintf("已打包 %d 个备份文件", fileCount))
+	return nil
+}
+
+// extractTarArchive extracts a tar archive to the given directory.
+func extractTarArchive(tarPath, targetDir string) error {
+	f, err := os.Open(filepath.Clean(tarPath))
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	tr := tar.NewReader(f)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read tar entry: %w", err)
+		}
+
+		targetPath := filepath.Join(targetDir, filepath.FromSlash(filepath.Clean(header.Name)))
+		// Guard against path traversal.
+		if !strings.HasPrefix(targetPath, filepath.Clean(targetDir)+string(filepath.Separator)) {
+			continue
+		}
+
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(targetPath, 0o755); err != nil {
+				return err
+			}
+		case tar.TypeReg, tar.TypeRegA:
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				return err
+			}
+			outFile, err := os.Create(targetPath)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(outFile, tr); err != nil {
+				outFile.Close()
+				return err
+			}
+			outFile.Close()
+		}
+	}
+	return nil
+}
+
+// findBackupPrefix locates the backup prefix by scanning for HANA backup data files.
+// HANA creates files like <prefix>_databackup_0_1, <prefix>_databackup_1_1, etc.
+func findBackupPrefix(dir string) (string, error) {
+	var prefix string
+	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		name := info.Name()
+		if idx := strings.Index(name, "_databackup_"); idx > 0 {
+			prefix = filepath.Join(filepath.Dir(path), name[:idx])
+			return filepath.SkipAll
+		}
+		// Also check for the complete backup file pattern without _databackup_
+		if strings.HasPrefix(name, "hana_") {
+			prefix = filepath.Join(filepath.Dir(path), strings.TrimSuffix(name, filepath.Ext(name)))
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	if err != nil && err != filepath.SkipAll {
+		return "", err
+	}
+	if prefix == "" {
+		return "", fmt.Errorf("未在归档中找到 HANA 备份数据文件")
+	}
+	return prefix, nil
 }
