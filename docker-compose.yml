@@ -1,0 +1,21 @@
+services:
+  backupx:
+    build: .
+    image: backupx:latest
+    container_name: backupx
+    restart: unless-stopped
+    ports:
+      - "8340:8340"
+    volumes:
+      - backupx-data:/app/data
+      # Mount host directories that need to be backed up (example):
+      # - /path/to/backup/source:/mnt/source:ro
+    environment:
+      - TZ=Asia/Shanghai
+      # Override any config via BACKUPX_ prefixed env vars:
+      # - BACKUPX_SERVER_PORT=8340
+      # - BACKUPX_LOG_LEVEL=info
+      # - BACKUPX_BACKUP_MAX_CONCURRENT=2
+
+volumes:
+  backupx-data:
