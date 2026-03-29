@@ -1,0 +1,26 @@
+# Dependencies
+web/node_modules/
+
+# Build artifacts
+server/bin/
+web/dist/
+
+# Data & logs
+data/
+*.db
+*.log
+
+# IDE & OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Git
+.git/
+.github/
+
+# Docker
+Dockerfile
+docker-compose*.yml

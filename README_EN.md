@@ -112,9 +112,29 @@ Supports **multi-node cluster management** for unified control of backup tasks a
 ### 🌐 Other
 - Chinese & English i18n
 - Zero external dependencies (embedded SQLite, single binary deployment)
+- Docker / Docker Compose one-click deployment
 - systemd service support
 
 ## Quick Start
+
+### Docker Deployment (Recommended)
+
+```bash
+# Clone the project
+git clone https://github.com/Awuqing/BackupX.git
+cd BackupX
+
+# Start with one command
+docker compose up -d
+```
+
+To back up host directories, mount them in `docker-compose.yml`:
+
+```yaml
+volumes:
+  - backupx-data:/app/data
+  - /path/to/backup/source:/mnt/source:ro
+```
 
 ### Build from Source
 
@@ -303,11 +323,16 @@ BackupX/
 ├── deploy/                        # Deployment configs
 │   ├── nginx.conf                 #   Nginx reference config
 │   ├── backupx.service            #   systemd service unit
-│   └── install.sh                 #   One-click install script
+│   ├── install.sh                 #   One-click install script
+│   └── docker/                    #   Docker deployment configs
+│       ├── nginx.conf             #     In-container Nginx config
+│       └── entrypoint.sh          #     Container entrypoint script
 ├── .github/                       # GitHub configuration
 │   ├── workflows/ci.yml           #   CI workflow
 │   ├── workflows/release.yml      #   Release workflow
 │   └── ISSUE_TEMPLATE/            #   Issue templates
+├── Dockerfile                     # Docker multi-stage build
+├── docker-compose.yml             # Docker Compose config
 └── Makefile                       # Build commands
 ```
 
@@ -371,6 +396,29 @@ The install script will automatically:
 4. Generate config at `/etc/backupx/config.yaml`
 5. Register and start the systemd service
 6. Configure Nginx reverse proxy (if installed)
+
+### Docker Deployment
+
+```bash
+# Using docker compose
+docker compose up -d
+
+# Or build and run manually
+docker build -t backupx .
+docker run -d --name backupx -p 8340:8340 -v backupx-data:/app/data backupx
+```
+
+Override configuration via environment variables:
+
+```bash
+docker run -d --name backupx \
+  -p 8340:8340 \
+  -v backupx-data:/app/data \
+  -e TZ=Asia/Shanghai \
+  -e BACKUPX_LOG_LEVEL=debug \
+  -e BACKUPX_BACKUP_MAX_CONCURRENT=4 \
+  backupx
+```
 
 ### Manual Deployment
 
