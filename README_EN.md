@@ -48,27 +48,58 @@
 
 ### 1. Install
 
-**Docker (recommended):**
+**Docker (recommended, no clone needed):**
 
 ```bash
-git clone https://github.com/Awuqing/BackupX.git && cd BackupX
+# Create a docker-compose.yml then start
 docker compose up -d
+
+# Or run directly
+docker run -d --name backupx -p 8340:8340 -v backupx-data:/app/data awuqing/backupx:latest
 ```
 
-**Pre-built binaries:**
+> Docker Hub: [`awuqing/backupx`](https://hub.docker.com/r/awuqing/backupx) — supports linux/amd64 and linux/arm64.
 
-Download from [Releases](https://github.com/Awuqing/BackupX/releases), extract and run:
+<details>
+<summary>docker-compose.yml reference</summary>
+
+```yaml
+services:
+  backupx:
+    image: awuqing/backupx:latest
+    container_name: backupx
+    restart: unless-stopped
+    ports:
+      - "8340:8340"
+    volumes:
+      - backupx-data:/app/data
+      # Mount host directories to back up (add as needed):
+      # - /var/www:/mnt/www:ro
+      # - /etc/nginx:/mnt/nginx-conf:ro
+    environment:
+      - TZ=Asia/Shanghai
+
+volumes:
+  backupx-data:
+```
+
+</details>
+
+**Pre-built binaries (bare metal):**
+
+Download from [Releases](https://github.com/Awuqing/BackupX/releases):
 
 ```bash
-tar xzf backupx-v*.tar.gz && cd backupx-*
+tar xzf backupx-v*-linux-amd64.tar.gz && cd backupx-*
 sudo ./install.sh        # Auto-configures systemd + Nginx
 ```
 
-**Build from source (China mirror):**
+**Build from source:**
 
 ```bash
 git clone https://github.com/Awuqing/BackupX.git && cd BackupX
-make docker-cn           # Uses China mirrors (goproxy.cn / npmmirror / Aliyun apk)
+make build               # Build frontend + backend
+make docker-cn           # Or Docker build with China mirrors (goproxy.cn / npmmirror / Aliyun apk)
 ```
 
 ### 2. Open the Console
@@ -113,13 +144,12 @@ Go to **Notifications** to configure Email, Webhook, or Telegram alerts for back
 ### Docker
 
 ```bash
-docker compose up -d
+docker compose up -d     # Using the docker-compose.yml above
 ```
 
-Mount host directories for file backup:
+Mount host directories for file backup (add to `volumes` in docker-compose.yml):
 
 ```yaml
-# docker-compose.yml
 volumes:
   - backupx-data:/app/data
   - /var/www:/mnt/www:ro
@@ -128,12 +158,11 @@ volumes:
 
 Override config via environment variables:
 
-```bash
-docker run -d --name backupx -p 8340:8340 \
-  -v backupx-data:/app/data \
-  -e TZ=Asia/Shanghai \
-  -e BACKUPX_BACKUP_MAX_CONCURRENT=4 \
-  backupx
+```yaml
+environment:
+  - TZ=Asia/Shanghai
+  - BACKUPX_LOG_LEVEL=debug
+  - BACKUPX_BACKUP_MAX_CONCURRENT=4
 ```
 
 ### Bare Metal
