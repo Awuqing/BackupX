@@ -253,10 +253,11 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	errMessage := ""
 	var fileName string
 	var fileSize int64
+	var checksum string
 	var storagePath string
 	var uploadResults []StorageUploadResultItem
 	completeRecord := func() {
-		if finalizeErr := s.finalizeRecord(ctx, task, recordID, startedAt, status, errMessage, logger.String(), fileName, fileSize, storagePath); finalizeErr != nil {
+		if finalizeErr := s.finalizeRecord(ctx, task, recordID, startedAt, status, errMessage, logger.String(), fileName, fileSize, checksum, storagePath); finalizeErr != nil {
 			logger.Errorf("写回备份记录失败：%v", finalizeErr)
 		}
 		// 写入多目标上传结果
@@ -325,6 +326,17 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	fileName = filepath.Base(finalPath)
 	storagePath = backup.BuildStorageKey(task.Type, startedAt, fileName)
 
+	// 计算文件 SHA-256 哈希（上传前）
+	logger.Infof("计算备份文件校验和...")
+	localChecksum, checksumErr := backup.SHA256File(finalPath)
+	if checksumErr != nil {
+		errMessage = checksumErr.Error()
+		logger.Errorf("计算文件校验和失败：%v", checksumErr)
+		return
+	}
+	checksum = localChecksum
+	logger.Infof("文件校验和: SHA-256=%s, 大小=%d bytes", checksum, fileSize)
+
 	// 收集所有存储目标
 	targetIDs := collectTargetIDs(task)
 	if len(targetIDs) == 0 {
@@ -364,8 +376,29 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 				logger.Warnf("存储目标 %s 上传失败：%v", targetName, uploadErr)
 				return
 			}
+			// 上传后完整性校验：下载并验证 SHA-256
+			verifyReader, verifyErr := provider.Download(ctx, storagePath)
+			if verifyErr != nil {
+				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: fmt.Sprintf("上传后校验失败（无法下载验证）: %v", verifyErr)}
+				logger.Warnf("存储目标 %s 上传后下载验证失败：%v", targetName, verifyErr)
+				return
+			}
+			remoteChecksum, hashErr := backup.SHA256Reader(verifyReader)
+			verifyReader.Close()
+			if hashErr != nil {
+				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: fmt.Sprintf("上传后校验失败（哈希计算错误）: %v", hashErr)}
+				logger.Warnf("存储目标 %s 上传后哈希计算失败：%v", targetName, hashErr)
+				return
+			}
+			if remoteChecksum != localChecksum {
+				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: fmt.Sprintf("完整性校验失败: 本地=%s, 远端=%s", localChecksum, remoteChecksum)}
+				logger.Errorf("存储目标 %s 完整性校验失败：本地 SHA-256=%s, 远端 SHA-256=%s", targetName, localChecksum, remoteChecksum)
+				// 删除损坏的远端文件
+				_ = provider.Delete(ctx, storagePath)
+				return
+			}
 			uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "success", StoragePath: storagePath, FileSize: fileSize}
-			logger.Infof("存储目标 %s 上传成功", targetName)
+			logger.Infof("存储目标 %s 上传成功，完整性校验通过 (SHA-256=%s)", targetName, localChecksum)
 			// 每个成功目标独立执行保留策略
 			if s.retention != nil {
 				cleanupResult, cleanupErr := s.retention.Cleanup(ctx, task, provider)
@@ -403,7 +436,7 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	}
 }
 
-func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time, status string, errorMessage string, logContent string, fileName string, fileSize int64, storagePath string) error {
+func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time, status string, errorMessage string, logContent string, fileName string, fileSize int64, checksum string, storagePath string) error {
 	record, err := s.records.FindByID(ctx, recordID)
 	if err != nil {
 		return err
@@ -415,6 +448,7 @@ func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model
 	record.Status = status
 	record.FileName = fileName
 	record.FileSize = fileSize
+	record.Checksum = checksum
 	record.StoragePath = storagePath
 	record.DurationSeconds = int(completedAt.Sub(startedAt).Seconds())
 	record.ErrorMessage = strings.TrimSpace(errorMessage)

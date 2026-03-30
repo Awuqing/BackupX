@@ -98,6 +98,11 @@ export function BackupRecordsPage() {
         <Space direction="vertical" size={2}>
           <Typography.Text>{record.fileName || '-'}</Typography.Text>
           <Typography.Text type="secondary">{formatBytes(record.fileSize)}</Typography.Text>
+          {record.checksum && (
+            <Typography.Text type="secondary" copyable style={{ fontSize: 11 }}>
+              SHA-256: {record.checksum.substring(0, 16)}...
+            </Typography.Text>
+          )}
         </Space>
       ),
     },
