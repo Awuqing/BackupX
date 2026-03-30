@@ -12,7 +12,8 @@ import (
 )
 
 type StorageTargetHandler struct {
-	service *service.StorageTargetService
+	service      *service.StorageTargetService
+	auditService *service.AuditService
 }
 
 type storageTargetGoogleDriveAuthRequest struct {
@@ -27,8 +28,8 @@ type storageTargetGoogleDriveAuthRequest struct {
 	FolderID     string         `json:"folderId"`
 }
 
-func NewStorageTargetHandler(service *service.StorageTargetService) *StorageTargetHandler {
-	return &StorageTargetHandler{service: service}
+func NewStorageTargetHandler(service *service.StorageTargetService, auditService *service.AuditService) *StorageTargetHandler {
+	return &StorageTargetHandler{service: service, auditService: auditService}
 }
 
 func (h *StorageTargetHandler) List(c *gin.Context) {
@@ -64,6 +65,7 @@ func (h *StorageTargetHandler) Create(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	recordAudit(c, h.auditService, "storage_target", "create", "storage_target", fmt.Sprintf("%d", item.ID), item.Name, "")
 	response.Success(c, item)
 }
 
@@ -82,6 +84,7 @@ func (h *StorageTargetHandler) Update(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	recordAudit(c, h.auditService, "storage_target", "update", "storage_target", fmt.Sprintf("%d", item.ID), item.Name, "")
 	response.Success(c, item)
 }
 
@@ -94,6 +97,7 @@ func (h *StorageTargetHandler) Delete(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	recordAudit(c, h.auditService, "storage_target", "delete", "storage_target", fmt.Sprintf("%d", id), "", "")
 	response.Success(c, gin.H{"deleted": true})
 }
 
@@ -228,6 +232,19 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (h *StorageTargetHandler) ToggleStar(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	item, err := h.service.ToggleStar(c.Request.Context(), id)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Success(c, item)
 }
 
 func (h *StorageTargetHandler) GetUsage(c *gin.Context) {

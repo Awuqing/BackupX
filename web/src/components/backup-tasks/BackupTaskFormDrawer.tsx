@@ -1,8 +1,13 @@
-import { Alert, Button, Divider, Drawer, Input, InputNumber, Select, Space, Steps, Switch, Typography } from '@arco-design/web-react'
+import { Alert, Button, Divider, Drawer, Input, InputNumber, Select, Space, Steps, Switch, Typography, Grid } from '@arco-design/web-react'
+import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
 import { useEffect, useMemo, useState } from 'react'
 import { CronInput } from '../CronInput'
-import type { StorageTargetSummary } from '../../types/storage-targets'
+import type { StorageTargetDetail, StorageTargetPayload, StorageTargetSummary } from '../../types/storage-targets'
+import type { StorageConnectionTestResult } from '../../types/storage-targets'
 import type { BackupTaskDetail, BackupTaskPayload, BackupTaskType } from '../../types/backup-tasks'
+import { DatabasePicker } from '../common/DatabasePicker'
+import { DirectoryPicker } from '../common/DirectoryPicker'
+import { StorageTargetFormDrawer } from '../storage-targets/StorageTargetFormDrawer'
 import {
   backupCompressionOptions,
   backupTaskTypeOptions,
@@ -17,17 +22,24 @@ interface BackupTaskFormDrawerProps {
   loading: boolean
   initialValue: BackupTaskDetail | null
   storageTargets: StorageTargetSummary[]
+  localNodeId?: number
   onCancel: () => void
   onSubmit: (value: BackupTaskPayload, taskId?: number) => Promise<void>
+  onCreateStorageTarget?: (value: StorageTargetPayload) => Promise<StorageTargetDetail>
+  onTestStorageTarget?: (value: StorageTargetPayload, targetId?: number) => Promise<StorageConnectionTestResult>
+  onGoogleDriveAuth?: (value: StorageTargetPayload, targetId?: number) => Promise<void>
+  onStorageTargetCreated?: () => Promise<void>
 }
 
-function createEmptyDraft(storageTargetId?: number): BackupTaskPayload {
+function createEmptyDraft(storageTargets?: StorageTargetSummary[]): BackupTaskPayload {
+  const defaultIds = storageTargets && storageTargets.length > 0 ? [storageTargets[0].id] : []
   return {
     name: '',
     type: 'file',
     enabled: true,
     cronExpr: '',
     sourcePath: '',
+    sourcePaths: [''],
     excludePatterns: [],
     dbHost: '',
     dbPort: 0,
@@ -35,7 +47,8 @@ function createEmptyDraft(storageTargetId?: number): BackupTaskPayload {
     dbPassword: '',
     dbName: '',
     dbPath: '',
-    storageTargetId: storageTargetId ?? 0,
+    storageTargetId: defaultIds[0] ?? 0,
+    storageTargetIds: defaultIds,
     nodeId: 0,
     tags: '',
     retentionDays: 30,
@@ -45,11 +58,14 @@ function createEmptyDraft(storageTargetId?: number): BackupTaskPayload {
   }
 }
 
-export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTargets, onCancel, onSubmit }: BackupTaskFormDrawerProps) {
+export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTargets, localNodeId, onCancel, onSubmit, onCreateStorageTarget, onTestStorageTarget, onGoogleDriveAuth, onStorageTargetCreated }: BackupTaskFormDrawerProps) {
   const [draft, setDraft] = useState<BackupTaskPayload>(createEmptyDraft())
   const [excludePatternsText, setExcludePatternsText] = useState('')
   const [currentStep, setCurrentStep] = useState(0)
   const [error, setError] = useState('')
+  const [quickCreateVisible, setQuickCreateVisible] = useState(false)
+  const [quickCreateLoading, setQuickCreateLoading] = useState(false)
+  const [quickCreateTesting, setQuickCreateTesting] = useState(false)
 
   useEffect(() => {
     if (!visible) {
@@ -57,7 +73,7 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
     }
 
     if (!initialValue) {
-      const nextDraft = createEmptyDraft(storageTargets[0]?.id)
+      const nextDraft = createEmptyDraft(storageTargets)
       setDraft(nextDraft)
       setExcludePatternsText('')
       setCurrentStep(0)
@@ -65,12 +81,24 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       return
     }
 
+    const editTargetIds = initialValue.storageTargetIds?.length > 0
+      ? initialValue.storageTargetIds
+      : initialValue.storageTargetId > 0
+        ? [initialValue.storageTargetId]
+        : []
+    // 编辑时：sourcePaths 优先，为空回退 sourcePath
+    const editSourcePaths = initialValue.sourcePaths?.length > 0
+      ? initialValue.sourcePaths
+      : initialValue.sourcePath
+        ? [initialValue.sourcePath]
+        : ['']
     setDraft({
       name: initialValue.name,
       type: initialValue.type,
       enabled: initialValue.enabled,
       cronExpr: initialValue.cronExpr,
       sourcePath: initialValue.sourcePath,
+      sourcePaths: editSourcePaths,
       excludePatterns: initialValue.excludePatterns,
       dbHost: initialValue.dbHost,
       dbPort: initialValue.dbPort,
@@ -78,7 +106,8 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       dbPassword: '',
       dbName: initialValue.dbName,
       dbPath: initialValue.dbPath,
-      storageTargetId: initialValue.storageTargetId,
+      storageTargetId: editTargetIds[0] ?? 0,
+      storageTargetIds: editTargetIds,
       nodeId: (initialValue as any).nodeId ?? 0,
       tags: (initialValue as any).tags ?? '',
       retentionDays: initialValue.retentionDays,
@@ -92,7 +121,17 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
   }, [initialValue, storageTargets, visible])
 
   const storageTargetOptions = useMemo(
-    () => storageTargets.map((item) => ({ label: item.name, value: item.id, disabled: !item.enabled })),
+    () => {
+      const sorted = [...storageTargets].sort((a, b) => {
+        if (a.starred !== b.starred) return a.starred ? -1 : 1
+        return 0
+      })
+      return sorted.map((item) => ({
+        label: item.starred ? `★ ${item.name}` : item.name,
+        value: item.id,
+        disabled: !item.enabled,
+      }))
+    },
     [storageTargets],
   )
 
@@ -105,6 +144,7 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       ...current,
       type: value,
       sourcePath: value === 'file' ? current.sourcePath : '',
+      sourcePaths: value === 'file' ? current.sourcePaths : [''],
       excludePatterns: value === 'file' ? current.excludePatterns : [],
       dbHost: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbHost : '',
       dbPort: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbPort || getDefaultPort(value) : 0,
@@ -122,8 +162,8 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
     if (!value.name.trim()) {
       return '请输入任务名称'
     }
-    if (!value.storageTargetId) {
-      return '请选择存储目标'
+    if (!value.storageTargetIds || value.storageTargetIds.length === 0) {
+      return '请选择至少一个存储目标'
     }
     if (value.cronExpr.trim() && value.cronExpr.trim().split(/\s+/).length < 5) {
       return 'Cron 表达式至少需要 5 段'
@@ -134,8 +174,11 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
     if (value.maxBackups < 0) {
       return '最大保留份数不能小于 0'
     }
-    if (isFileBackupTask(value.type) && !value.sourcePath.trim()) {
-      return '请输入源路径'
+    if (isFileBackupTask(value.type)) {
+      const validPaths = (value.sourcePaths ?? []).filter((p) => p.trim())
+      if (validPaths.length === 0 && !value.sourcePath.trim()) {
+        return '请输入至少一个源路径'
+      }
     }
     if (isSQLiteBackupTask(value.type) && !value.dbPath.trim()) {
       return '请输入 SQLite 数据库路径'
@@ -161,8 +204,11 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
   }
 
   async function handleSubmit() {
+    const validSourcePaths = (draft.sourcePaths ?? []).filter((p) => p.trim())
     const nextValue: BackupTaskPayload = {
       ...draft,
+      sourcePaths: validSourcePaths,
+      sourcePath: validSourcePaths[0] ?? draft.sourcePath,
       excludePatterns: excludePatternsText
         .split('\n')
         .map((item) => item.trim())
@@ -203,14 +249,65 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
     )
   }
 
+  function updateSourcePath(index: number, value: string) {
+    setDraft((current) => {
+      const next = [...(current.sourcePaths ?? [''])]
+      next[index] = value
+      return { ...current, sourcePaths: next, sourcePath: next[0] ?? '' }
+    })
+  }
+
+  function addSourcePath() {
+    setDraft((current) => ({
+      ...current,
+      sourcePaths: [...(current.sourcePaths ?? ['']), ''],
+    }))
+  }
+
+  function removeSourcePath(index: number) {
+    setDraft((current) => {
+      const next = [...(current.sourcePaths ?? [''])]
+      next.splice(index, 1)
+      if (next.length === 0) next.push('')
+      return { ...current, sourcePaths: next, sourcePath: next[0] ?? '' }
+    })
+  }
+
   function renderSourceStep() {
+    const paths = draft.sourcePaths?.length > 0 ? draft.sourcePaths : ['']
     return (
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         {isFileBackupTask(draft.type) ? (
           <>
             <div>
               <Typography.Text>源路径</Typography.Text>
-              <Input value={draft.sourcePath} placeholder="例如：/var/www/html" onChange={(value) => updateDraft({ sourcePath: value })} />
+              <Space direction="vertical" size="medium" style={{ width: '100%' }}>
+                {paths.map((p, index) => (
+                  <Grid.Row key={index} gutter={8} align="center">
+                    <Grid.Col flex="auto">
+                      <DirectoryPicker
+                        value={p}
+                        placeholder={`源路径 ${index + 1}，例如：/var/www/html`}
+                        mode="directory"
+                        nodeId={localNodeId}
+                        onChange={(value) => updateSourcePath(index, value)}
+                      />
+                    </Grid.Col>
+                    <Grid.Col flex="none">
+                      <Button
+                        type="text"
+                        icon={<IconDelete />}
+                        status="danger"
+                        disabled={paths.length <= 1}
+                        onClick={() => removeSourcePath(index)}
+                      />
+                    </Grid.Col>
+                  </Grid.Row>
+                ))}
+                <Button type="dashed" long icon={<IconPlus />} onClick={addSourcePath}>
+                  添加源路径
+                </Button>
+              </Space>
             </div>
             <div>
               <Typography.Text>排除规则</Typography.Text>
@@ -227,7 +324,13 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
         {isSQLiteBackupTask(draft.type) ? (
           <div>
             <Typography.Text>SQLite 数据库文件</Typography.Text>
-            <Input value={draft.dbPath} placeholder="例如：/data/app.db" onChange={(value) => updateDraft({ dbPath: value })} />
+            <DirectoryPicker
+              value={draft.dbPath}
+              placeholder="例如：/data/app.db"
+              mode="file"
+              nodeId={localNodeId}
+              onChange={(value) => updateDraft({ dbPath: value })}
+            />
           </div>
         ) : null}
 
@@ -251,7 +354,19 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
             </div>
             <div>
               <Typography.Text>数据库名称</Typography.Text>
-              <Input value={draft.dbName} placeholder="例如：app_prod" onChange={(value) => updateDraft({ dbName: value })} />
+              {(draft.type === 'mysql' || draft.type === 'postgresql') ? (
+                <DatabasePicker
+                  dbType={draft.type}
+                  dbHost={draft.dbHost}
+                  dbPort={draft.dbPort}
+                  dbUser={draft.dbUser}
+                  dbPassword={draft.dbPassword}
+                  value={draft.dbName}
+                  onChange={(value) => updateDraft({ dbName: value })}
+                />
+              ) : (
+                <Input value={draft.dbName} placeholder="例如：app_prod" onChange={(value) => updateDraft({ dbName: value })} />
+              )}
             </div>
           </>
         ) : null}
@@ -259,12 +374,53 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
     )
   }
 
+  async function handleQuickCreateSubmit(value: StorageTargetPayload) {
+    if (!onCreateStorageTarget) return
+    setQuickCreateLoading(true)
+    try {
+      const created = await onCreateStorageTarget(value)
+      setQuickCreateVisible(false)
+      if (onStorageTargetCreated) {
+        await onStorageTargetCreated()
+      }
+      const currentIds = draft.storageTargetIds ?? []
+      const nextIds = [...currentIds, created.id]
+      updateDraft({ storageTargetIds: nextIds, storageTargetId: nextIds[0] ?? 0 })
+    } finally {
+      setQuickCreateLoading(false)
+    }
+  }
+
+  async function handleQuickCreateTest(value: StorageTargetPayload, targetId?: number): Promise<StorageConnectionTestResult> {
+    if (!onTestStorageTarget) return { success: false, message: '测试不可用' }
+    setQuickCreateTesting(true)
+    try {
+      return await onTestStorageTarget(value, targetId)
+    } finally {
+      setQuickCreateTesting(false)
+    }
+  }
+
   function renderPolicyStep() {
     return (
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <div>
           <Typography.Text>存储目标</Typography.Text>
-          <Select value={draft.storageTargetId || undefined} placeholder="请选择存储目标" options={storageTargetOptions} onChange={(value) => updateDraft({ storageTargetId: Number(value) })} />
+          <Space style={{ width: '100%' }} align="start">
+            <Select
+              style={{ flex: 1 }}
+              mode="multiple"
+              value={draft.storageTargetIds?.length > 0 ? draft.storageTargetIds : undefined}
+              placeholder="请选择存储目标（可多选）"
+              options={storageTargetOptions}
+              onChange={(values: number[]) => updateDraft({ storageTargetIds: values, storageTargetId: values[0] ?? 0 })}
+            />
+            {onCreateStorageTarget && (
+              <Button type="outline" size="small" onClick={() => setQuickCreateVisible(true)}>
+                + 快速新建
+              </Button>
+            )}
+          </Space>
         </div>
         <div>
           <Typography.Text>压缩策略</Typography.Text>
@@ -320,6 +476,19 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
           )}
         </Space>
       </Space>
+
+      {onCreateStorageTarget && (
+        <StorageTargetFormDrawer
+          visible={quickCreateVisible}
+          loading={quickCreateLoading}
+          testing={quickCreateTesting}
+          initialValue={null}
+          onCancel={() => setQuickCreateVisible(false)}
+          onSubmit={handleQuickCreateSubmit}
+          onTest={handleQuickCreateTest}
+          onGoogleDriveAuth={onGoogleDriveAuth ?? (async () => {})}
+        />
+      )}
     </Drawer>
   )
 }

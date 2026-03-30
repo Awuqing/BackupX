@@ -5,9 +5,10 @@ import { BackupTaskDetailDrawer } from '../../components/backup-tasks/BackupTask
 import { BackupTaskFormDrawer } from '../../components/backup-tasks/BackupTaskFormDrawer'
 import { getBackupTaskStatusColor, getBackupTaskStatusLabel, getBackupTaskTypeLabel } from '../../components/backup-tasks/field-config'
 import { createBackupTask, deleteBackupTask, getBackupTask, listBackupTasks, runBackupTask, toggleBackupTask, updateBackupTask } from '../../services/backup-tasks'
-import { listStorageTargets } from '../../services/storage-targets'
+import { listNodes } from '../../services/nodes'
+import { createStorageTarget, listStorageTargets, startGoogleDriveAuth, testStorageTarget } from '../../services/storage-targets'
 import type { BackupTaskDetail, BackupTaskPayload, BackupTaskSummary } from '../../types/backup-tasks'
-import type { StorageTargetSummary } from '../../types/storage-targets'
+import type { StorageTargetPayload, StorageTargetSummary } from '../../types/storage-targets'
 import { resolveErrorMessage } from '../../utils/error'
 import { formatDateTime } from '../../utils/format'
 
@@ -22,15 +23,20 @@ export function BackupTasksPage() {
   const [editingTask, setEditingTask] = useState<BackupTaskDetail | null>(null)
   const [detailTask, setDetailTask] = useState<BackupTaskDetail | null>(null)
   const [error, setError] = useState('')
+  const [localNodeId, setLocalNodeId] = useState<number | undefined>(undefined)
 
   const enabledStorageTargets = useMemo(() => storageTargets.filter((item) => item.enabled), [storageTargets])
 
   const loadData = useCallback(async () => {
     setLoading(true)
     try {
-      const [taskList, targetList] = await Promise.all([listBackupTasks(), listStorageTargets()])
+      const [taskList, targetList, nodeList] = await Promise.all([listBackupTasks(), listStorageTargets(), listNodes()])
       setTasks(taskList)
       setStorageTargets(targetList)
+      const localNode = nodeList.find((n) => n.isLocal)
+      if (localNode) {
+        setLocalNodeId(localNode.id)
+      }
       setError('')
     } catch (loadError) {
       setError(resolveErrorMessage(loadError, '加载备份任务失败'))
@@ -123,6 +129,28 @@ export function BackupTasksPage() {
     }
   }
 
+  async function handleCreateStorageTarget(value: StorageTargetPayload) {
+    const result = await createStorageTarget(value)
+    Message.success('存储目标已创建')
+    return result
+  }
+
+  async function handleTestStorageTarget(value: StorageTargetPayload) {
+    const result = await testStorageTarget(value)
+    Message.success(result.message)
+    return result
+  }
+
+  async function handleGoogleDriveAuth(value: StorageTargetPayload, targetId?: number) {
+    const result = await startGoogleDriveAuth(value, targetId)
+    window.open(result.authUrl, '_blank')
+  }
+
+  async function reloadStorageTargets() {
+    const targetList = await listStorageTargets()
+    setStorageTargets(targetList)
+  }
+
   const columns = [
     {
       title: '任务名称',
@@ -146,8 +174,18 @@ export function BackupTasksPage() {
     },
     {
       title: '存储目标',
-      dataIndex: 'storageTargetName',
-      render: (value: string) => value || '-',
+      dataIndex: 'storageTargetNames',
+      render: (_: unknown, record: BackupTaskSummary) => {
+        const names = record.storageTargetNames?.length > 0 ? record.storageTargetNames : record.storageTargetName ? [record.storageTargetName] : []
+        if (names.length === 0) return '-'
+        return (
+          <Space size={4} wrap>
+            {names.map((name, i) => (
+              <Tag key={i} color="arcoblue" bordered>{name}</Tag>
+            ))}
+          </Space>
+        )
+      },
     },
     {
       title: '策略',
@@ -228,11 +266,16 @@ export function BackupTasksPage() {
         loading={submitting}
         initialValue={editingTask}
         storageTargets={enabledStorageTargets}
+        localNodeId={localNodeId}
         onCancel={() => {
           setDrawerVisible(false)
           setEditingTask(null)
         }}
         onSubmit={handleSubmit}
+        onCreateStorageTarget={handleCreateStorageTarget}
+        onTestStorageTarget={handleTestStorageTarget}
+        onGoogleDriveAuth={handleGoogleDriveAuth}
+        onStorageTargetCreated={reloadStorageTargets}
       />
 
       <BackupTaskDetailDrawer

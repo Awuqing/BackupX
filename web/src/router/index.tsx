@@ -8,6 +8,7 @@ import { BackupTasksPage } from '../pages/backup-tasks/BackupTasksPage'
 import { GoogleDriveCallbackPage } from '../pages/storage-targets/GoogleDriveCallbackPage'
 import { StorageTargetsPage } from '../pages/storage-targets/StorageTargetsPage'
 import { SettingsPage } from '../pages/settings/SettingsPage'
+import { AuditLogsPage } from '../pages/audit/AuditLogsPage'
 import NodesPage from '../pages/nodes/NodesPage'
 import { ProtectedRoute } from './ProtectedRoute'
 
@@ -32,6 +33,7 @@ export function RouterView() {
         <Route path="settings" element={<SettingsPage />} />
         <Route path="settings/notifications" element={<NotificationsPage />} />
         <Route path="nodes" element={<NodesPage />} />
+        <Route path="audit" element={<AuditLogsPage />} />
         <Route path="system-info" element={<Navigate to="/settings" replace />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

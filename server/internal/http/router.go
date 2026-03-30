@@ -15,22 +15,24 @@ import (
 )
 
 type RouterDependencies struct {
-	Config                 config.Config
-	Version                string
-	Logger                 *zap.Logger
-	AuthService            *service.AuthService
-	SystemService          *service.SystemService
-	StorageTargetService   *service.StorageTargetService
-	BackupTaskService      *service.BackupTaskService
-	BackupExecutionService *service.BackupExecutionService
-	BackupRecordService    *service.BackupRecordService
-	NotificationService    *service.NotificationService
-	DashboardService       *service.DashboardService
-	SettingsService        *service.SettingsService
-	NodeService            *service.NodeService
-	JWTManager             *security.JWTManager
-	UserRepository         repository.UserRepository
-	SystemConfigRepo       repository.SystemConfigRepository
+	Config                   config.Config
+	Version                  string
+	Logger                   *zap.Logger
+	AuthService              *service.AuthService
+	SystemService            *service.SystemService
+	StorageTargetService     *service.StorageTargetService
+	BackupTaskService        *service.BackupTaskService
+	BackupExecutionService   *service.BackupExecutionService
+	BackupRecordService      *service.BackupRecordService
+	NotificationService      *service.NotificationService
+	DashboardService         *service.DashboardService
+	SettingsService          *service.SettingsService
+	NodeService              *service.NodeService
+	DatabaseDiscoveryService *service.DatabaseDiscoveryService
+	AuditService             *service.AuditService
+	JWTManager               *security.JWTManager
+	UserRepository           repository.UserRepository
+	SystemConfigRepo         repository.SystemConfigRepository
 }
 
 func NewRouter(deps RouterDependencies) *gin.Engine {
@@ -42,13 +44,14 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 
 	authHandler := NewAuthHandler(deps.AuthService)
 	systemHandler := NewSystemHandler(deps.SystemService)
-	storageTargetHandler := NewStorageTargetHandler(deps.StorageTargetService)
-	backupTaskHandler := NewBackupTaskHandler(deps.BackupTaskService)
-	backupRunHandler := NewBackupRunHandler(deps.BackupExecutionService)
-	backupRecordHandler := NewBackupRecordHandler(deps.BackupRecordService)
+	storageTargetHandler := NewStorageTargetHandler(deps.StorageTargetService, deps.AuditService)
+	backupTaskHandler := NewBackupTaskHandler(deps.BackupTaskService, deps.AuditService)
+	backupRunHandler := NewBackupRunHandler(deps.BackupExecutionService, deps.AuditService)
+	backupRecordHandler := NewBackupRecordHandler(deps.BackupRecordService, deps.AuditService)
 	notificationHandler := NewNotificationHandler(deps.NotificationService)
 	dashboardHandler := NewDashboardHandler(deps.DashboardService)
-	settingsHandler := NewSettingsHandler(deps.SettingsService)
+	settingsHandler := NewSettingsHandler(deps.SettingsService, deps.AuditService)
+	auditHandler := NewAuditHandler(deps.AuditService)
 
 	api := engine.Group("/api")
 	{
@@ -73,6 +76,7 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		storageTargets.POST("", storageTargetHandler.Create)
 		storageTargets.PUT("/:id", storageTargetHandler.Update)
 		storageTargets.DELETE("/:id", storageTargetHandler.Delete)
+		storageTargets.PUT("/:id/star", storageTargetHandler.ToggleStar)
 		storageTargets.POST("/test", storageTargetHandler.TestConnection)
 		storageTargets.POST("/:id/test", storageTargetHandler.TestSavedConnection)
 		storageTargets.GET("/:id/usage", storageTargetHandler.GetUsage)
@@ -118,6 +122,17 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		settings.Use(AuthMiddleware(deps.JWTManager))
 		settings.GET("", settingsHandler.Get)
 		settings.PUT("", settingsHandler.Update)
+
+		auditLogs := api.Group("/audit-logs")
+		auditLogs.Use(AuthMiddleware(deps.JWTManager))
+		auditLogs.GET("", auditHandler.List)
+
+		if deps.DatabaseDiscoveryService != nil {
+			databaseHandler := NewDatabaseHandler(deps.DatabaseDiscoveryService)
+			database := api.Group("/database")
+			database.Use(AuthMiddleware(deps.JWTManager))
+			database.POST("/discover", databaseHandler.Discover)
+		}
 
 		nodeHandler := NewNodeHandler(deps.NodeService)
 		nodes := api.Group("/nodes")

@@ -37,10 +37,11 @@ type UserOutput struct {
 }
 
 type AuthService struct {
-	users       repository.UserRepository
-	configs     repository.SystemConfigRepository
-	jwtManager  *security.JWTManager
-	rateLimiter *security.LoginRateLimiter
+	users        repository.UserRepository
+	configs      repository.SystemConfigRepository
+	jwtManager   *security.JWTManager
+	rateLimiter  *security.LoginRateLimiter
+	auditService *AuditService
 }
 
 func NewAuthService(
@@ -50,6 +51,10 @@ func NewAuthService(
 	rateLimiter *security.LoginRateLimiter,
 ) *AuthService {
 	return &AuthService{users: users, configs: configs, jwtManager: jwtManager, rateLimiter: rateLimiter}
+}
+
+func (s *AuthService) SetAuditService(auditService *AuditService) {
+	s.auditService = auditService
 }
 
 func (s *AuthService) SetupStatus(ctx context.Context) (bool, error) {
@@ -97,6 +102,15 @@ func (s *AuthService) Setup(ctx context.Context, input SetupInput) (*AuthPayload
 		return nil, apperror.Internal("AUTH_TOKEN_FAILED", "无法生成访问令牌", err)
 	}
 
+	if s.auditService != nil {
+		s.auditService.Record(AuditEntry{
+			UserID: user.ID, Username: user.Username,
+			Category: "auth", Action: "setup",
+			TargetType: "user", TargetID: fmt.Sprintf("%d", user.ID), TargetName: user.Username,
+			Detail: "系统初始化，创建管理员账户",
+		})
+	}
+
 	return &AuthPayload{Token: token, User: ToUserOutput(user)}, nil
 }
 
@@ -113,9 +127,23 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput, clientKey str
 		return nil, apperror.Internal("AUTH_LOOKUP_FAILED", "无法执行登录校验", err)
 	}
 	if user == nil {
+		if s.auditService != nil {
+			s.auditService.Record(AuditEntry{
+				Category: "auth", Action: "login_failed",
+				Detail: fmt.Sprintf("用户名不存在: %s", strings.TrimSpace(input.Username)),
+				ClientIP: clientKey,
+			})
+		}
 		return nil, apperror.Unauthorized("AUTH_INVALID_CREDENTIALS", "用户名或密码错误", nil)
 	}
 	if err := security.ComparePassword(user.PasswordHash, input.Password); err != nil {
+		if s.auditService != nil {
+			s.auditService.Record(AuditEntry{
+				UserID: user.ID, Username: user.Username,
+				Category: "auth", Action: "login_failed",
+				Detail: "密码错误", ClientIP: clientKey,
+			})
+		}
 		return nil, apperror.Unauthorized("AUTH_INVALID_CREDENTIALS", "用户名或密码错误", err)
 	}
 
@@ -124,6 +152,15 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput, clientKey str
 	if err != nil {
 		return nil, apperror.Internal("AUTH_TOKEN_FAILED", "无法生成访问令牌", err)
 	}
+
+	if s.auditService != nil {
+		s.auditService.Record(AuditEntry{
+			UserID: user.ID, Username: user.Username,
+			Category: "auth", Action: "login_success",
+			Detail: "登录成功", ClientIP: clientKey,
+		})
+	}
+
 	return &AuthPayload{Token: token, User: ToUserOutput(user)}, nil
 }
 
@@ -170,6 +207,15 @@ func (s *AuthService) ChangePassword(ctx context.Context, subject string, input 
 	if err := s.users.Update(ctx, user); err != nil {
 		return apperror.Internal("AUTH_UPDATE_FAILED", "密码修改失败", err)
 	}
+
+	if s.auditService != nil {
+		s.auditService.Record(AuditEntry{
+			UserID: user.ID, Username: user.Username,
+			Category: "auth", Action: "change_password",
+			Detail: "密码修改成功",
+		})
+	}
+
 	return nil
 }
 

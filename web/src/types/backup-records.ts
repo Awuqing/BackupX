@@ -26,9 +26,19 @@ export interface BackupRecordSummary {
   completedAt?: string
 }
 
+export interface StorageUploadResultItem {
+  storageTargetId: number
+  storageTargetName: string
+  status: 'success' | 'failed'
+  storagePath?: string
+  fileSize?: number
+  error?: string
+}
+
 export interface BackupRecordDetail extends BackupRecordSummary {
   logContent: string
   logEvents?: BackupLogEvent[]
+  storageUploadResults?: StorageUploadResultItem[]
 }
 
 export interface BackupRecordListFilter {

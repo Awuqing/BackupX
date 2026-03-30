@@ -8,6 +8,7 @@ export interface StorageTargetSummary {
   type: StorageTargetType
   description: string
   enabled: boolean
+  starred: boolean
   updatedAt: string
   lastTestedAt?: string
   lastTestStatus: StorageTestStatus

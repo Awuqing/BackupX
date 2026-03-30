@@ -27,7 +27,7 @@ func NewStorageTargetRepository(db *gorm.DB) *GormStorageTargetRepository {
 
 func (r *GormStorageTargetRepository) List(ctx context.Context) ([]model.StorageTarget, error) {
 	var items []model.StorageTarget
-	if err := r.db.WithContext(ctx).Order("updated_at desc").Find(&items).Error; err != nil {
+	if err := r.db.WithContext(ctx).Order("starred desc, updated_at desc").Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil

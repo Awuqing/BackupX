@@ -17,23 +17,25 @@ import (
 const backupTaskMaskedValue = "********"
 
 type BackupTaskUpsertInput struct {
-	Name            string   `json:"name" binding:"required,min=1,max=100"`
-	Type            string   `json:"type" binding:"required,oneof=file mysql sqlite postgresql pgsql"`
-	Enabled         bool     `json:"enabled"`
-	CronExpr        string   `json:"cronExpr" binding:"max=64"`
-	SourcePath      string   `json:"sourcePath" binding:"max=500"`
-	ExcludePatterns []string `json:"excludePatterns"`
-	DBHost          string   `json:"dbHost" binding:"max=255"`
-	DBPort          int      `json:"dbPort"`
-	DBUser          string   `json:"dbUser" binding:"max=100"`
-	DBPassword      string   `json:"dbPassword" binding:"max=255"`
-	DBName          string   `json:"dbName" binding:"max=255"`
-	DBPath          string   `json:"dbPath" binding:"max=500"`
-	StorageTargetID uint     `json:"storageTargetId" binding:"required"`
-	RetentionDays   int      `json:"retentionDays"`
-	Compression     string   `json:"compression" binding:"omitempty,oneof=gzip none"`
-	Encrypt         bool     `json:"encrypt"`
-	MaxBackups      int      `json:"maxBackups"`
+	Name             string   `json:"name" binding:"required,min=1,max=100"`
+	Type             string   `json:"type" binding:"required,oneof=file mysql sqlite postgresql pgsql"`
+	Enabled          bool     `json:"enabled"`
+	CronExpr         string   `json:"cronExpr" binding:"max=64"`
+	SourcePath       string   `json:"sourcePath" binding:"max=500"`
+	SourcePaths      []string `json:"sourcePaths"`
+	ExcludePatterns  []string `json:"excludePatterns"`
+	DBHost           string   `json:"dbHost" binding:"max=255"`
+	DBPort           int      `json:"dbPort"`
+	DBUser           string   `json:"dbUser" binding:"max=100"`
+	DBPassword       string   `json:"dbPassword" binding:"max=255"`
+	DBName           string   `json:"dbName" binding:"max=255"`
+	DBPath           string   `json:"dbPath" binding:"max=500"`
+	StorageTargetID  uint     `json:"storageTargetId"`                       // deprecated: 向后兼容
+	StorageTargetIDs []uint   `json:"storageTargetIds"`                      // 新增：多存储目标
+	RetentionDays    int      `json:"retentionDays"`
+	Compression      string   `json:"compression" binding:"omitempty,oneof=gzip none"`
+	Encrypt          bool     `json:"encrypt"`
+	MaxBackups       int      `json:"maxBackups"`
 }
 
 type BackupTaskToggleInput struct {
@@ -41,25 +43,28 @@ type BackupTaskToggleInput struct {
 }
 
 type BackupTaskSummary struct {
-	ID                uint       `json:"id"`
-	Name              string     `json:"name"`
-	Type              string     `json:"type"`
-	Enabled           bool       `json:"enabled"`
-	CronExpr          string     `json:"cronExpr"`
-	StorageTargetID   uint       `json:"storageTargetId"`
-	StorageTargetName string     `json:"storageTargetName"`
-	RetentionDays     int        `json:"retentionDays"`
-	Compression       string     `json:"compression"`
-	Encrypt           bool       `json:"encrypt"`
-	MaxBackups        int        `json:"maxBackups"`
-	LastRunAt         *time.Time `json:"lastRunAt,omitempty"`
-	LastStatus        string     `json:"lastStatus"`
-	UpdatedAt         time.Time  `json:"updatedAt"`
+	ID                 uint       `json:"id"`
+	Name               string     `json:"name"`
+	Type               string     `json:"type"`
+	Enabled            bool       `json:"enabled"`
+	CronExpr           string     `json:"cronExpr"`
+	StorageTargetID    uint       `json:"storageTargetId"`              // deprecated: 取第一个
+	StorageTargetName  string     `json:"storageTargetName"`            // deprecated: 取第一个
+	StorageTargetIDs   []uint     `json:"storageTargetIds"`
+	StorageTargetNames []string   `json:"storageTargetNames"`
+	RetentionDays      int        `json:"retentionDays"`
+	Compression        string     `json:"compression"`
+	Encrypt            bool       `json:"encrypt"`
+	MaxBackups         int        `json:"maxBackups"`
+	LastRunAt          *time.Time `json:"lastRunAt,omitempty"`
+	LastStatus         string     `json:"lastStatus"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
 }
 
 type BackupTaskDetail struct {
 	BackupTaskSummary
 	SourcePath      string    `json:"sourcePath"`
+	SourcePaths     []string  `json:"sourcePaths"`
 	ExcludePatterns []string  `json:"excludePatterns"`
 	DBHost          string    `json:"dbHost"`
 	DBPort          int       `json:"dbPort"`
@@ -227,19 +232,33 @@ func (s *BackupTaskService) Toggle(ctx context.Context, id uint, enabled bool) (
 	return &returnValue, nil
 }
 
+// resolveStorageTargetIDs 统一处理新旧字段，返回有效的存储目标 ID 列表
+func resolveStorageTargetIDs(input BackupTaskUpsertInput) []uint {
+	if len(input.StorageTargetIDs) > 0 {
+		return input.StorageTargetIDs
+	}
+	if input.StorageTargetID > 0 {
+		return []uint{input.StorageTargetID}
+	}
+	return nil
+}
+
 func (s *BackupTaskService) validateInput(ctx context.Context, existing *model.BackupTask, input BackupTaskUpsertInput) error {
 	if strings.TrimSpace(input.Name) == "" {
 		return apperror.BadRequest("BACKUP_TASK_INVALID", "任务名称不能为空", nil)
 	}
-	if input.StorageTargetID == 0 {
-		return apperror.BadRequest("BACKUP_TASK_INVALID", "请选择存储目标", nil)
+	targetIDs := resolveStorageTargetIDs(input)
+	if len(targetIDs) == 0 {
+		return apperror.BadRequest("BACKUP_TASK_INVALID", "请选择至少一个存储目标", nil)
 	}
-	target, err := s.targets.FindByID(ctx, input.StorageTargetID)
-	if err != nil {
-		return apperror.Internal("BACKUP_TASK_STORAGE_LOOKUP_FAILED", "无法检查存储目标", err)
-	}
-	if target == nil {
-		return apperror.BadRequest("BACKUP_STORAGE_TARGET_INVALID", "关联的存储目标不存在", nil)
+	for _, tid := range targetIDs {
+		target, err := s.targets.FindByID(ctx, tid)
+		if err != nil {
+			return apperror.Internal("BACKUP_TASK_STORAGE_LOOKUP_FAILED", "无法检查存储目标", err)
+		}
+		if target == nil {
+			return apperror.BadRequest("BACKUP_STORAGE_TARGET_INVALID", fmt.Sprintf("关联的存储目标 %d 不存在", tid), nil)
+		}
 	}
 	if input.RetentionDays < 0 {
 		return apperror.BadRequest("BACKUP_TASK_INVALID", "保留天数不能小于 0", nil)
@@ -260,7 +279,8 @@ func (s *BackupTaskService) validateInput(ctx context.Context, existing *model.B
 func validateTaskTypeSpecificFields(input BackupTaskUpsertInput, passwordRequired bool) error {
 	switch normalizeBackupTaskType(input.Type) {
 	case "file":
-		if strings.TrimSpace(input.SourcePath) == "" {
+		hasSourcePaths := len(resolveSourcePaths(input)) > 0
+		if !hasSourcePaths {
 			return apperror.BadRequest("BACKUP_TASK_INVALID", "文件备份必须填写源路径", nil)
 		}
 	case "mysql", "postgresql":
@@ -294,6 +314,10 @@ func (s *BackupTaskService) buildTask(existing *model.BackupTask, input BackupTa
 	if err != nil {
 		return nil, apperror.BadRequest("BACKUP_TASK_INVALID", "排除规则格式不合法", err)
 	}
+	sourcePathsJSON, err := encodeSourcePaths(resolveSourcePaths(input))
+	if err != nil {
+		return nil, apperror.BadRequest("BACKUP_TASK_INVALID", "源路径格式不合法", err)
+	}
 	passwordCiphertext := ""
 	if existing != nil {
 		passwordCiphertext = existing.DBPasswordCiphertext
@@ -313,12 +337,30 @@ func (s *BackupTaskService) buildTask(existing *model.BackupTask, input BackupTa
 	if maxBackups == 0 {
 		maxBackups = 10
 	}
+	targetIDs := resolveStorageTargetIDs(input)
+	// 保持旧字段兼容：取第一个
+	primaryTargetID := uint(0)
+	if len(targetIDs) > 0 {
+		primaryTargetID = targetIDs[0]
+	}
+	// 构建多对多关联
+	storageTargets := make([]model.StorageTarget, len(targetIDs))
+	for i, tid := range targetIDs {
+		storageTargets[i] = model.StorageTarget{ID: tid}
+	}
+	// 向后兼容：SourcePath 取第一个
+	resolvedPaths := resolveSourcePaths(input)
+	primarySourcePath := strings.TrimSpace(input.SourcePath)
+	if len(resolvedPaths) > 0 {
+		primarySourcePath = resolvedPaths[0]
+	}
 	item := &model.BackupTask{
 		Name:                 strings.TrimSpace(input.Name),
 		Type:                 normalizeBackupTaskType(input.Type),
 		Enabled:              input.Enabled,
 		CronExpr:             strings.TrimSpace(input.CronExpr),
-		SourcePath:           strings.TrimSpace(input.SourcePath),
+		SourcePath:           primarySourcePath,
+		SourcePaths:          sourcePathsJSON,
 		ExcludePatterns:      excludePatterns,
 		DBHost:               strings.TrimSpace(input.DBHost),
 		DBPort:               input.DBPort,
@@ -326,7 +368,8 @@ func (s *BackupTaskService) buildTask(existing *model.BackupTask, input BackupTa
 		DBPasswordCiphertext: passwordCiphertext,
 		DBName:               strings.TrimSpace(input.DBName),
 		DBPath:               strings.TrimSpace(input.DBPath),
-		StorageTargetID:      input.StorageTargetID,
+		StorageTargetID:      primaryTargetID,
+		StorageTargets:       storageTargets,
 		RetentionDays:        input.RetentionDays,
 		Compression:          compression,
 		Encrypt:              input.Encrypt,
@@ -346,9 +389,14 @@ func (s *BackupTaskService) toDetail(item *model.BackupTask) (*BackupTaskDetail,
 	if err != nil {
 		return nil, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析备份任务配置", err)
 	}
+	sourcePaths, err := decodeSourcePaths(item.SourcePaths)
+	if err != nil {
+		return nil, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析源路径配置", err)
+	}
 	detail := &BackupTaskDetail{
 		BackupTaskSummary: toBackupTaskSummary(item),
 		SourcePath:        item.SourcePath,
+		SourcePaths:       sourcePaths,
 		ExcludePatterns:   excludePatterns,
 		DBHost:            item.DBHost,
 		DBPort:            item.DBPort,
@@ -364,25 +412,45 @@ func (s *BackupTaskService) toDetail(item *model.BackupTask) (*BackupTaskDetail,
 }
 
 func toBackupTaskSummary(item *model.BackupTask) BackupTaskSummary {
-	storageTargetName := ""
-	if item != nil {
-		storageTargetName = item.StorageTarget.Name
+	// 从多对多关联提取 IDs 和 Names
+	var targetIDs []uint
+	var targetNames []string
+	if len(item.StorageTargets) > 0 {
+		for _, t := range item.StorageTargets {
+			targetIDs = append(targetIDs, t.ID)
+			targetNames = append(targetNames, t.Name)
+		}
+	} else if item.StorageTargetID > 0 {
+		// 回退到旧字段
+		targetIDs = []uint{item.StorageTargetID}
+		targetNames = []string{item.StorageTarget.Name}
+	}
+	// 向后兼容：取第一个
+	primaryID := uint(0)
+	primaryName := ""
+	if len(targetIDs) > 0 {
+		primaryID = targetIDs[0]
+	}
+	if len(targetNames) > 0 {
+		primaryName = targetNames[0]
 	}
 	return BackupTaskSummary{
-		ID:                item.ID,
-		Name:              item.Name,
-		Type:              normalizeBackupTaskType(item.Type),
-		Enabled:           item.Enabled,
-		CronExpr:          item.CronExpr,
-		StorageTargetID:   item.StorageTargetID,
-		StorageTargetName: storageTargetName,
-		RetentionDays:     item.RetentionDays,
-		Compression:       item.Compression,
-		Encrypt:           item.Encrypt,
-		MaxBackups:        item.MaxBackups,
-		LastRunAt:         item.LastRunAt,
-		LastStatus:        item.LastStatus,
-		UpdatedAt:         item.UpdatedAt,
+		ID:                 item.ID,
+		Name:               item.Name,
+		Type:               normalizeBackupTaskType(item.Type),
+		Enabled:            item.Enabled,
+		CronExpr:           item.CronExpr,
+		StorageTargetID:    primaryID,
+		StorageTargetName:  primaryName,
+		StorageTargetIDs:   targetIDs,
+		StorageTargetNames: targetNames,
+		RetentionDays:      item.RetentionDays,
+		Compression:        item.Compression,
+		Encrypt:            item.Encrypt,
+		MaxBackups:         item.MaxBackups,
+		LastRunAt:          item.LastRunAt,
+		LastStatus:         item.LastStatus,
+		UpdatedAt:          item.UpdatedAt,
 	}
 }
 
@@ -399,6 +467,47 @@ func encodeExcludePatterns(value []string) (string, error) {
 
 func decodeExcludePatterns(value string) ([]string, error) {
 	if strings.TrimSpace(value) == "" {
+		return []string{}, nil
+	}
+	var items []string
+	if err := json.Unmarshal([]byte(value), &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// resolveSourcePaths 统一处理 sourcePaths / sourcePath，返回有效路径列表
+func resolveSourcePaths(input BackupTaskUpsertInput) []string {
+	if len(input.SourcePaths) > 0 {
+		var cleaned []string
+		for _, p := range input.SourcePaths {
+			if trimmed := strings.TrimSpace(p); trimmed != "" {
+				cleaned = append(cleaned, trimmed)
+			}
+		}
+		if len(cleaned) > 0 {
+			return cleaned
+		}
+	}
+	if sp := strings.TrimSpace(input.SourcePath); sp != "" {
+		return []string{sp}
+	}
+	return nil
+}
+
+func encodeSourcePaths(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "[]", nil
+	}
+	encoded, err := json.Marshal(paths)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func decodeSourcePaths(value string) ([]string, error) {
+	if strings.TrimSpace(value) == "" || strings.TrimSpace(value) == "[]" {
 		return []string{}, nil
 	}
 	var items []string

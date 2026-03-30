@@ -53,6 +53,7 @@ type StorageTargetSummary struct {
 	Type            string     `json:"type"`
 	Description     string     `json:"description"`
 	Enabled         bool       `json:"enabled"`
+	Starred         bool       `json:"starred"`
 	ConfigVersion   int        `json:"configVersion"`
 	LastTestedAt    *time.Time `json:"lastTestedAt"`
 	LastTestStatus  string     `json:"lastTestStatus"`
@@ -207,6 +208,22 @@ func (s *StorageTargetService) Delete(ctx context.Context, id uint) error {
 		return apperror.Internal("STORAGE_TARGET_DELETE_FAILED", "无法删除存储目标", err)
 	}
 	return nil
+}
+
+func (s *StorageTargetService) ToggleStar(ctx context.Context, id uint) (*StorageTargetSummary, error) {
+	item, err := s.targets.FindByID(ctx, id)
+	if err != nil {
+		return nil, apperror.Internal("STORAGE_TARGET_GET_FAILED", "无法获取存储目标详情", err)
+	}
+	if item == nil {
+		return nil, apperror.New(http.StatusNotFound, "STORAGE_TARGET_NOT_FOUND", "存储目标不存在", fmt.Errorf("storage target %d not found", id))
+	}
+	item.Starred = !item.Starred
+	if err := s.targets.Update(ctx, item); err != nil {
+		return nil, apperror.Internal("STORAGE_TARGET_UPDATE_FAILED", "无法更新存储目标收藏状态", err)
+	}
+	summary := toStorageTargetSummary(item)
+	return &summary, nil
 }
 
 func (s *StorageTargetService) TestConnection(ctx context.Context, input StorageTargetTestInput) error {
@@ -493,6 +510,7 @@ func toStorageTargetSummary(item *model.StorageTarget) StorageTargetSummary {
 		Type:            item.Type,
 		Description:     item.Description,
 		Enabled:         item.Enabled,
+		Starred:         item.Starred,
 		ConfigVersion:   item.ConfigVersion,
 		LastTestedAt:    item.LastTestedAt,
 		LastTestStatus:  item.LastTestStatus,

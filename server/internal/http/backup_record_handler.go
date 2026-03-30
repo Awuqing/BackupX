@@ -16,11 +16,12 @@ import (
 )
 
 type BackupRecordHandler struct {
-	service *service.BackupRecordService
+	service      *service.BackupRecordService
+	auditService *service.AuditService
 }
 
-func NewBackupRecordHandler(recordService *service.BackupRecordService) *BackupRecordHandler {
-	return &BackupRecordHandler{service: recordService}
+func NewBackupRecordHandler(recordService *service.BackupRecordService, auditService *service.AuditService) *BackupRecordHandler {
+	return &BackupRecordHandler{service: recordService, auditService: auditService}
 }
 
 func (h *BackupRecordHandler) List(c *gin.Context) {
@@ -129,6 +130,7 @@ func (h *BackupRecordHandler) Restore(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	recordAudit(c, h.auditService, "backup_record", "restore", "backup_record", fmt.Sprintf("%d", id), "", "")
 	response.Success(c, gin.H{"restored": true})
 }
 
@@ -141,6 +143,7 @@ func (h *BackupRecordHandler) Delete(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	recordAudit(c, h.auditService, "backup_record", "delete", "backup_record", fmt.Sprintf("%d", id), "", "")
 	response.Success(c, gin.H{"deleted": true})
 }
 

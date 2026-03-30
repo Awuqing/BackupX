@@ -13,6 +13,7 @@ import {
   IconDown,
   IconCloud,
   IconDesktop,
+  IconList,
 } from '@arco-design/web-react/icon'
 import { useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -37,6 +38,9 @@ function resolveSelectedKey(pathname: string) {
   if (pathname.startsWith('/settings/notifications')) {
     return '/settings/notifications'
   }
+  if (pathname.startsWith('/audit')) {
+    return '/audit'
+  }
   if (pathname.startsWith('/nodes')) {
     return '/nodes'
   }
@@ -53,6 +57,7 @@ const menuItems = [
   { key: '/storage-targets', label: '存储目标', icon: <IconStorage /> },
   { key: '/nodes', label: '节点管理', icon: <IconDesktop /> },
   { key: '/settings/notifications', label: '通知配置', icon: <IconNotification /> },
+  { key: '/audit', label: '审计日志', icon: <IconList /> },
   { key: '/settings', label: '系统设置', icon: <IconSettings /> },
 ]
 

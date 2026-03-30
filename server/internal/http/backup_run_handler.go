@@ -1,17 +1,20 @@
 package http
 
 import (
+	"fmt"
+
 	"backupx/server/internal/service"
 	"backupx/server/pkg/response"
 	"github.com/gin-gonic/gin"
 )
 
 type BackupRunHandler struct {
-	service *service.BackupExecutionService
+	service      *service.BackupExecutionService
+	auditService *service.AuditService
 }
 
-func NewBackupRunHandler(executionService *service.BackupExecutionService) *BackupRunHandler {
-	return &BackupRunHandler{service: executionService}
+func NewBackupRunHandler(executionService *service.BackupExecutionService, auditService *service.AuditService) *BackupRunHandler {
+	return &BackupRunHandler{service: executionService, auditService: auditService}
 }
 
 func (h *BackupRunHandler) Run(c *gin.Context) {
@@ -24,5 +27,6 @@ func (h *BackupRunHandler) Run(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	recordAudit(c, h.auditService, "backup_task", "run", "backup_task", fmt.Sprintf("%d", id), "", "手动触发备份")
 	response.Success(c, record)
 }

@@ -95,6 +95,14 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	dashboardService := service.NewDashboardService(backupTaskRepo, backupRecordRepo, storageTargetRepo)
 	settingsService := service.NewSettingsService(systemConfigRepo)
 
+	// Audit
+	auditLogRepo := repository.NewAuditLogRepository(db)
+	auditService := service.NewAuditService(auditLogRepo)
+	authService.SetAuditService(auditService)
+
+	// Database discovery
+	databaseDiscoveryService := service.NewDatabaseDiscoveryService(backup.NewOSCommandExecutor())
+
 	// Cluster: Node management
 	nodeRepo := repository.NewNodeRepository(db)
 	nodeService := service.NewNodeService(nodeRepo)
@@ -115,8 +123,10 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 		NotificationService:    notificationService,
 		DashboardService:       dashboardService,
 		SettingsService:        settingsService,
-		NodeService:            nodeService,
-		JWTManager:             jwtManager,
+		NodeService:              nodeService,
+		DatabaseDiscoveryService: databaseDiscoveryService,
+		AuditService:            auditService,
+		JWTManager:               jwtManager,
 		UserRepository:         userRepo,
 		SystemConfigRepo:       systemConfigRepo,
 	})

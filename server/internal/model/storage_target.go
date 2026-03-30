@@ -8,6 +8,7 @@ type StorageTarget struct {
 	Type             string     `gorm:"size:32;index;not null" json:"type"`
 	Description      string     `gorm:"size:255" json:"description"`
 	Enabled          bool       `gorm:"not null;default:true" json:"enabled"`
+	Starred          bool       `gorm:"not null;default:false" json:"starred"`
 	ConfigCiphertext string     `gorm:"column:config_ciphertext;type:text;not null" json:"-"`
 	ConfigVersion    int        `gorm:"not null;default:1" json:"configVersion"`
 	LastTestedAt     *time.Time `gorm:"column:last_tested_at" json:"lastTestedAt,omitempty"`

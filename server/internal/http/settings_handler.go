@@ -9,10 +9,11 @@ import (
 
 type SettingsHandler struct {
 	settingsService *service.SettingsService
+	auditService    *service.AuditService
 }
 
-func NewSettingsHandler(settingsService *service.SettingsService) *SettingsHandler {
-	return &SettingsHandler{settingsService: settingsService}
+func NewSettingsHandler(settingsService *service.SettingsService, auditService *service.AuditService) *SettingsHandler {
+	return &SettingsHandler{settingsService: settingsService, auditService: auditService}
 }
 
 func (h *SettingsHandler) Get(c *gin.Context) {
@@ -35,5 +36,6 @@ func (h *SettingsHandler) Update(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	recordAudit(c, h.auditService, "settings", "update", "settings", "", "", "")
 	response.Success(c, settings)
 }

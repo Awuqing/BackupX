@@ -1,7 +1,7 @@
 import { Alert, Button, Descriptions, Drawer, Space, Spin, Tag, Typography } from '@arco-design/web-react'
 import { useEffect, useMemo, useState } from 'react'
 import { deleteBackupRecord, downloadBackupRecord, getBackupRecord, restoreBackupRecord, streamBackupRecordLogs } from '../../services/backup-records'
-import type { BackupLogEvent, BackupRecordDetail, BackupRecordStatus } from '../../types/backup-records'
+import type { BackupLogEvent, BackupRecordDetail, BackupRecordStatus, StorageUploadResultItem } from '../../types/backup-records'
 import { resolveErrorMessage } from '../../utils/error'
 import { formatBytes, formatDateTime, formatDuration } from '../../utils/format'
 
@@ -221,6 +221,19 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
               删除
             </Button>
           </Space>
+          {record.storageUploadResults && record.storageUploadResults.length > 1 && (
+            <div>
+              <Typography.Title heading={6}>存储目标上传结果</Typography.Title>
+              <Descriptions
+                column={1}
+                data={record.storageUploadResults.map((r: StorageUploadResultItem) => ({
+                  label: r.storageTargetName,
+                  value: r.status === 'success' ? '上传成功' : `上传失败: ${r.error || '未知错误'}`,
+                }))}
+              />
+            </div>
+          )}
+
           <div>
             <Typography.Title heading={6}>执行日志</Typography.Title>
             <div className="log-viewer">{logText || '暂无日志输出'}</div>

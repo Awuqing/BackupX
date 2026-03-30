@@ -64,7 +64,7 @@ Supports **multi-node cluster management** for unified control of backup tasks a
 ## Features
 
 ### 📦 Multiple Backup Types
-- **Files / Directories** — Custom exclude rules (e.g. `node_modules`, `*.log`)
+- **Files / Directories** — Multi-source path backup, custom exclude rules (e.g. `node_modules`, `*.log`)
 - **MySQL** — Via native `mysqldump` tool
 - **SQLite** — Safe file copy
 - **PostgreSQL** — Via native `pg_dump` tool
@@ -103,11 +103,13 @@ Supports **multi-node cluster management** for unified control of backup tasks a
 - Optional backup file encryption
 - Login rate limiting (brute force protection)
 - Node Token authentication (one-time display, secure transport)
+- CLI password reset (Docker users can run `docker exec` — no email recovery needed)
 
 ### 📊 Monitoring & Notifications
 - Dashboard stats (success rate, storage usage, backup trend charts)
 - Email / Webhook / Telegram notifications
 - Real-time backup execution logs (SSE)
+- **Audit Logs** — Full operation traceability, records login, task CRUD, backup execution/restore and other key events
 
 ### 🌐 Other
 - Chinese & English i18n
@@ -311,6 +313,7 @@ BackupX/
 │       │   ├── storage-targets/   #     Storage targets
 │       │   ├── nodes/             #     Node management
 │       │   ├── notifications/     #     Notification settings
+│       │   ├── audit/             #     Audit logs
 │       │   ├── settings/          #     System settings
 │       │   └── login/             #     Login page
 │       ├── services/              #   API request wrappers
@@ -408,6 +411,12 @@ docker build -t backupx .
 docker run -d --name backupx -p 8340:8340 -v backupx-data:/app/data backupx
 ```
 
+**Password Reset** (when you forget the admin password):
+
+```bash
+docker exec -it backupx /app/bin/backupx reset-password --username admin --password newpass123
+```
+
 Override configuration via environment variables:
 
 ```bash
@@ -434,6 +443,18 @@ scp server/config.example.yaml your-server:/etc/backupx/config.yaml
 
 # 3. Start
 ssh your-server '/opt/backupx/bin/backupx -config /etc/backupx/config.yaml'
+```
+
+### Password Reset
+
+When you forget the admin password, reset it via CLI (requires server shell access):
+
+```bash
+# Bare metal
+./backupx reset-password --username admin --password newpass123
+
+# Docker
+docker exec -it backupx /app/bin/backupx reset-password --username admin --password newpass123
 ```
 
 ### Nginx Config Example
@@ -492,6 +513,7 @@ All APIs are prefixed with `/api` and use JWT Bearer Token authentication (unles
 | | `POST /api/notifications/:id/test` | Test saved notification |
 | **Dashboard** | `GET /api/dashboard/stats` | Overview statistics |
 | | `GET /api/dashboard/timeline` | Backup trend timeline |
+| **Audit Logs** | `GET /api/audit-logs` | Audit log list (with category filter/pagination) |
 | **System** | `GET /api/system/info` | System info (version/disk) |
 | | `GET/PUT /api/settings` | System settings |
 

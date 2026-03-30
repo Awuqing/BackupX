@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"backupx/server/internal/apperror"
@@ -37,9 +38,33 @@ func (noopBackupNotifier) NotifyBackupResult(context.Context, BackupExecutionNot
 	return nil
 }
 
+type StorageUploadResultItem struct {
+	StorageTargetID   uint   `json:"storageTargetId"`
+	StorageTargetName string `json:"storageTargetName"`
+	Status            string `json:"status"`
+	StoragePath       string `json:"storagePath,omitempty"`
+	FileSize          int64  `json:"fileSize,omitempty"`
+	Error             string `json:"error,omitempty"`
+}
+
 type DownloadedArtifact struct {
 	FileName string
 	Reader   io.ReadCloser
+}
+
+// collectTargetIDs 获取任务关联的所有存储目标 ID
+func collectTargetIDs(task *model.BackupTask) []uint {
+	if len(task.StorageTargets) > 0 {
+		ids := make([]uint, len(task.StorageTargets))
+		for i, t := range task.StorageTargets {
+			ids[i] = t.ID
+		}
+		return ids
+	}
+	if task.StorageTargetID > 0 {
+		return []uint{task.StorageTargetID}
+	}
+	return nil
 }
 
 type BackupExecutionService struct {
@@ -194,7 +219,12 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 		return nil, apperror.New(404, "BACKUP_TASK_NOT_FOUND", "备份任务不存在", fmt.Errorf("backup task %d not found", id))
 	}
 	startedAt := s.now()
-	record := &model.BackupRecord{TaskID: task.ID, StorageTargetID: task.StorageTargetID, Status: "running", StartedAt: startedAt}
+	// 取第一个存储目标 ID 做兼容
+	primaryTargetID := task.StorageTargetID
+	if tids := collectTargetIDs(task); len(tids) > 0 {
+		primaryTargetID = tids[0]
+	}
+	record := &model.BackupRecord{TaskID: task.ID, StorageTargetID: primaryTargetID, Status: "running", StartedAt: startedAt}
 	if err := s.records.Create(ctx, record); err != nil {
 		return nil, apperror.Internal("BACKUP_RECORD_CREATE_FAILED", "无法创建备份记录", err)
 	}
@@ -224,9 +254,19 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	var fileName string
 	var fileSize int64
 	var storagePath string
+	var uploadResults []StorageUploadResultItem
 	completeRecord := func() {
 		if finalizeErr := s.finalizeRecord(ctx, task, recordID, startedAt, status, errMessage, logger.String(), fileName, fileSize, storagePath); finalizeErr != nil {
 			logger.Errorf("写回备份记录失败：%v", finalizeErr)
+		}
+		// 写入多目标上传结果
+		if len(uploadResults) > 0 {
+			if resultsJSON, marshalErr := json.Marshal(uploadResults); marshalErr == nil {
+				if record, findErr := s.records.FindByID(ctx, recordID); findErr == nil && record != nil {
+					record.StorageUploadResults = string(resultsJSON)
+					_ = s.records.Update(ctx, record)
+				}
+			}
 		}
 		if err := s.notifier.NotifyBackupResult(ctx, BackupExecutionNotification{Task: task, Record: &model.BackupRecord{ID: recordID, TaskID: task.ID, Status: status, FileName: fileName, FileSize: fileSize, StoragePath: storagePath, ErrorMessage: errMessage, StartedAt: startedAt}, Error: buildOptionalError(errMessage)}); err != nil {
 			logger.Warnf("发送备份通知失败：%v", err)
@@ -239,12 +279,6 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	if err != nil {
 		errMessage = err.Error()
 		logger.Errorf("构建任务运行时配置失败：%v", err)
-		return
-	}
-	provider, err := s.resolveProvider(ctx, task.StorageTargetID)
-	if err != nil {
-		errMessage = err.Error()
-		logger.Errorf("创建存储客户端失败：%v", err)
 		return
 	}
 	runner, err := s.runnerRegistry.Runner(spec.Type)
@@ -290,31 +324,83 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	fileSize = info.Size()
 	fileName = filepath.Base(finalPath)
 	storagePath = backup.BuildStorageKey(task.Type, startedAt, fileName)
-	artifact, err := os.Open(finalPath)
-	if err != nil {
-		errMessage = err.Error()
-		logger.Errorf("打开备份文件失败：%v", err)
+
+	// 收集所有存储目标
+	targetIDs := collectTargetIDs(task)
+	if len(targetIDs) == 0 {
+		errMessage = "没有关联的存储目标"
+		logger.Errorf("没有关联的存储目标")
 		return
 	}
-	defer artifact.Close()
-	logger.Infof("开始上传备份到存储目标")
-	if err := provider.Upload(ctx, storagePath, artifact, fileSize, map[string]string{"taskId": fmt.Sprintf("%d", task.ID), "recordId": fmt.Sprintf("%d", recordID)}); err != nil {
-		errMessage = err.Error()
-		logger.Errorf("上传备份文件失败：%v", err)
-		return
-	}
-	if s.retention != nil {
-		cleanupResult, cleanupErr := s.retention.Cleanup(ctx, task, provider)
-		if cleanupErr != nil {
-			logger.Warnf("执行保留策略失败：%v", cleanupErr)
-		} else {
-			for _, warning := range cleanupResult.Warnings {
-				logger.Warnf("保留策略警告：%s", warning)
+
+	// 并行上传到所有目标
+	uploadResults = make([]StorageUploadResultItem, len(targetIDs))
+	var wg sync.WaitGroup
+	for i, tid := range targetIDs {
+		wg.Add(1)
+		go func(index int, targetID uint) {
+			defer wg.Done()
+			target, findErr := s.targets.FindByID(ctx, targetID)
+			targetName := fmt.Sprintf("target-%d", targetID)
+			if findErr == nil && target != nil {
+				targetName = target.Name
 			}
+			provider, resolveErr := s.resolveProvider(ctx, targetID)
+			if resolveErr != nil {
+				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: resolveErr.Error()}
+				logger.Warnf("存储目标 %s 创建客户端失败：%v", targetName, resolveErr)
+				return
+			}
+			artifact, openErr := os.Open(finalPath)
+			if openErr != nil {
+				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: openErr.Error()}
+				logger.Warnf("存储目标 %s 打开备份文件失败：%v", targetName, openErr)
+				return
+			}
+			defer artifact.Close()
+			logger.Infof("开始上传备份到存储目标：%s", targetName)
+			if uploadErr := provider.Upload(ctx, storagePath, artifact, fileSize, map[string]string{"taskId": fmt.Sprintf("%d", task.ID), "recordId": fmt.Sprintf("%d", recordID)}); uploadErr != nil {
+				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: uploadErr.Error()}
+				logger.Warnf("存储目标 %s 上传失败：%v", targetName, uploadErr)
+				return
+			}
+			uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "success", StoragePath: storagePath, FileSize: fileSize}
+			logger.Infof("存储目标 %s 上传成功", targetName)
+			// 每个成功目标独立执行保留策略
+			if s.retention != nil {
+				cleanupResult, cleanupErr := s.retention.Cleanup(ctx, task, provider)
+				if cleanupErr != nil {
+					logger.Warnf("存储目标 %s 执行保留策略失败：%v", targetName, cleanupErr)
+				} else {
+					for _, warning := range cleanupResult.Warnings {
+						logger.Warnf("存储目标 %s 保留策略警告：%s", targetName, warning)
+					}
+				}
+			}
+		}(i, tid)
+	}
+	wg.Wait()
+
+	// 汇总结果：任意一个 success → 整体 success
+	anySuccess := false
+	var failedMessages []string
+	for _, r := range uploadResults {
+		if r.Status == "success" {
+			anySuccess = true
+		} else if r.Error != "" {
+			failedMessages = append(failedMessages, fmt.Sprintf("%s: %s", r.StorageTargetName, r.Error))
 		}
 	}
-	status = "success"
-	logger.Infof("备份执行完成")
+	if anySuccess {
+		status = "success"
+		if len(failedMessages) > 0 {
+			logger.Warnf("部分存储目标上传失败：%s", strings.Join(failedMessages, "; "))
+		}
+		logger.Infof("备份执行完成")
+	} else {
+		errMessage = strings.Join(failedMessages, "; ")
+		logger.Errorf("所有存储目标上传均失败")
+	}
 }
 
 func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time, status string, errorMessage string, logContent string, fileName string, fileSize int64, storagePath string) error {
@@ -376,11 +462,18 @@ func (s *BackupExecutionService) buildTaskSpec(task *model.BackupTask, startedAt
 		}
 		password = string(plain)
 	}
+	sourcePaths := []string{}
+	if strings.TrimSpace(task.SourcePaths) != "" {
+		if err := json.Unmarshal([]byte(task.SourcePaths), &sourcePaths); err != nil {
+			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析源路径配置", err)
+		}
+	}
 	return backup.TaskSpec{
 		ID:                task.ID,
 		Name:              task.Name,
 		Type:              task.Type,
 		SourcePath:        task.SourcePath,
+		SourcePaths:       sourcePaths,
 		ExcludePatterns:   excludePatterns,
 		StorageTargetID:   task.StorageTargetID,
 		StorageTargetType: "",

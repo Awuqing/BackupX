@@ -10,6 +10,8 @@ export interface BackupTaskSummary {
   cronExpr: string
   storageTargetId: number
   storageTargetName: string
+  storageTargetIds: number[]
+  storageTargetNames: string[]
   nodeId: number
   nodeName?: string
   tags: string
@@ -24,6 +26,7 @@ export interface BackupTaskSummary {
 
 export interface BackupTaskDetail extends BackupTaskSummary {
   sourcePath: string
+  sourcePaths: string[]
   excludePatterns: string[]
   dbHost: string
   dbPort: number
@@ -40,6 +43,7 @@ export interface BackupTaskPayload {
   enabled: boolean
   cronExpr: string
   sourcePath: string
+  sourcePaths: string[]
   excludePatterns: string[]
   dbHost: string
   dbPort: number
@@ -48,6 +52,7 @@ export interface BackupTaskPayload {
   dbName: string
   dbPath: string
   storageTargetId: number
+  storageTargetIds: number[]
   nodeId: number
   tags: string
   retentionDays: number

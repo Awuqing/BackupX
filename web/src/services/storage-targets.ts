@@ -74,6 +74,11 @@ export interface StorageTargetUsage {
   totalSize: number
 }
 
+export async function toggleStorageTargetStar(id: number) {
+  const response = await http.put<ApiEnvelope<StorageTargetSummary>>(`/storage-targets/${id}/star`)
+  return unwrap(response.data)
+}
+
 export async function getStorageTargetUsage(id: number) {
   const response = await http.get<ApiEnvelope<StorageTargetUsage>>(`/storage-targets/${id}/usage`)
   return unwrap(response.data)

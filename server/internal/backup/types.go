@@ -19,6 +19,7 @@ type TaskSpec struct {
 	Name              string
 	Type              string
 	SourcePath        string
+	SourcePaths       []string
 	ExcludePatterns   []string
 	Database          DatabaseSpec
 	StorageTargetID   uint

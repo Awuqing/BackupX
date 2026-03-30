@@ -29,7 +29,7 @@ export function BackupTaskDetailDrawer({ visible, task, onCancel }: BackupTaskDe
             border
             data={[
               { label: 'Cron', value: task.cronExpr || '仅手动执行' },
-              { label: '存储目标', value: task.storageTargetName || task.storageTargetId },
+              { label: '存储目标', value: task.storageTargetNames?.length > 0 ? task.storageTargetNames.join('、') : (task.storageTargetName || task.storageTargetId) },
               { label: '保留天数', value: task.retentionDays },
               { label: '最大保留份数', value: task.maxBackups },
               { label: '压缩', value: task.compression },
@@ -40,7 +40,15 @@ export function BackupTaskDetailDrawer({ visible, task, onCancel }: BackupTaskDe
             ]}
           />
           {task.type === 'file' ? (
-            <Descriptions border column={1} data={[{ label: '源路径', value: task.sourcePath || '-' }, { label: '排除规则', value: task.excludePatterns.join(', ') || '-' }]} />
+            <Descriptions border column={1} data={[
+              {
+                label: '源路径',
+                value: task.sourcePaths?.length > 0
+                  ? task.sourcePaths.join('\n')
+                  : (task.sourcePath || '-'),
+              },
+              { label: '排除规则', value: task.excludePatterns.join(', ') || '-' },
+            ]} />
           ) : null}
           {task.type === 'sqlite' ? <Descriptions border column={1} data={[{ label: 'SQLite 路径', value: task.dbPath || '-' }]} /> : null}
           {task.type === 'mysql' || task.type === 'postgresql' ? (

@@ -1,6 +1,8 @@
 package http
 
 import (
+	"fmt"
+
 	"backupx/server/internal/apperror"
 	"backupx/server/internal/service"
 	"backupx/server/pkg/response"
@@ -8,11 +10,12 @@ import (
 )
 
 type BackupTaskHandler struct {
-	service *service.BackupTaskService
+	service      *service.BackupTaskService
+	auditService *service.AuditService
 }
 
-func NewBackupTaskHandler(taskService *service.BackupTaskService) *BackupTaskHandler {
-	return &BackupTaskHandler{service: taskService}
+func NewBackupTaskHandler(taskService *service.BackupTaskService, auditService *service.AuditService) *BackupTaskHandler {
+	return &BackupTaskHandler{service: taskService, auditService: auditService}
 }
 
 func (h *BackupTaskHandler) List(c *gin.Context) {
@@ -48,6 +51,7 @@ func (h *BackupTaskHandler) Create(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	recordAudit(c, h.auditService, "backup_task", "create", "backup_task", fmt.Sprintf("%d", item.ID), item.Name, "")
 	response.Success(c, item)
 }
 
@@ -66,6 +70,7 @@ func (h *BackupTaskHandler) Update(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	recordAudit(c, h.auditService, "backup_task", "update", "backup_task", fmt.Sprintf("%d", item.ID), item.Name, "")
 	response.Success(c, item)
 }
 
@@ -78,6 +83,7 @@ func (h *BackupTaskHandler) Delete(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	recordAudit(c, h.auditService, "backup_task", "delete", "backup_task", fmt.Sprintf("%d", id), "", "")
 	response.Success(c, gin.H{"deleted": true})
 }
 
@@ -105,5 +111,10 @@ func (h *BackupTaskHandler) Toggle(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	action := "enable"
+	if !enabled {
+		action = "disable"
+	}
+	recordAudit(c, h.auditService, "backup_task", action, "backup_task", fmt.Sprintf("%d", id), item.Name, "")
 	response.Success(c, item)
 }

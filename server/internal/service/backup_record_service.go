@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -38,8 +39,9 @@ type BackupRecordSummary struct {
 
 type BackupRecordDetail struct {
 	BackupRecordSummary
-	LogContent string            `json:"logContent"`
-	LogEvents  []backup.LogEvent `json:"logEvents,omitempty"`
+	LogContent           string                    `json:"logContent"`
+	LogEvents            []backup.LogEvent         `json:"logEvents,omitempty"`
+	StorageUploadResults []StorageUploadResultItem  `json:"storageUploadResults,omitempty"`
 }
 
 type BackupRecordService struct {
@@ -128,6 +130,13 @@ func toBackupRecordDetail(item *model.BackupRecord, logHub *backup.LogHub) *Back
 				lines = append(lines, event.Message)
 			}
 			detail.LogContent = strings.Join(lines, "\n")
+		}
+	}
+	// 解析多目标上传结果
+	if strings.TrimSpace(item.StorageUploadResults) != "" {
+		var uploadResults []StorageUploadResultItem
+		if err := json.Unmarshal([]byte(item.StorageUploadResults), &uploadResults); err == nil {
+			detail.StorageUploadResults = uploadResults
 		}
 	}
 	return detail

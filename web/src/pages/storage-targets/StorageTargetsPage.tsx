@@ -9,6 +9,7 @@ import {
   startGoogleDriveAuth,
   testSavedStorageTarget,
   testStorageTarget,
+  toggleStorageTargetStar,
   updateStorageTarget,
 } from '../../services/storage-targets'
 import type { StorageConnectionTestResult, StorageTargetDetail, StorageTargetPayload, StorageTargetSummary } from '../../types/storage-targets'
@@ -148,6 +149,15 @@ export function StorageTargetsPage() {
     }
   }
 
+  async function handleToggleStar(id: number) {
+    try {
+      await toggleStorageTargetStar(id)
+      await loadTargets()
+    } catch (starError) {
+      Message.error(resolveErrorMessage(starError))
+    }
+  }
+
   async function handleGoogleDriveAuth(value: StorageTargetPayload, targetId?: number) {
     try {
       const result = await startGoogleDriveAuth(value, targetId)
@@ -194,7 +204,7 @@ export function StorageTargetsPage() {
                   <Space size="large" align="start" style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
                     <div>
                       <Typography.Title heading={6} style={{ marginBottom: 4 }}>
-                        {target.name}
+                        {target.starred ? '★ ' : ''}{target.name}
                       </Typography.Title>
                       <Space>
                         {getStorageTargetTypeLabel(target.type) && <Tag color="arcoblue" bordered>{getStorageTargetTypeLabel(target.type)}</Tag>}
@@ -211,6 +221,9 @@ export function StorageTargetsPage() {
                   <Typography.Text type="secondary">更新时间：{target.updatedAt}</Typography.Text>
 
                   <Space wrap size="mini">
+                    <Button size="small" type="text" onClick={() => void handleToggleStar(target.id)}>
+                      {target.starred ? '取消收藏' : '收藏'}
+                    </Button>
                     <Button size="small" type="text" onClick={() => void openEdit(target.id)} loading={submitting && editingTarget?.id === target.id}>
                       编辑
                     </Button>

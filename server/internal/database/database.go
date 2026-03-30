@@ -23,8 +23,15 @@ func Open(cfg config.DatabaseConfig, logger *zap.Logger) (*gorm.DB, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
-	if err := db.AutoMigrate(&model.User{}, &model.SystemConfig{}, &model.StorageTarget{}, &model.OAuthSession{}, &model.BackupTask{}, &model.BackupRecord{}, &model.Notification{}, &model.Node{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.SystemConfig{}, &model.StorageTarget{}, &model.OAuthSession{}, &model.BackupTask{}, &model.BackupRecord{}, &model.Notification{}, &model.Node{}, &model.BackupTaskStorageTarget{}, &model.AuditLog{}); err != nil {
 		return nil, fmt.Errorf("migrate schema: %w", err)
+	}
+
+	// 一次性数据迁移：从 backup_tasks.storage_target_id 回填到多对多中间表
+	var count int64
+	db.Model(&model.BackupTaskStorageTarget{}).Count(&count)
+	if count == 0 {
+		db.Exec("INSERT INTO backup_task_storage_targets (backup_task_id, storage_target_id) SELECT id, storage_target_id FROM backup_tasks WHERE storage_target_id > 0")
 	}
 
 	logger.Info("database initialized", zap.String("path", cfg.Path))

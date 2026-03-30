@@ -35,7 +35,7 @@ func NewBackupTaskRepository(db *gorm.DB) *GormBackupTaskRepository {
 }
 
 func (r *GormBackupTaskRepository) List(ctx context.Context, options BackupTaskListOptions) ([]model.BackupTask, error) {
-	query := r.db.WithContext(ctx).Model(&model.BackupTask{}).Preload("StorageTarget").Order("updated_at desc")
+	query := r.db.WithContext(ctx).Model(&model.BackupTask{}).Preload("StorageTarget").Preload("StorageTargets").Order("updated_at desc")
 	if options.Type != "" {
 		query = query.Where("type = ?", options.Type)
 	}
@@ -51,7 +51,7 @@ func (r *GormBackupTaskRepository) List(ctx context.Context, options BackupTaskL
 
 func (r *GormBackupTaskRepository) FindByID(ctx context.Context, id uint) (*model.BackupTask, error) {
 	var item model.BackupTask
-	if err := r.db.WithContext(ctx).Preload("StorageTarget").First(&item, id).Error; err != nil {
+	if err := r.db.WithContext(ctx).Preload("StorageTarget").Preload("StorageTargets").First(&item, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -73,7 +73,7 @@ func (r *GormBackupTaskRepository) FindByName(ctx context.Context, name string) 
 
 func (r *GormBackupTaskRepository) ListSchedulable(ctx context.Context) ([]model.BackupTask, error) {
 	var items []model.BackupTask
-	if err := r.db.WithContext(ctx).Preload("StorageTarget").Where("enabled = ? AND cron_expr <> ''", true).Order("id asc").Find(&items).Error; err != nil {
+	if err := r.db.WithContext(ctx).Preload("StorageTarget").Preload("StorageTargets").Where("enabled = ? AND cron_expr <> ''", true).Order("id asc").Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
@@ -97,18 +97,39 @@ func (r *GormBackupTaskRepository) CountEnabled(ctx context.Context) (int64, err
 
 func (r *GormBackupTaskRepository) CountByStorageTargetID(ctx context.Context, storageTargetID uint) (int64, error) {
 	var count int64
-	if err := r.db.WithContext(ctx).Model(&model.BackupTask{}).Where("storage_target_id = ?", storageTargetID).Count(&count).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&model.BackupTaskStorageTarget{}).Where("storage_target_id = ?", storageTargetID).Count(&count).Error; err != nil {
 		return 0, err
 	}
 	return count, nil
 }
 
 func (r *GormBackupTaskRepository) Create(ctx context.Context, item *model.BackupTask) error {
-	return r.db.WithContext(ctx).Create(item).Error
+	if err := r.db.WithContext(ctx).Create(item).Error; err != nil {
+		return err
+	}
+	return r.syncStorageTargets(ctx, item)
 }
 
 func (r *GormBackupTaskRepository) Update(ctx context.Context, item *model.BackupTask) error {
-	return r.db.WithContext(ctx).Save(item).Error
+	if err := r.db.WithContext(ctx).Save(item).Error; err != nil {
+		return err
+	}
+	if len(item.StorageTargets) > 0 {
+		return r.db.WithContext(ctx).Model(item).Association("StorageTargets").Replace(item.StorageTargets)
+	}
+	return nil
+}
+
+// syncStorageTargets 确保中间表数据一致：优先使用 StorageTargets，回退到 StorageTargetID
+func (r *GormBackupTaskRepository) syncStorageTargets(ctx context.Context, item *model.BackupTask) error {
+	targets := item.StorageTargets
+	if len(targets) == 0 && item.StorageTargetID > 0 {
+		targets = []model.StorageTarget{{ID: item.StorageTargetID}}
+	}
+	if len(targets) > 0 {
+		return r.db.WithContext(ctx).Model(item).Association("StorageTargets").Replace(targets)
+	}
+	return nil
 }
 
 func (r *GormBackupTaskRepository) Delete(ctx context.Context, id uint) error {
