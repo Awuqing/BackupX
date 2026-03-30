@@ -1,63 +1,154 @@
+# 自动化发版流水线
+#
+# 触发方式：
+#   1. 推送 tag：git tag v1.2.3 && git push --tags
+#   2. 手动触发：GitHub Actions 页面 → Run workflow → 输入版本号
+#
+# 产出物：
+#   - GitHub Release：linux/amd64 + linux/arm64 预编译 tar.gz
+#   - Docker Hub：awuqing/backupx:latest + awuqing/backupx:v1.2.3（多架构）
+#
+# 前置配置：
+#   在仓库 Settings → Secrets → Actions 添加：
+#   - DOCKERHUB_USERNAME（Docker Hub 用户名）
+#   - DOCKERHUB_TOKEN（Docker Hub Access Token）
+
 name: Release
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（如 v1.2.3）'
+        required: true
+        type: string
 
 permissions:
   contents: write
+  packages: write
+
+# 统一版本号：tag 推送取 ref_name，手动触发取 inputs.version
+env:
+  VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
 jobs:
-  release:
-    name: Build & Release
+  # ─── Job 1: 构建前端 ───
+  build-web:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install & Build
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 1
+
+  # ─── Job 2: 预编译二进制 → GitHub Release ───
+  build-release:
+    name: Build ${{ matrix.goarch }}
+    needs: build-web
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        goos: [linux]
-        goarch: [amd64, arm64]
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.25'
           cache-dependency-path: server/go.sum
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
         with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: web/package-lock.json
+          name: web-dist
+          path: web/dist
 
-      - name: Build frontend
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
-
-      - name: Build backend
+      - name: Build binary
         working-directory: server
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 1
+          CGO_ENABLED: '0'
         run: |
-          go build -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o ../backupx-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/backupx
+          go build \
+            -trimpath \
+            -ldflags "-s -w -X main.version=${{ env.VERSION }}" \
+            -o ../backupx \
+            ./cmd/backupx
 
       - name: Package release
         run: |
-          mkdir -p release
-          cp backupx-${{ matrix.goos }}-${{ matrix.goarch }} release/
-          cp -r web/dist release/web
-          cp server/config.example.yaml release/
-          cp deploy/install.sh release/ 2>/dev/null || true
-          cd release && tar czf ../backupx-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz .
+          ARCHIVE_NAME="backupx-${{ env.VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          mkdir -p "${ARCHIVE_NAME}"
+          cp backupx "${ARCHIVE_NAME}/"
+          cp -r web/dist "${ARCHIVE_NAME}/web"
+          cp server/config.example.yaml "${ARCHIVE_NAME}/"
+          cp deploy/install.sh "${ARCHIVE_NAME}/" 2>/dev/null || true
+          tar czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
 
-      - name: Upload Release Asset
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: backupx-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+          tag_name: ${{ env.VERSION }}
+          files: backupx-${{ env.VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
           generate_release_notes: true
+
+  # ─── Job 3: Docker 多架构 → Docker Hub ───
+  build-docker:
+    name: Build & Push Docker
+    needs: build-web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build & Push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ env.VERSION }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/backupx:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/backupx:${{ env.VERSION }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

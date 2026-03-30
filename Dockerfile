@@ -1,5 +1,22 @@
+# BackupX 多阶段构建
+#
+# 用法：
+#   国际构建（默认）：docker build -t backupx .
+#   国内加速构建：    docker build --build-arg USE_CHINA_MIRROR=true -t backupx .
+#   注入版本号：      docker build --build-arg VERSION=v1.2.3 -t backupx .
+
+# 全局构建参数
+ARG USE_CHINA_MIRROR=false
+
+
 # ---- Stage 1: Build frontend ----
 FROM node:20-alpine AS web-builder
+ARG USE_CHINA_MIRROR
+
+# 国内镜像：npm 使用淘宝源
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+      npm config set registry https://registry.npmmirror.com; \
+    fi
 
 WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
@@ -10,16 +27,29 @@ RUN npm run build
 
 # ---- Stage 2: Build backend ----
 FROM golang:1.25-alpine AS server-builder
+ARG USE_CHINA_MIRROR
+ARG VERSION=dev
+
+# 国内镜像：Go 模块使用七牛代理
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+      go env -w GOPROXY=https://goproxy.cn,direct; \
+    fi
 
 WORKDIR /build/server
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ ./
-RUN go build -trimpath -ldflags="-s -w" -o backupx ./cmd/backupx
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o backupx ./cmd/backupx
 
 
 # ---- Stage 3: Production image ----
 FROM alpine:3.21
+ARG USE_CHINA_MIRROR
+
+# 国内镜像：Alpine apk 使用阿里云源
+RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
+      sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories; \
+    fi
 
 RUN apk add --no-cache \
     nginx \

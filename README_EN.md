@@ -152,6 +152,20 @@ make build
 cd server && ./bin/backupx
 ```
 
+### China Mirror Build
+
+If downloading dependencies is slow due to network restrictions, use China mirror acceleration:
+
+```bash
+# Option 1: Docker build (recommended, one command)
+make docker-cn
+
+# Option 2: Set mirrors manually, then build
+export GOPROXY=https://goproxy.cn,direct
+npm config set registry https://registry.npmmirror.com
+make build
+```
+
 ### Access Web UI
 
 Open `http://your-server:8340` in your browser. First-time use will guide you through creating an admin account.
@@ -376,9 +390,27 @@ make test-web       # npm run test
 # Build frontend and backend
 make build
 
+# Docker build
+make docker
+
+# Docker build with China mirrors
+make docker-cn
+
 # Clean build artifacts
 make clean
 ```
+
+### Release
+
+Push a Git tag to automatically trigger the full release pipeline via GitHub Actions:
+
+```bash
+git tag v1.2.3
+git push --tags
+# GitHub Actions will: compile binaries → publish GitHub Release → push Docker Hub image
+```
+
+You can also manually trigger the Release workflow from the GitHub Actions page.
 
 ## Deployment
 

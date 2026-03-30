@@ -152,6 +152,20 @@ make build
 cd server && ./bin/backupx
 ```
 
+### 国内用户构建
+
+如果因网络原因下载依赖缓慢，可使用国内镜像加速：
+
+```bash
+# 方式一：Docker 构建（推荐，一行搞定）
+make docker-cn
+
+# 方式二：手动设置镜像后裸机构建
+export GOPROXY=https://goproxy.cn,direct          # Go 模块代理
+npm config set registry https://registry.npmmirror.com  # npm 淘宝源
+make build
+```
+
 ### 访问 Web UI
 
 打开浏览器访问 `http://your-server:8340`，首次使用会引导您创建管理员账户。
@@ -375,9 +389,27 @@ make test-web       # npm run test
 # 构建前后端
 make build
 
+# Docker 构建
+make docker
+
+# 国内 Docker 构建（使用国内镜像加速）
+make docker-cn
+
 # 清理构建产物
 make clean
 ```
+
+### 发版
+
+推送 Git tag 即可自动触发 GitHub Actions 完成全部发布流程：
+
+```bash
+git tag v1.2.3
+git push --tags
+# GitHub Actions 自动：编译二进制 → 发布 Release → 推送 Docker Hub 镜像
+```
+
+也可以在 GitHub Actions 页面手动触发 Release workflow，输入版本号即可。
 
 ## Deployment
 
