@@ -17,6 +17,7 @@ type BackupRecord struct {
 	Status               string        `gorm:"size:20;index;not null" json:"status"`
 	FileName             string        `gorm:"column:file_name;size:255" json:"fileName"`
 	FileSize             int64         `gorm:"column:file_size;not null;default:0" json:"fileSize"`
+	Checksum             string        `gorm:"column:checksum;size:64" json:"checksum"`
 	StoragePath          string        `gorm:"column:storage_path;size:500" json:"storagePath"`
 	StorageUploadResults string        `gorm:"column:storage_upload_results;type:text" json:"-"`
 	DurationSeconds      int           `gorm:"column:duration_seconds;not null;default:0" json:"durationSeconds"`

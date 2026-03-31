@@ -19,6 +19,7 @@ export interface BackupRecordSummary {
   status: BackupRecordStatus
   fileName: string
   fileSize: number
+  checksum: string
   storagePath: string
   durationSeconds: number
   errorMessage: string

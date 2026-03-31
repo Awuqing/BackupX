@@ -30,6 +30,7 @@ type BackupRecordSummary struct {
 	Status            string     `json:"status"`
 	FileName          string     `json:"fileName"`
 	FileSize          int64      `json:"fileSize"`
+	Checksum          string     `json:"checksum"`
 	StoragePath       string     `json:"storagePath"`
 	DurationSeconds   int        `json:"durationSeconds"`
 	ErrorMessage      string     `json:"errorMessage"`
@@ -111,6 +112,7 @@ func toBackupRecordSummary(item *model.BackupRecord) BackupRecordSummary {
 		Status:            item.Status,
 		FileName:          item.FileName,
 		FileSize:          item.FileSize,
+		Checksum:          item.Checksum,
 		StoragePath:       item.StoragePath,
 		DurationSeconds:   item.DurationSeconds,
 		ErrorMessage:      item.ErrorMessage,

@@ -55,7 +55,11 @@ func newExecutionTestServices(t *testing.T) (*BackupExecutionService, *BackupRec
 	runnerRegistry := backup.NewRegistry(backup.NewFileRunner(), backup.NewMySQLRunner(nil), backup.NewSQLiteRunner(), backup.NewPostgreSQLRunner(nil))
 	storageRegistry := storage.NewRegistry(localdisk.NewFactory())
 	retentionService := backupretention.NewService(records)
-	executionService := NewBackupExecutionService(tasks, records, targets, storageRegistry, runnerRegistry, logHub, retentionService, cipher, nil, "", 2)
+	tempDir := filepath.Join(baseDir, "tmp")
+	if err := os.MkdirAll(tempDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll tempDir returned error: %v", err)
+	}
+	executionService := NewBackupExecutionService(tasks, records, targets, storageRegistry, runnerRegistry, logHub, retentionService, cipher, nil, tempDir, 2)
 	recordService := NewBackupRecordService(records, executionService, logHub)
 	return executionService, recordService, tasks, targets, records, sourceDir, storageDir
 }
