@@ -21,7 +21,7 @@ import (
 
 type StorageTargetUpsertInput struct {
 	Name        string         `json:"name" binding:"required,min=1,max=128"`
-	Type        string         `json:"type" binding:"required,oneof=local_disk google_drive s3 webdav"`
+	Type        string         `json:"type" binding:"required,oneof=local_disk google_drive s3 webdav aliyun_oss tencent_cos qiniu_kodo ftp rclone"`
 	Description string         `json:"description" binding:"max=255"`
 	Enabled     bool           `json:"enabled"`
 	Config      map[string]any `json:"config" binding:"required"`
