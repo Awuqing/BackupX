@@ -1,5 +1,5 @@
-import { Input, Space, Switch, Tabs, Typography, Radio, Checkbox, Select } from '@arco-design/web-react'
-import { useEffect, useState } from 'react'
+import { Button, Input, Space, Switch, Tabs, Typography, Radio, Select } from '@arco-design/web-react'
+import { useEffect, useMemo, useState } from 'react'
 
 export interface CronInputProps {
   value?: string
@@ -18,6 +18,18 @@ interface CronState {
   week: string
 }
 
+// 常用预设
+const PRESETS = [
+  { label: '每天 02:00', value: '0 2 * * *' },
+  { label: '每天 00:00', value: '0 0 * * *' },
+  { label: '每 6 小时', value: '0 */6 * * *' },
+  { label: '每 12 小时', value: '0 */12 * * *' },
+  { label: '每周日 03:00', value: '0 3 * * 0' },
+  { label: '每月 1 日 02:00', value: '0 2 1 * *' },
+  { label: '每 30 分钟', value: '*/30 * * * *' },
+  { label: '每小时', value: '0 * * * *' },
+]
+
 function parseCron(expr: string): CronState {
   const parts = (expr || DEFAULT_CRON).trim().split(/\s+/)
   return {
@@ -31,6 +43,43 @@ function parseCron(expr: string): CronState {
 
 function stringifyCron(state: CronState): string {
   return `${state.minute} ${state.hour} ${state.day} ${state.month} ${state.week}`
+}
+
+// 将 cron 表达式转为中文可读描述
+function describeCron(expr: string): string {
+  const parts = expr.trim().split(/\s+/)
+  if (parts.length !== 5) return ''
+  const [minute, hour, day, month, week] = parts
+
+  const segments: string[] = []
+
+  // 月
+  if (month !== '*') segments.push(`${month} 月`)
+  // 日
+  if (day !== '*') segments.push(`${day} 日`)
+  // 周
+  if (week !== '*') {
+    const weekNames: Record<string, string> = { '0': '日', '1': '一', '2': '二', '3': '三', '4': '四', '5': '五', '6': '六', '7': '日' }
+    const weekDesc = week.split(',').map((w) => weekNames[w] || w).join('、')
+    segments.push(`星期${weekDesc}`)
+  }
+  // 小时
+  if (hour.includes('/')) {
+    segments.push(`每 ${hour.split('/')[1]} 小时`)
+  } else if (hour !== '*') {
+    segments.push(`${hour.padStart(2, '0')} 时`)
+  }
+  // 分钟
+  if (minute.includes('/')) {
+    segments.push(`每 ${minute.split('/')[1]} 分钟`)
+  } else if (minute !== '*') {
+    segments.push(`${minute.padStart(2, '0')} 分`)
+  } else if (hour !== '*' && !hour.includes('/')) {
+    segments.push('00 分')
+  }
+
+  if (segments.length === 0) return '每分钟执行'
+  return segments.join(' ') + ' 执行'
 }
 
 function generateOptions(min: number, max: number) {
@@ -69,6 +118,8 @@ export function CronInput({ value, onChange }: CronInputProps) {
     }
   }, [value, isAdvanced, internalValue])
 
+  const description = useMemo(() => describeCron(internalValue), [internalValue])
+
   const notifyChange = (nextValue: string) => {
     setInternalValue(nextValue)
     if (onChange) {
@@ -82,6 +133,12 @@ export function CronInput({ value, onChange }: CronInputProps) {
     notifyChange(stringifyCron(nextState))
   }
 
+  const handlePreset = (cronExpr: string) => {
+    setInternalValue(cronExpr)
+    setState(parseCron(cronExpr))
+    if (onChange) onChange(cronExpr)
+  }
+
   const renderPartTab = (
     part: CronPart,
     title: string,
@@ -91,8 +148,7 @@ export function CronInput({ value, onChange }: CronInputProps) {
     const currentVal = state[part]
     const isAny = currentVal === allowAnyVal || currentVal === '*' || currentVal === '?'
     const isSpecific = !isAny && !currentVal.includes('/') && !currentVal.includes('-')
-    
-    // For simplicity in this visual editor, we only support "every" (*) and "specific values" (1,2,3).
+
     const type = isAny ? 'any' : 'specific'
     const specificValues = isSpecific ? currentVal.split(',') : []
 
@@ -105,7 +161,7 @@ export function CronInput({ value, onChange }: CronInputProps) {
             if (val === 'any') {
               handleStateChange(part, allowAnyVal)
             } else {
-              handleStateChange(part, options[0].value) // Default to first valid item
+              handleStateChange(part, options[0].value)
             }
           }}
         >
@@ -128,7 +184,6 @@ export function CronInput({ value, onChange }: CronInputProps) {
                 if (vals.length === 0) {
                   handleStateChange(part, allowAnyVal)
                 } else {
-                  // Sort numerically to keep things neat
                   const sorted = [...vals].sort((a, b) => Number(a) - Number(b))
                   handleStateChange(part, sorted.join(','))
                 }
@@ -144,6 +199,24 @@ export function CronInput({ value, onChange }: CronInputProps) {
 
   return (
     <div className="cron-input-container">
+      {/* 常用预设 */}
+      <div style={{ marginBottom: 12 }}>
+        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>常用预设</Typography.Text>
+        <Space wrap size="small">
+          {PRESETS.map((preset) => (
+            <Button
+              key={preset.value}
+              size="small"
+              type={internalValue === preset.value ? 'primary' : 'secondary'}
+              onClick={() => handlePreset(preset.value)}
+            >
+              {preset.label}
+            </Button>
+          ))}
+        </Space>
+      </div>
+
+      {/* 表达式 + 可读描述 */}
       <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Input
           value={internalValue}
@@ -158,13 +231,12 @@ export function CronInput({ value, onChange }: CronInputProps) {
           placeholder="* * * * *"
         />
         <Space>
-          <Typography.Text type="secondary">高级模式 (手动输入)</Typography.Text>
+          <Typography.Text type="secondary">高级模式</Typography.Text>
           <Switch
             checked={isAdvanced}
             onChange={(checked) => {
               setIsAdvanced(checked)
               if (!checked) {
-                // When switching back to visual, parse the current raw value
                 setState(parseCron(internalValue))
                 notifyChange(stringifyCron(parseCron(internalValue)))
               }
@@ -172,6 +244,13 @@ export function CronInput({ value, onChange }: CronInputProps) {
           />
         </Space>
       </div>
+
+      {/* 中文可读描述 */}
+      {description && (
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12, marginTop: 0 }}>
+          {description}
+        </Typography.Paragraph>
+      )}
 
       {!isAdvanced && (
         <Tabs type="card-gutter" size="small">
