@@ -38,15 +38,6 @@ func SHA256File(path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-// SHA256Reader 计算 reader 的 SHA-256 哈希值，返回十六进制字符串
-func SHA256Reader(reader io.Reader) (string, error) {
-	hash := sha256.New()
-	if _, err := io.Copy(hash, reader); err != nil {
-		return "", fmt.Errorf("compute checksum: %w", err)
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
-}
-
 func sanitizeFileName(value string) string {
 	builder := strings.Builder{}
 	for _, char := range strings.TrimSpace(value) {

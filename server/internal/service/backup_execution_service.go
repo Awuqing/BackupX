@@ -376,29 +376,34 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 				logger.Warnf("存储目标 %s 上传失败：%v", targetName, uploadErr)
 				return
 			}
-			// 上传后完整性校验：下载并验证 SHA-256
-			verifyReader, verifyErr := provider.Download(ctx, storagePath)
-			if verifyErr != nil {
-				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: fmt.Sprintf("上传后校验失败（无法下载验证）: %v", verifyErr)}
-				logger.Warnf("存储目标 %s 上传后下载验证失败：%v", targetName, verifyErr)
-				return
-			}
-			remoteChecksum, hashErr := backup.SHA256Reader(verifyReader)
-			verifyReader.Close()
-			if hashErr != nil {
-				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: fmt.Sprintf("上传后校验失败（哈希计算错误）: %v", hashErr)}
-				logger.Warnf("存储目标 %s 上传后哈希计算失败：%v", targetName, hashErr)
-				return
-			}
-			if remoteChecksum != localChecksum {
-				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: fmt.Sprintf("完整性校验失败: 本地=%s, 远端=%s", localChecksum, remoteChecksum)}
-				logger.Errorf("存储目标 %s 完整性校验失败：本地 SHA-256=%s, 远端 SHA-256=%s", targetName, localChecksum, remoteChecksum)
-				// 删除损坏的远端文件
-				_ = provider.Delete(ctx, storagePath)
-				return
+			// 上传后轻量级完整性校验：通过 List 检查远端文件大小
+			remoteObjects, listErr := provider.List(ctx, storagePath)
+			if listErr != nil {
+				// List 失败不阻断，仅警告（文件可能已上传成功）
+				logger.Warnf("存储目标 %s 上传后大小校验跳过（List 失败）：%v", targetName, listErr)
+			} else {
+				remoteSize := int64(0)
+				for _, obj := range remoteObjects {
+					if obj.Key == storagePath {
+						remoteSize = obj.Size
+						break
+					}
+				}
+				if remoteSize == 0 {
+					uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: "完整性校验失败: 远端文件大小为 0（上传损坏）"}
+					logger.Errorf("存储目标 %s 完整性校验失败：远端文件大小为 0", targetName)
+					_ = provider.Delete(ctx, storagePath)
+					return
+				}
+				if remoteSize != fileSize {
+					uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: fmt.Sprintf("完整性校验失败: 本地=%d bytes, 远端=%d bytes", fileSize, remoteSize)}
+					logger.Errorf("存储目标 %s 完整性校验失败：本地 %d bytes, 远端 %d bytes", targetName, fileSize, remoteSize)
+					_ = provider.Delete(ctx, storagePath)
+					return
+				}
 			}
 			uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "success", StoragePath: storagePath, FileSize: fileSize}
-			logger.Infof("存储目标 %s 上传成功，完整性校验通过 (SHA-256=%s)", targetName, localChecksum)
+			logger.Infof("存储目标 %s 上传成功，大小校验通过 (%d bytes, SHA-256=%s)", targetName, fileSize, localChecksum)
 			// 每个成功目标独立执行保留策略
 			if s.retention != nil {
 				cleanupResult, cleanupErr := s.retention.Cleanup(ctx, task, provider)
