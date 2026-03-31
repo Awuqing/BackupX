@@ -71,6 +71,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 		storageRclone.NewTencentCOSFactory(),
 		storageRclone.NewQiniuKodoFactory(),
 		storageRclone.NewFTPFactory(),
+		storageRclone.NewRcloneFactory(),
 	)
 	storageTargetService := service.NewStorageTargetService(storageTargetRepo, oauthSessionRepo, storageRegistry, configCipher)
 	storageTargetService.SetBackupTaskRepository(backupTaskRepo)
@@ -81,7 +82,14 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	retentionService := backupretention.NewService(backupRecordRepo)
 	notifyRegistry := notify.NewRegistry(notify.NewEmailNotifier(), notify.NewWebhookNotifier(), notify.NewTelegramNotifier())
 	notificationService := service.NewNotificationService(notificationRepo, notifyRegistry, configCipher)
-	backupExecutionService := service.NewBackupExecutionService(backupTaskRepo, backupRecordRepo, storageTargetRepo, storageRegistry, backupRunnerRegistry, logHub, retentionService, configCipher, notificationService, cfg.Backup.TempDir, cfg.Backup.MaxConcurrent)
+	// 初始化 rclone 传输配置（重试 + 带宽限制）
+	rcloneCtx := storageRclone.ConfiguredContext(ctx, storageRclone.TransferConfig{
+		LowLevelRetries: cfg.Backup.Retries,
+		BandwidthLimit:  cfg.Backup.BandwidthLimit,
+	})
+	storageRclone.StartAccounting(rcloneCtx)
+
+	backupExecutionService := service.NewBackupExecutionService(backupTaskRepo, backupRecordRepo, storageTargetRepo, storageRegistry, backupRunnerRegistry, logHub, retentionService, configCipher, notificationService, cfg.Backup.TempDir, cfg.Backup.MaxConcurrent, cfg.Backup.Retries, cfg.Backup.BandwidthLimit)
 	schedulerService := scheduler.NewService(backupTaskRepo, backupExecutionService, appLogger)
 	backupTaskService.SetScheduler(schedulerService)
 	backupRecordService := service.NewBackupRecordService(backupRecordRepo, backupExecutionService, logHub)

@@ -22,6 +22,7 @@ var settingsKeys = []string{
 	"language",
 	"timezone",
 	"backup_notification_enabled",
+	"bandwidth_limit",
 }
 
 func (s *SettingsService) GetAll(ctx context.Context) (map[string]string, error) {

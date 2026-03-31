@@ -1,6 +1,7 @@
 package backup
 
 import (
+	"fmt"
 	"sync"
 	"time"
 )
@@ -90,6 +91,41 @@ func (h *LogHub) Complete(recordID uint, status string) {
 	state.status = status
 	state.nextSequence++
 	event := LogEvent{RecordID: recordID, Sequence: state.nextSequence, Level: "info", Message: "stream completed", Timestamp: time.Now().UTC(), Completed: true, Status: status}
+	state.events = append(state.events, event)
+	for _, subscriber := range state.subscribers {
+		select {
+		case subscriber <- event:
+		default:
+		}
+	}
+}
+
+// AppendProgress 推送上传进度事件（节流：每个 recordID 每 500ms 最多一次，最终值始终推送）。
+func (h *LogHub) AppendProgress(recordID uint, progress ProgressInfo) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	state := h.ensureState(recordID)
+
+	// 节流：距上次 progress 事件不足 500ms 且未完成则跳过（100% 始终推送）
+	now := time.Now().UTC()
+	isFinal := progress.Percent >= 100
+	if !isFinal && len(state.events) > 0 {
+		last := state.events[len(state.events)-1]
+		if last.Progress != nil && now.Sub(last.Timestamp) < 500*time.Millisecond {
+			return
+		}
+	}
+
+	state.nextSequence++
+	event := LogEvent{
+		RecordID:  recordID,
+		Sequence:  state.nextSequence,
+		Level:     "progress",
+		Message:   fmt.Sprintf("上传进度: %.1f%%", progress.Percent),
+		Timestamp: now,
+		Status:    state.status,
+		Progress:  &progress,
+	}
 	state.events = append(state.events, event)
 	for _, subscriber := range state.subscribers {
 		select {

@@ -20,6 +20,7 @@ const (
 	ProviderTypeTencentCOS  ProviderType = "tencent_cos"
 	ProviderTypeQiniuKodo   ProviderType = "qiniu_kodo"
 	ProviderTypeFTP         ProviderType = "ftp"
+	ProviderTypeRclone      ProviderType = "rclone"
 )
 
 const (
@@ -50,6 +51,20 @@ type StorageProvider interface {
 
 type ProviderFactory interface {
 	Type() ProviderType
+}
+
+// StorageAbout 是可选能力接口，支持查询远端存储空间。
+// 并非所有后端都支持（如 S3/FTP 不支持），通过 type assertion 检测。
+type StorageAbout interface {
+	About(ctx context.Context) (*StorageUsageInfo, error)
+}
+
+// StorageUsageInfo 描述远端存储的空间使用情况。
+type StorageUsageInfo struct {
+	Total   *int64 `json:"total,omitempty"`   // 总空间（字节）
+	Used    *int64 `json:"used,omitempty"`    // 已用空间
+	Free    *int64 `json:"free,omitempty"`    // 可用空间
+	Objects *int64 `json:"objects,omitempty"` // 对象数量
 }
 
 func DecodeConfig[T any](raw map[string]any) (T, error) {
