@@ -301,5 +301,5 @@ export const storageTargetTypeOptions = [
   { label: 'Google Drive', value: 'google_drive' },
   { label: 'WebDAV', value: 'webdav' },
   { label: 'FTP', value: 'ftp' },
-  { label: 'Rclone (70+ 后端)', value: 'rclone' },
+  { label: 'Rclone — SFTP / Azure / Dropbox / OneDrive 等 70+ 后端', value: 'rclone' },
 ] as const

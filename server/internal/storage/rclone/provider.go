@@ -26,8 +26,12 @@ func newProvider(providerType storage.ProviderType, rfs fs.Fs) *Provider {
 
 func (p *Provider) Type() storage.ProviderType { return p.providerType }
 
-// TestConnection 通过列出根目录验证连通性。
+// TestConnection 验证连通性。对本地磁盘会先确保目录存在。
 func (p *Provider) TestConnection(ctx context.Context) error {
+	// 确保根目录存在（本地磁盘等后端需要预创建）
+	if err := p.rfs.Mkdir(ctx, ""); err != nil {
+		return fmt.Errorf("rclone test connection (mkdir): %w", err)
+	}
 	_, err := p.rfs.List(ctx, "")
 	if err != nil {
 		return fmt.Errorf("rclone test connection: %w", err)
