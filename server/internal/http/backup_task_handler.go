@@ -51,7 +51,7 @@ func (h *BackupTaskHandler) Create(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	recordAudit(c, h.auditService, "backup_task", "create", "backup_task", fmt.Sprintf("%d", item.ID), item.Name, "")
+	recordAudit(c, h.auditService, "backup_task", "create", "backup_task", fmt.Sprintf("%d", item.ID), item.Name, fmt.Sprintf("类型: %s", input.Type))
 	response.Success(c, item)
 }
 
@@ -70,7 +70,7 @@ func (h *BackupTaskHandler) Update(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	recordAudit(c, h.auditService, "backup_task", "update", "backup_task", fmt.Sprintf("%d", item.ID), item.Name, "")
+	recordAudit(c, h.auditService, "backup_task", "update", "backup_task", fmt.Sprintf("%d", item.ID), item.Name, fmt.Sprintf("类型: %s, Cron: %s", input.Type, input.CronExpr))
 	response.Success(c, item)
 }
 
@@ -83,7 +83,7 @@ func (h *BackupTaskHandler) Delete(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	recordAudit(c, h.auditService, "backup_task", "delete", "backup_task", fmt.Sprintf("%d", id), "", "")
+	recordAudit(c, h.auditService, "backup_task", "delete", "backup_task", fmt.Sprintf("%d", id), "", fmt.Sprintf("删除备份任务 #%d", id))
 	response.Success(c, gin.H{"deleted": true})
 }
 
@@ -115,6 +115,6 @@ func (h *BackupTaskHandler) Toggle(c *gin.Context) {
 	if !enabled {
 		action = "disable"
 	}
-	recordAudit(c, h.auditService, "backup_task", action, "backup_task", fmt.Sprintf("%d", id), item.Name, "")
+	recordAudit(c, h.auditService, "backup_task", action, "backup_task", fmt.Sprintf("%d", id), item.Name, fmt.Sprintf("%s 备份任务", action))
 	response.Success(c, item)
 }
