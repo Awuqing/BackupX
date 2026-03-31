@@ -130,7 +130,7 @@ func (h *BackupRecordHandler) Restore(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	recordAudit(c, h.auditService, "backup_record", "restore", "backup_record", fmt.Sprintf("%d", id), "", "")
+	recordAudit(c, h.auditService, "backup_record", "restore", "backup_record", fmt.Sprintf("%d", id), "", fmt.Sprintf("恢复备份记录 #%d", id))
 	response.Success(c, gin.H{"restored": true})
 }
 
@@ -143,7 +143,7 @@ func (h *BackupRecordHandler) Delete(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	recordAudit(c, h.auditService, "backup_record", "delete", "backup_record", fmt.Sprintf("%d", id), "", "")
+	recordAudit(c, h.auditService, "backup_record", "delete", "backup_record", fmt.Sprintf("%d", id), "", fmt.Sprintf("删除备份记录 #%d", id))
 	response.Success(c, gin.H{"deleted": true})
 }
 

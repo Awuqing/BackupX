@@ -1,6 +1,9 @@
 package http
 
 import (
+	"fmt"
+	"strings"
+
 	"backupx/server/internal/apperror"
 	"backupx/server/internal/service"
 	"backupx/server/pkg/response"
@@ -36,6 +39,10 @@ func (h *SettingsHandler) Update(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	recordAudit(c, h.auditService, "settings", "update", "settings", "", "", "")
+	keys := make([]string, 0, len(input))
+	for k := range input {
+		keys = append(keys, k)
+	}
+	recordAudit(c, h.auditService, "settings", "update", "settings", "", "", fmt.Sprintf("修改设置: %s", strings.Join(keys, ", ")))
 	response.Success(c, settings)
 }
