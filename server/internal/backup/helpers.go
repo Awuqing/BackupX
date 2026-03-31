@@ -1,10 +1,7 @@
 package backup
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,20 +19,6 @@ func createTempArtifact(baseDir, taskName string, extension string) (string, str
 	}
 	fileName := fmt.Sprintf("%s_%s.%s", base, time.Now().UTC().Format("20060102T150405"), strings.TrimPrefix(extension, "."))
 	return tempDir, filepath.Join(tempDir, fileName), nil
-}
-
-// SHA256File 计算文件的 SHA-256 哈希值，返回十六进制字符串
-func SHA256File(path string) (string, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return "", fmt.Errorf("open file for checksum: %w", err)
-	}
-	defer file.Close()
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return "", fmt.Errorf("compute checksum: %w", err)
-	}
-	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
 func sanitizeFileName(value string) string {
