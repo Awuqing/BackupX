@@ -216,6 +216,7 @@ const FIELD_CONFIG_MAP: Record<StorageTargetType, StorageTargetFieldConfig[]> = 
       placeholder: '输入新的 SecretKey',
     },
   ],
+  rclone: [], // 动态表单，字段从 API 获取（见 StorageTargetFormDrawer）
   ftp: [
     {
       key: 'host',
@@ -284,6 +285,8 @@ export function getStorageTargetTypeLabel(type: StorageTargetType) {
       return '七牛云 Kodo'
     case 'ftp':
       return 'FTP'
+    case 'rclone':
+      return 'Rclone (70+ 后端)'
     default:
       return type
   }
@@ -298,4 +301,5 @@ export const storageTargetTypeOptions = [
   { label: 'Google Drive', value: 'google_drive' },
   { label: 'WebDAV', value: 'webdav' },
   { label: 'FTP', value: 'ftp' },
+  { label: 'Rclone (70+ 后端)', value: 'rclone' },
 ] as const

@@ -33,8 +33,10 @@ type SecurityConfig struct {
 }
 
 type BackupConfig struct {
-	TempDir       string `mapstructure:"temp_dir"`
-	MaxConcurrent int    `mapstructure:"max_concurrent"`
+	TempDir        string `mapstructure:"temp_dir"`
+	MaxConcurrent  int    `mapstructure:"max_concurrent"`
+	Retries        int    `mapstructure:"retries"`         // 底层 HTTP 请求重试次数，默认 10
+	BandwidthLimit string `mapstructure:"bandwidth_limit"` // 带宽限制，如 "10M"，空不限
 }
 
 type LogConfig struct {
@@ -96,6 +98,9 @@ func Load(configPath string) (Config, error) {
 	if cfg.Backup.MaxConcurrent <= 0 {
 		cfg.Backup.MaxConcurrent = 2
 	}
+	if cfg.Backup.Retries <= 0 {
+		cfg.Backup.Retries = 10
+	}
 	if cfg.Log.Level == "" {
 		cfg.Log.Level = "info"
 	}
@@ -135,6 +140,8 @@ func applyDefaults(v *viper.Viper) {
 	v.SetDefault("security.jwt_expire", "24h")
 	v.SetDefault("backup.temp_dir", "/tmp/backupx")
 	v.SetDefault("backup.max_concurrent", 2)
+	v.SetDefault("backup.retries", 10)
+	v.SetDefault("backup.bandwidth_limit", "")
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.file", "./data/backupx.log")
 	v.SetDefault("log.max_size", 100)

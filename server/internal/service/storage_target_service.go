@@ -544,10 +544,11 @@ func cloneMap(source map[string]any) map[string]any {
 }
 
 type StorageTargetUsage struct {
-	TargetID    uint   `json:"targetId"`
-	TargetName  string `json:"targetName"`
-	RecordCount int64  `json:"recordCount"`
-	TotalSize   int64  `json:"totalSize"`
+	TargetID    uint                      `json:"targetId"`
+	TargetName  string                    `json:"targetName"`
+	RecordCount int64                     `json:"recordCount"`
+	TotalSize   int64                     `json:"totalSize"`
+	DiskUsage   *storage.StorageUsageInfo `json:"diskUsage,omitempty"`
 }
 
 func (s *StorageTargetService) GetUsage(ctx context.Context, id uint) (*StorageTargetUsage, error) {
@@ -566,6 +567,17 @@ func (s *StorageTargetService) GetUsage(ctx context.Context, id uint) (*StorageT
 				if item.StorageTargetID == id {
 					result.TotalSize = item.TotalSize
 					break
+				}
+			}
+		}
+	}
+	// 尝试查询远端真实存储空间（部分后端如 local/Google Drive/WebDAV 支持）
+	configMap := map[string]any{}
+	if decryptErr := s.cipher.DecryptJSON(target.ConfigCiphertext, &configMap); decryptErr == nil {
+		if provider, createErr := s.registry.Create(ctx, target.Type, configMap); createErr == nil {
+			if abouter, ok := provider.(storage.StorageAbout); ok {
+				if diskUsage, aboutErr := abouter.About(ctx); aboutErr == nil {
+					result.DiskUsage = diskUsage
 				}
 			}
 		}

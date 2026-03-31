@@ -59,7 +59,7 @@ func newExecutionTestServices(t *testing.T) (*BackupExecutionService, *BackupRec
 	if err := os.MkdirAll(tempDir, 0o755); err != nil {
 		t.Fatalf("MkdirAll tempDir returned error: %v", err)
 	}
-	executionService := NewBackupExecutionService(tasks, records, targets, storageRegistry, runnerRegistry, logHub, retentionService, cipher, nil, tempDir, 2)
+	executionService := NewBackupExecutionService(tasks, records, targets, storageRegistry, runnerRegistry, logHub, retentionService, cipher, nil, tempDir, 2, 10, "")
 	recordService := NewBackupRecordService(records, executionService, logHub)
 	return executionService, recordService, tasks, targets, records, sourceDir, storageDir
 }

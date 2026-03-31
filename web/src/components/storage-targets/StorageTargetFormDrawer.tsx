@@ -2,6 +2,7 @@ import { Alert, Button, Divider, Drawer, Input, Select, Space, Switch, Typograph
 import { useEffect, useMemo, useState } from 'react'
 import { getStorageTargetFieldConfigs, getStorageTargetTypeLabel, storageTargetTypeOptions } from './field-config'
 import type { StorageConnectionTestResult, StorageTargetDetail, StorageTargetPayload, StorageTargetType } from '../../types/storage-targets'
+import { listRcloneBackends, type RcloneBackendInfo } from '../../services/rclone'
 
 interface StorageTargetFormDrawerProps {
   visible: boolean
@@ -38,6 +39,10 @@ export function StorageTargetFormDrawer({
   const [error, setError] = useState('')
   const [testResult, setTestResult] = useState<StorageConnectionTestResult | null>(null)
 
+  // rclone 后端列表（API 驱动）
+  const [rcloneBackends, setRcloneBackends] = useState<RcloneBackendInfo[]>([])
+  const [rcloneBackendsLoading, setRcloneBackendsLoading] = useState(false)
+
   useEffect(() => {
     if (!visible) {
       return
@@ -59,7 +64,34 @@ export function StorageTargetFormDrawer({
     setTestResult(null)
   }, [initialValue, visible])
 
+  // 当类型切换到 rclone 时，加载后端列表
+  useEffect(() => {
+    if (draft.type === 'rclone' && rcloneBackends.length === 0 && !rcloneBackendsLoading) {
+      setRcloneBackendsLoading(true)
+      listRcloneBackends()
+        .then(setRcloneBackends)
+        .catch(() => {})
+        .finally(() => setRcloneBackendsLoading(false))
+    }
+  }, [draft.type, rcloneBackends.length, rcloneBackendsLoading])
+
   const fieldConfigs = useMemo(() => getStorageTargetFieldConfigs(draft.type), [draft.type])
+
+  // 当前选中的 rclone 后端信息
+  const selectedRcloneBackend = useMemo(() => {
+    if (draft.type !== 'rclone') return null
+    const backendName = draft.config.backend as string
+    if (!backendName) return null
+    return rcloneBackends.find((b) => b.name === backendName) || null
+  }, [draft.type, draft.config.backend, rcloneBackends])
+
+  // rclone 后端下拉选项
+  const rcloneBackendOptions = useMemo(() => {
+    return rcloneBackends.map((b) => ({
+      label: `${b.name} — ${b.description}`,
+      value: b.name,
+    }))
+  }, [rcloneBackends])
 
   function updateConfig(key: string, value: string | boolean) {
     setDraft((current) => ({
@@ -74,6 +106,13 @@ export function StorageTargetFormDrawer({
   function validate(value: StorageTargetPayload) {
     if (!value.name.trim()) {
       return '请输入存储目标名称'
+    }
+    // rclone 类型需要选择后端
+    if (value.type === 'rclone') {
+      if (!value.config.backend || !(value.config.backend as string).trim()) {
+        return '请选择 Rclone 后端类型'
+      }
+      return ''
     }
     for (const field of fieldConfigs) {
       if (!field.required) {
@@ -119,6 +158,131 @@ export function StorageTargetFormDrawer({
     }
     setError('')
     await onGoogleDriveAuth(draft, initialValue?.id)
+  }
+
+  // 渲染 rclone 类型的动态配置表单
+  function renderRcloneFields() {
+    return (
+      <>
+        <div>
+          <Typography.Text>Rclone 后端类型 *</Typography.Text>
+          <Select
+            showSearch
+            allowClear
+            placeholder="搜索并选择后端（如 sftp, azureblob, dropbox...）"
+            loading={rcloneBackendsLoading}
+            value={(draft.config.backend as string) || undefined}
+            options={rcloneBackendOptions}
+            filterOption={(inputValue, option) => {
+              const label = (option?.props?.children ?? option?.props?.label ?? '') as string
+              return label.toLowerCase().includes(inputValue.toLowerCase())
+            }}
+            onChange={(value) => {
+              // 切换后端时清空旧配置，保留 backend 和 root
+              const root = draft.config.root || ''
+              setDraft((current) => ({
+                ...current,
+                config: { backend: value || '', root },
+              }))
+            }}
+          />
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+            支持 SFTP、Azure Blob、Dropbox、OneDrive、B2、SMB 等 70+ 存储后端
+          </Typography.Paragraph>
+        </div>
+
+        <div>
+          <Typography.Text>远端路径</Typography.Text>
+          <Input
+            value={(draft.config.root as string) || ''}
+            placeholder="/backups 或 bucket-name"
+            onChange={(value) => updateConfig('root', value)}
+          />
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+            远端存储的根路径、桶名或挂载点，留空使用根目录
+          </Typography.Paragraph>
+        </div>
+
+        {selectedRcloneBackend && selectedRcloneBackend.options.length > 0 && (
+          <>
+            <Divider orientation="left" style={{ margin: '8px 0' }}>
+              {selectedRcloneBackend.name} 配置
+            </Divider>
+            {selectedRcloneBackend.options.map((opt) => (
+              <div key={opt.key}>
+                <Typography.Text>
+                  {opt.key}
+                  {opt.required ? ' *' : ''}
+                </Typography.Text>
+                {opt.isPassword ? (
+                  <Input.Password
+                    value={(draft.config[opt.key] as string) || ''}
+                    placeholder={opt.label}
+                    onChange={(value) => updateConfig(opt.key, value)}
+                  />
+                ) : (
+                  <Input
+                    value={(draft.config[opt.key] as string) || ''}
+                    placeholder={opt.label}
+                    onChange={(value) => updateConfig(opt.key, value)}
+                  />
+                )}
+                {opt.label && (
+                  <Typography.Paragraph
+                    type="secondary"
+                    style={{ marginBottom: 0, marginTop: 2, fontSize: 12, lineHeight: '18px' }}
+                    ellipsis={{ rows: 2, expandable: true }}
+                  >
+                    {opt.label}
+                  </Typography.Paragraph>
+                )}
+              </div>
+            ))}
+          </>
+        )}
+      </>
+    )
+  }
+
+  // 渲染常规类型的静态字段
+  function renderStaticFields() {
+    return fieldConfigs.map((field) => {
+      const value = draft.config[field.key]
+      const normalizedValue = typeof value === 'boolean' ? value : typeof value === 'string' ? value : field.type === 'switch' ? false : ''
+
+      return (
+        <div key={field.key}>
+          <Typography.Text>
+            {field.label}
+            {field.required ? ' *' : ''}
+          </Typography.Text>
+          {field.type === 'switch' ? (
+            <Space align="center" size="medium">
+              <Switch checked={Boolean(normalizedValue)} onChange={(checked) => updateConfig(field.key, checked)} />
+              {field.description ? <Typography.Text type="secondary">{field.description}</Typography.Text> : null}
+            </Space>
+          ) : field.type === 'password' ? (
+            <Input.Password
+              value={String(normalizedValue)}
+              placeholder={field.placeholder}
+              onChange={(nextValue) => updateConfig(field.key, nextValue)}
+            />
+          ) : (
+            <Input value={String(normalizedValue)} placeholder={field.placeholder} onChange={(nextValue) => updateConfig(field.key, nextValue)} />
+          )}
+          {field.description && field.type !== 'switch' ? (
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+              {field.description}
+            </Typography.Paragraph>
+          ) : null}
+          {initialValue?.maskedFields?.includes(field.key) && !draft.config[field.key] ? (
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+              已存在敏感配置，留空则保持不变。
+            </Typography.Paragraph>
+          ) : null}
+        </div>
+      )
+    })
   }
 
   return (
@@ -176,43 +340,7 @@ export function StorageTargetFormDrawer({
             {getStorageTargetTypeLabel(draft.type)}
           </Typography.Title>
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
-            {fieldConfigs.map((field) => {
-              const value = draft.config[field.key]
-              const normalizedValue = typeof value === 'boolean' ? value : typeof value === 'string' ? value : field.type === 'switch' ? false : ''
-
-              return (
-                <div key={field.key}>
-                  <Typography.Text>
-                    {field.label}
-                    {field.required ? ' *' : ''}
-                  </Typography.Text>
-                  {field.type === 'switch' ? (
-                    <Space align="center" size="medium">
-                      <Switch checked={Boolean(normalizedValue)} onChange={(checked) => updateConfig(field.key, checked)} />
-                      {field.description ? <Typography.Text type="secondary">{field.description}</Typography.Text> : null}
-                    </Space>
-                  ) : field.type === 'password' ? (
-                    <Input.Password
-                      value={String(normalizedValue)}
-                      placeholder={field.placeholder}
-                      onChange={(nextValue) => updateConfig(field.key, nextValue)}
-                    />
-                  ) : (
-                    <Input value={String(normalizedValue)} placeholder={field.placeholder} onChange={(nextValue) => updateConfig(field.key, nextValue)} />
-                  )}
-                  {field.description && field.type !== 'switch' ? (
-                    <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
-                      {field.description}
-                    </Typography.Paragraph>
-                  ) : null}
-                  {initialValue?.maskedFields?.includes(field.key) && !draft.config[field.key] ? (
-                    <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
-                      已存在敏感配置，留空则保持不变。
-                    </Typography.Paragraph>
-                  ) : null}
-                </div>
-              )
-            })}
+            {draft.type === 'rclone' ? renderRcloneFields() : renderStaticFields()}
           </Space>
         </div>
 
