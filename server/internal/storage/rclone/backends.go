@@ -1,11 +1,5 @@
 // Package rclone 提供基于 rclone 的统一存储后端实现。
-// 按需引入 rclone backend，避免 backend/all 导致二进制膨胀。
+// 引入全部 rclone backend，支持 70+ 存储后端。
 package rclone
 
-import (
-	_ "github.com/rclone/rclone/backend/drive"
-	_ "github.com/rclone/rclone/backend/ftp"
-	_ "github.com/rclone/rclone/backend/local"
-	_ "github.com/rclone/rclone/backend/s3"
-	_ "github.com/rclone/rclone/backend/webdav"
-)
+import _ "github.com/rclone/rclone/backend/all"

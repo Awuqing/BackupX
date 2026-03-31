@@ -41,13 +41,23 @@ type RunResult struct {
 }
 
 type LogEvent struct {
-	RecordID  uint      `json:"recordId"`
-	Sequence  int64     `json:"sequence"`
-	Level     string    `json:"level"`
-	Message   string    `json:"message"`
-	Timestamp time.Time `json:"timestamp"`
-	Completed bool      `json:"completed"`
-	Status    string    `json:"status"`
+	RecordID  uint          `json:"recordId"`
+	Sequence  int64         `json:"sequence"`
+	Level     string        `json:"level"`
+	Message   string        `json:"message"`
+	Timestamp time.Time     `json:"timestamp"`
+	Completed bool          `json:"completed"`
+	Status    string        `json:"status"`
+	Progress  *ProgressInfo `json:"progress,omitempty"`
+}
+
+// ProgressInfo 描述上传进度，通过 SSE 实时推送给前端。
+type ProgressInfo struct {
+	BytesSent  int64   `json:"bytesSent"`
+	TotalBytes int64   `json:"totalBytes"`
+	Percent    float64 `json:"percent"`
+	SpeedBps   float64 `json:"speedBps"`   // bytes/sec
+	TargetName string  `json:"targetName"`
 }
 
 type LogWriter interface {

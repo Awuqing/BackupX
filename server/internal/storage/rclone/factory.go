@@ -345,3 +345,92 @@ func (QiniuKodoFactory) New(ctx context.Context, rawConfig map[string]any) (stor
 	}
 	return newFs(ctx, storage.ProviderTypeQiniuKodo, buildS3Remote("Qiniu", cfg.AccessKey, cfg.SecretKey, endpoint, cfg.Region, cfg.Bucket, true))
 }
+
+// ---------------------------------------------------------------------------
+// 通用 Rclone 后端（支持全部 70+ 后端）
+// ---------------------------------------------------------------------------
+
+type RcloneFactory struct{}
+
+func NewRcloneFactory() RcloneFactory { return RcloneFactory{} }
+
+func (RcloneFactory) Type() storage.ProviderType { return storage.ProviderTypeRclone }
+func (RcloneFactory) SensitiveFields() []string   { return []string{"pass", "password", "secret_access_key", "client_secret", "token"} }
+
+func (RcloneFactory) New(ctx context.Context, rawConfig map[string]any) (storage.StorageProvider, error) {
+	backend, _ := rawConfig["backend"].(string)
+	backend = strings.TrimSpace(backend)
+	if backend == "" {
+		return nil, fmt.Errorf("rclone backend type is required")
+	}
+	root, _ := rawConfig["root"].(string)
+	root = strings.TrimSpace(root)
+
+	// 构建连接字符串：:backend,key1=val1,key2=val2:root
+	var b strings.Builder
+	b.WriteString(":")
+	b.WriteString(backend)
+	for key, val := range rawConfig {
+		if key == "backend" || key == "root" {
+			continue
+		}
+		strVal := fmt.Sprintf("%v", val)
+		if strings.TrimSpace(strVal) == "" {
+			continue
+		}
+		b.WriteString(",")
+		b.WriteString(key)
+		b.WriteString("=")
+		b.WriteString(quoteParam(strVal))
+	}
+	b.WriteString(":")
+	b.WriteString(root)
+
+	return newFs(ctx, storage.ProviderTypeRclone, b.String())
+}
+
+// ListBackends 返回所有可用的 rclone 后端及其配置选项。
+func ListBackends() []BackendInfo {
+	var backends []BackendInfo
+	for _, ri := range fs.Registry {
+		if ri.Name == "union" || ri.Name == "crypt" || ri.Name == "chunker" || ri.Name == "compress" || ri.Name == "hasher" || ri.Name == "combine" {
+			continue // 跳过组合/加密类后端
+		}
+		info := BackendInfo{
+			Name:        ri.Name,
+			Description: ri.Description,
+		}
+		for _, opt := range ri.Options {
+			if opt.Hide != 0 {
+				continue
+			}
+			// 跳过 rclone 为每个后端自动添加的通用选项
+			if opt.Name == "description" {
+				continue
+			}
+			info.Options = append(info.Options, BackendOption{
+				Key:        opt.Name,
+				Label:      opt.Help,
+				Required:   opt.Required,
+				IsPassword: opt.IsPassword,
+			})
+		}
+		backends = append(backends, info)
+	}
+	return backends
+}
+
+// BackendInfo 描述一个 rclone 后端。
+type BackendInfo struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Options     []BackendOption `json:"options"`
+}
+
+// BackendOption 描述一个后端配置选项。
+type BackendOption struct {
+	Key        string `json:"key"`
+	Label      string `json:"label"`
+	Required   bool   `json:"required"`
+	IsPassword bool   `json:"isPassword"`
+}

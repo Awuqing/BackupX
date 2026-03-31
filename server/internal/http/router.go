@@ -71,18 +71,22 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 
 		storageTargets := api.Group("/storage-targets")
 		storageTargets.Use(AuthMiddleware(deps.JWTManager))
+		// 静态路由必须在参数路由 /:id 之前注册，避免 Gin 路由冲突
 		storageTargets.GET("", storageTargetHandler.List)
-		storageTargets.GET("/:id", storageTargetHandler.Get)
 		storageTargets.POST("", storageTargetHandler.Create)
-		storageTargets.PUT("/:id", storageTargetHandler.Update)
-		storageTargets.DELETE("/:id", storageTargetHandler.Delete)
-		storageTargets.PUT("/:id/star", storageTargetHandler.ToggleStar)
 		storageTargets.POST("/test", storageTargetHandler.TestConnection)
-		storageTargets.POST("/:id/test", storageTargetHandler.TestSavedConnection)
-		storageTargets.GET("/:id/usage", storageTargetHandler.GetUsage)
 		storageTargets.POST("/google-drive/auth-url", storageTargetHandler.StartGoogleDriveOAuth)
 		storageTargets.POST("/google-drive/complete", storageTargetHandler.CompleteGoogleDriveOAuth)
 		storageTargets.GET("/google-drive/callback", storageTargetHandler.HandleGoogleDriveCallback)
+		rcloneHandler := NewRcloneHandler()
+		storageTargets.GET("/rclone/backends", rcloneHandler.ListBackends)
+		// 参数路由
+		storageTargets.GET("/:id", storageTargetHandler.Get)
+		storageTargets.PUT("/:id", storageTargetHandler.Update)
+		storageTargets.DELETE("/:id", storageTargetHandler.Delete)
+		storageTargets.PUT("/:id/star", storageTargetHandler.ToggleStar)
+		storageTargets.POST("/:id/test", storageTargetHandler.TestSavedConnection)
+		storageTargets.GET("/:id/usage", storageTargetHandler.GetUsage)
 		storageTargets.GET("/:id/google-drive/profile", storageTargetHandler.GoogleDriveProfile)
 
 		backupTasks := api.Group("/backup/tasks")

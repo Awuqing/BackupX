@@ -102,6 +102,24 @@ func (p *Provider) List(ctx context.Context, prefix string) ([]storage.ObjectInf
 	return items, nil
 }
 
+// About 查询远端存储空间。并非所有 rclone 后端都支持。
+func (p *Provider) About(ctx context.Context) (*storage.StorageUsageInfo, error) {
+	about := p.rfs.Features().About
+	if about == nil {
+		return nil, fmt.Errorf("rclone about: backend %s does not support About", p.providerType)
+	}
+	usage, err := about(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("rclone about: %w", err)
+	}
+	return &storage.StorageUsageInfo{
+		Total:   usage.Total,
+		Used:    usage.Used,
+		Free:    usage.Free,
+		Objects: usage.Objects,
+	}, nil
+}
+
 // pathDir 返回 objectKey 的目录部分（正斜杠分隔）。
 func pathDir(objectKey string) string {
 	idx := strings.LastIndex(objectKey, "/")

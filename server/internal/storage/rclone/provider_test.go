@@ -110,6 +110,79 @@ func TestBuildS3Remote(t *testing.T) {
 	}
 }
 
+func TestRcloneFactoryCRUD(t *testing.T) {
+	dir := t.TempDir()
+	factory := NewRcloneFactory()
+	// 使用 rclone 的 local 后端
+	provider, err := factory.New(context.Background(), map[string]any{
+		"backend": "local",
+		"root":    dir,
+	})
+	if err != nil {
+		t.Fatalf("RcloneFactory.New returned error: %v", err)
+	}
+	if err := provider.Upload(context.Background(), "test.txt", strings.NewReader("rclone"), 6, nil); err != nil {
+		t.Fatalf("Upload via rclone factory returned error: %v", err)
+	}
+	reader, err := provider.Download(context.Background(), "test.txt")
+	if err != nil {
+		t.Fatalf("Download returned error: %v", err)
+	}
+	defer reader.Close()
+	content, _ := io.ReadAll(reader)
+	if string(content) != "rclone" {
+		t.Fatalf("expected 'rclone', got %q", string(content))
+	}
+	if err := provider.Delete(context.Background(), "test.txt"); err != nil {
+		t.Fatalf("Delete returned error: %v", err)
+	}
+}
+
+func TestRcloneFactoryRequiresBackend(t *testing.T) {
+	_, err := NewRcloneFactory().New(context.Background(), map[string]any{"root": "/tmp"})
+	if err == nil || !strings.Contains(err.Error(), "backend") {
+		t.Fatalf("expected backend required error, got %v", err)
+	}
+}
+
+func TestListBackends(t *testing.T) {
+	backends := ListBackends()
+	if len(backends) < 30 {
+		t.Fatalf("expected at least 30 backends, got %d", len(backends))
+	}
+	// 确认 sftp 在列表中
+	found := false
+	for _, b := range backends {
+		if b.Name == "sftp" {
+			found = true
+			if len(b.Options) == 0 {
+				t.Fatal("sftp backend should have options")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("sftp backend not found in ListBackends()")
+	}
+}
+
+func TestProviderAbout(t *testing.T) {
+	factory := NewLocalDiskFactory()
+	provider, err := factory.New(context.Background(), map[string]any{"basePath": t.TempDir()})
+	if err != nil {
+		t.Fatalf("Factory.New returned error: %v", err)
+	}
+	// local 后端支持 About
+	rcloneProvider := provider.(*Provider)
+	usage, err := rcloneProvider.About(context.Background())
+	if err != nil {
+		t.Fatalf("About returned error: %v", err)
+	}
+	if usage.Total == nil || *usage.Total <= 0 {
+		t.Fatalf("expected non-zero total disk space, got %v", usage.Total)
+	}
+}
+
 func TestPathDir(t *testing.T) {
 	tests := []struct {
 		input    string

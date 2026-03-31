@@ -21,6 +21,7 @@ import (
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage"
 	"backupx/server/internal/storage/codec"
+	"backupx/server/internal/storage/rclone"
 	"backupx/server/pkg/compress"
 	backupcrypto "backupx/server/pkg/crypto"
 )
@@ -84,6 +85,8 @@ type BackupExecutionService struct {
 	now             func() time.Time
 	tempDir         string
 	semaphore       chan struct{}
+	retries         int    // rclone 底层重试次数
+	bandwidthLimit  string // rclone 带宽限制
 }
 
 func NewBackupExecutionService(
@@ -98,6 +101,8 @@ func NewBackupExecutionService(
 	notifier BackupResultNotifier,
 	tempDir string,
 	maxConcurrent int,
+	retries int,
+	bandwidthLimit string,
 ) *BackupExecutionService {
 	if notifier == nil {
 		notifier = noopBackupNotifier{}
@@ -121,9 +126,11 @@ func NewBackupExecutionService(
 		async: func(job func()) {
 			go job()
 		},
-		now:       func() time.Time { return time.Now().UTC() },
-		tempDir:   tempDir,
-		semaphore: make(chan struct{}, maxConcurrent),
+		now:            func() time.Time { return time.Now().UTC() },
+		tempDir:        tempDir,
+		semaphore:      make(chan struct{}, maxConcurrent),
+		retries:        retries,
+		bandwidthLimit: bandwidthLimit,
 	}
 }
 
@@ -366,7 +373,21 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 			logger.Infof("开始上传备份到存储目标：%s", targetName)
 			// hashingReader: 上传过程中同步计算字节数 + SHA-256，单次读取零额外 I/O
 			hr := newHashingReader(artifact)
-			if uploadErr := provider.Upload(ctx, storagePath, hr, fileSize, map[string]string{"taskId": fmt.Sprintf("%d", task.ID), "recordId": fmt.Sprintf("%d", recordID)}); uploadErr != nil {
+			// progressReader: 包装 hashingReader，通过 LogHub 推送实时上传进度
+			pr := newProgressReader(hr, fileSize, func(bytesRead int64, speedBps float64) {
+				percent := float64(0)
+				if fileSize > 0 {
+					percent = float64(bytesRead) / float64(fileSize) * 100
+				}
+				s.logHub.AppendProgress(recordID, backup.ProgressInfo{
+					BytesSent:  bytesRead,
+					TotalBytes: fileSize,
+					Percent:    percent,
+					SpeedBps:   speedBps,
+					TargetName: targetName,
+				})
+			})
+			if uploadErr := provider.Upload(ctx, storagePath, pr, fileSize, map[string]string{"taskId": fmt.Sprintf("%d", task.ID), "recordId": fmt.Sprintf("%d", recordID)}); uploadErr != nil {
 				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: uploadErr.Error()}
 				logger.Warnf("存储目标 %s 上传失败：%v", targetName, uploadErr)
 				return
@@ -447,6 +468,11 @@ func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model
 }
 
 func (s *BackupExecutionService) resolveProvider(ctx context.Context, targetID uint) (storage.StorageProvider, error) {
+	// 注入 rclone 传输配置（重试、带宽限制）
+	ctx = rclone.ConfiguredContext(ctx, rclone.TransferConfig{
+		LowLevelRetries: s.retries,
+		BandwidthLimit:  s.bandwidthLimit,
+	})
 	target, err := s.targets.FindByID(ctx, targetID)
 	if err != nil {
 		return nil, apperror.Internal("BACKUP_STORAGE_TARGET_GET_FAILED", "无法获取存储目标详情", err)
