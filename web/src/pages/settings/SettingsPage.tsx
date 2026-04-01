@@ -1,6 +1,6 @@
-import { Badge, Button, Card, Descriptions, Grid, Link, PageHeader, Space, Tag, Typography } from '@arco-design/web-react'
+import { Badge, Button, Card, Descriptions, Grid, Link, Message, PageHeader, Space, Tag, Typography } from '@arco-design/web-react'
 import { useEffect, useState } from 'react'
-import { fetchSystemInfo, checkUpdate, type SystemInfo, type UpdateCheckResult } from '../../services/system'
+import { fetchSystemInfo, checkUpdate, applyUpdate, type SystemInfo, type UpdateCheckResult } from '../../services/system'
 import { resolveErrorMessage } from '../../utils/error'
 import { formatDuration } from '../../utils/format'
 
@@ -24,6 +24,7 @@ export function SettingsPage() {
   const [error, setError] = useState('')
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [checking, setChecking] = useState(false)
+  const [applying, setApplying] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -49,6 +50,24 @@ export function SettingsPage() {
       setUpdateResult({ currentVersion: info?.version || '-', latestVersion: '-', hasUpdate: false, error: resolveErrorMessage(e, '检查更新失败') })
     } finally {
       setChecking(false)
+    }
+  }
+
+  async function handleApplyUpdate() {
+    if (!updateResult?.latestVersion) return
+    setApplying(true)
+    try {
+      const result = await applyUpdate(updateResult.latestVersion)
+      if (result.success) {
+        Message.success('更新已触发，容器即将自动重启...')
+        setTimeout(() => Message.info('请等待 10-30 秒后刷新页面'), 3000)
+      } else {
+        Message.warning(result.message)
+      }
+    } catch (e) {
+      Message.error(resolveErrorMessage(e, '触发更新失败'))
+    } finally {
+      setApplying(false)
     }
   }
 
@@ -105,14 +124,17 @@ export function SettingsPage() {
                 </Card>
               )}
               <Space>
+                <Button type="primary" status="success" loading={applying} onClick={handleApplyUpdate}>
+                  一键更新（Docker）
+                </Button>
                 {updateResult.downloadUrl && (
                   <Link href={updateResult.downloadUrl} target="_blank">
-                    <Button type="primary">下载二进制包</Button>
+                    <Button type="outline">下载二进制包</Button>
                   </Link>
                 )}
                 {updateResult.releaseUrl && (
                   <Link href={updateResult.releaseUrl} target="_blank">
-                    <Button type="outline">查看 Release 详情</Button>
+                    <Button type="text">Release 详情</Button>
                   </Link>
                 )}
               </Space>

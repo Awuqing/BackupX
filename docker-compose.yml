@@ -15,6 +15,7 @@ services:
       - "8340:8340"
     volumes:
       - backupx-data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock  # 支持 Web 一键更新
       # 挂载需要备份的宿主机目录（按需添加，:ro 表示只读）：
       # - /var/www:/mnt/www:ro
       # - /etc/nginx:/mnt/nginx-conf:ro

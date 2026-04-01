@@ -55,6 +55,7 @@ RUN apk add --no-cache \
     nginx \
     tzdata \
     ca-certificates \
+    docker-cli docker-cli-compose \
     # Required by mysql/postgresql backup tasks
     mysql-client \
     postgresql16-client \
