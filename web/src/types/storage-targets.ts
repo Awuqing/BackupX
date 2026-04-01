@@ -1,4 +1,5 @@
-export type StorageTargetType = 'local_disk' | 'google_drive' | 's3' | 'webdav' | 'aliyun_oss' | 'tencent_cos' | 'qiniu_kodo' | 'ftp' | 'rclone'
+// 内置类型 + 全部 rclone 后端名（sftp, azureblob, dropbox 等）
+export type StorageTargetType = string
 export type StorageTestStatus = 'unknown' | 'success' | 'failed'
 export type StorageFieldType = 'input' | 'password' | 'switch'
 

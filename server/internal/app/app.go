@@ -73,6 +73,8 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 		storageRclone.NewFTPFactory(),
 		storageRclone.NewRcloneFactory(),
 	)
+	// 将全部 rclone 后端注册为独立存储类型（sftp、azureblob、dropbox 等与 s3、ftp 完全平级）
+	storageRclone.RegisterAllBackends(storageRegistry)
 	storageTargetService := service.NewStorageTargetService(storageTargetRepo, oauthSessionRepo, storageRegistry, configCipher)
 	storageTargetService.SetBackupTaskRepository(backupTaskRepo)
 	storageTargetService.SetBackupRecordRepository(backupRecordRepo)

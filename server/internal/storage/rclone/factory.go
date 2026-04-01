@@ -434,3 +434,75 @@ type BackendOption struct {
 	Required   bool   `json:"required"`
 	IsPassword bool   `json:"isPassword"`
 }
+
+// ---------------------------------------------------------------------------
+// 通用 BackendFactory — 为任意 rclone 后端自动生成独立 Factory
+// ---------------------------------------------------------------------------
+
+// GenericBackendFactory 为单个 rclone 后端创建独立的 ProviderFactory。
+// 用户存储目标的 type 直接是后端名（如 "sftp"），与 "s3"、"ftp" 完全平级。
+type GenericBackendFactory struct {
+	backendType string
+	sensitive   []string
+}
+
+// NewBackendFactory 为指定 rclone 后端创建一个 Factory。
+func NewBackendFactory(backendType string) GenericBackendFactory {
+	var sensitive []string
+	for _, ri := range fs.Registry {
+		if ri.Name == backendType {
+			for _, opt := range ri.Options {
+				if opt.IsPassword {
+					sensitive = append(sensitive, opt.Name)
+				}
+			}
+			break
+		}
+	}
+	return GenericBackendFactory{backendType: backendType, sensitive: sensitive}
+}
+
+func (f GenericBackendFactory) Type() storage.ProviderType { return storage.ProviderType(f.backendType) }
+func (f GenericBackendFactory) SensitiveFields() []string   { return f.sensitive }
+
+func (f GenericBackendFactory) New(ctx context.Context, rawConfig map[string]any) (storage.StorageProvider, error) {
+	root, _ := rawConfig["root"].(string)
+	root = strings.TrimSpace(root)
+
+	var b strings.Builder
+	b.WriteString(":")
+	b.WriteString(f.backendType)
+	for key, val := range rawConfig {
+		if key == "root" {
+			continue
+		}
+		strVal := fmt.Sprintf("%v", val)
+		if strings.TrimSpace(strVal) == "" {
+			continue
+		}
+		b.WriteString(",")
+		b.WriteString(key)
+		b.WriteString("=")
+		b.WriteString(quoteParam(strVal))
+	}
+	b.WriteString(":")
+	b.WriteString(root)
+
+	return newFs(ctx, storage.ProviderType(f.backendType), b.String())
+}
+
+// RegisterAllBackends 将所有 rclone 后端注册为独立 Factory 到 Registry。
+// 已存在的内置类型（s3, ftp 等）不会被覆盖。
+func RegisterAllBackends(registry *storage.Registry) {
+	builtinTypes := map[string]bool{
+		"local_disk": true, "s3": true, "webdav": true, "google_drive": true,
+		"ftp": true, "aliyun_oss": true, "tencent_cos": true, "qiniu_kodo": true,
+		"rclone": true, "local": true,
+	}
+	for _, info := range ListBackends() {
+		if builtinTypes[info.Name] {
+			continue
+		}
+		registry.Register(NewBackendFactory(info.Name))
+	}
+}
