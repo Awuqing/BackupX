@@ -106,6 +106,7 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		backupRecords.GET("/:id/logs/stream", backupRecordHandler.StreamLogs)
 		backupRecords.GET("/:id/download", backupRecordHandler.Download)
 		backupRecords.POST("/:id/restore", backupRecordHandler.Restore)
+		backupRecords.POST("/batch-delete", backupRecordHandler.BatchDelete)
 		backupRecords.DELETE("/:id", backupRecordHandler.Delete)
 		dashboard := api.Group("/dashboard")
 		dashboard.Use(AuthMiddleware(deps.JWTManager))

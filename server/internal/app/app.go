@@ -94,6 +94,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	backupExecutionService := service.NewBackupExecutionService(backupTaskRepo, backupRecordRepo, storageTargetRepo, storageRegistry, backupRunnerRegistry, logHub, retentionService, configCipher, notificationService, cfg.Backup.TempDir, cfg.Backup.MaxConcurrent, cfg.Backup.Retries, cfg.Backup.BandwidthLimit)
 	schedulerService := scheduler.NewService(backupTaskRepo, backupExecutionService, appLogger)
 	backupTaskService.SetScheduler(schedulerService)
+	// 审计日志注入延迟到 auditService 创建后（见下方）
 	backupRecordService := service.NewBackupRecordService(backupRecordRepo, backupExecutionService, logHub)
 	dashboardService := service.NewDashboardService(backupTaskRepo, backupRecordRepo, storageTargetRepo)
 	settingsService := service.NewSettingsService(systemConfigRepo)
@@ -102,6 +103,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	auditLogRepo := repository.NewAuditLogRepository(db)
 	auditService := service.NewAuditService(auditLogRepo)
 	authService.SetAuditService(auditService)
+	schedulerService.SetAuditRecorder(auditService)
 
 	// Database discovery
 	databaseDiscoveryService := service.NewDatabaseDiscoveryService(backup.NewOSCommandExecutor())

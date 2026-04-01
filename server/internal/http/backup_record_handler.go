@@ -147,6 +147,24 @@ func (h *BackupRecordHandler) Delete(c *gin.Context) {
 	response.Success(c, gin.H{"deleted": true})
 }
 
+func (h *BackupRecordHandler) BatchDelete(c *gin.Context) {
+	var input struct {
+		IDs []uint `json:"ids" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.Error(c, apperror.BadRequest("BACKUP_RECORD_BATCH_INVALID", "批量删除参数不合法", err))
+		return
+	}
+	deleted := 0
+	for _, id := range input.IDs {
+		if err := h.service.Delete(c.Request.Context(), id); err == nil {
+			deleted++
+		}
+	}
+	recordAudit(c, h.auditService, "backup_record", "batch_delete", "backup_record", "", "", fmt.Sprintf("批量删除 %d 条备份记录", deleted))
+	response.Success(c, gin.H{"deleted": deleted})
+}
+
 func buildRecordFilter(c *gin.Context) (service.BackupRecordListInput, error) {
 	var filter service.BackupRecordListInput
 	if taskIDValue := strings.TrimSpace(c.Query("taskId")); taskIDValue != "" {
