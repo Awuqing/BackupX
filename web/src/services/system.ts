@@ -11,8 +11,25 @@ export interface SystemInfo {
   diskUsed: number
 }
 
+export interface UpdateCheckResult {
+  currentVersion: string
+  latestVersion: string
+  hasUpdate: boolean
+  releaseUrl?: string
+  releaseNotes?: string
+  publishedAt?: string
+  downloadUrl?: string
+  dockerImage?: string
+  error?: string
+}
+
 export async function fetchSystemInfo() {
   const response = await http.get<{ code: string; message: string; data: SystemInfo }>('/system/info')
+  return response.data.data
+}
+
+export async function checkUpdate() {
+  const response = await http.get<{ code: string; message: string; data: UpdateCheckResult }>('/system/update-check')
   return response.data.data
 }
 
