@@ -14,6 +14,6 @@ export interface RcloneBackendInfo {
 }
 
 export async function listRcloneBackends(): Promise<RcloneBackendInfo[]> {
-  const { data } = await http.get<{ data: RcloneBackendInfo[] }>('/api/storage-targets/rclone/backends')
+  const { data } = await http.get<{ data: RcloneBackendInfo[] }>('/storage-targets/rclone/backends')
   return data.data
 }
