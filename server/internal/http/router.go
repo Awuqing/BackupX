@@ -68,6 +68,7 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		system := api.Group("/system")
 		system.Use(AuthMiddleware(deps.JWTManager))
 		system.GET("/info", systemHandler.Info)
+		system.GET("/update-check", systemHandler.CheckUpdate)
 
 		storageTargets := api.Group("/storage-targets")
 		storageTargets.Use(AuthMiddleware(deps.JWTManager))
