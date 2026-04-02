@@ -1,6 +1,6 @@
 import { Alert, Button, Divider, Drawer, Input, Select, Space, Switch, Typography } from '@arco-design/web-react'
 import { useEffect, useMemo, useState } from 'react'
-import { getStorageTargetFieldConfigs, getStorageTargetTypeLabel, isBuiltinType, builtinTypeOptions } from './field-config'
+import { getStorageTargetFieldConfigs, getStorageTargetTypeLabel, isBuiltinType, buildAllTypeOptions } from './field-config'
 import type { StorageConnectionTestResult, StorageTargetDetail, StorageTargetPayload, StorageTargetType } from '../../types/storage-targets'
 import { listRcloneBackends, type RcloneBackendInfo } from '../../services/rclone'
 
@@ -56,17 +56,18 @@ export function StorageTargetFormDrawer({
     setTestResult(null)
   }, [initialValue, visible])
 
-  // 合并类型选项：内置 + 全部 rclone 后端
-  const allTypeOptions = useMemo(() => {
-    const builtinValues = new Set(builtinTypeOptions.map((o) => o.value))
-    const rcloneOptions = rcloneBackends
-      .filter((b) => !builtinValues.has(b.name) && b.name !== 'local' && b.name !== 'rclone')
-      .map((b) => ({ label: `${b.name.toUpperCase()} — ${b.description}`, value: b.name }))
-    return [
-      ...builtinTypeOptions.map((o) => ({ ...o, label: o.label, value: o.value as string })),
-      ...rcloneOptions,
-    ]
-  }, [rcloneBackends])
+  // 构建分类的类型选项（去重、中文标注）
+  const allTypeOptions = useMemo(() => buildAllTypeOptions(rcloneBackends), [rcloneBackends])
+
+  // 按分组聚合，用于 Select 的 OptGroup 渲染
+  const groupedOptions = useMemo(() => {
+    const groups: Record<string, { label: string; value: string }[]> = {}
+    for (const opt of allTypeOptions) {
+      if (!groups[opt.group]) groups[opt.group] = []
+      groups[opt.group].push({ label: opt.label, value: opt.value })
+    }
+    return groups
+  }, [allTypeOptions])
 
   // 当前类型是否为非内置（rclone 动态后端）
   const isDynamicType = !isBuiltinType(draft.type)
@@ -179,17 +180,24 @@ export function StorageTargetFormDrawer({
           <Select
             showSearch
             value={draft.type || undefined}
-            placeholder="搜索存储类型（如 SFTP、Azure Blob、Dropbox...）"
-            options={allTypeOptions}
+            placeholder="搜索存储类型..."
             filterOption={(input, option) => {
-              const label = (option?.props?.children ?? option?.props?.label ?? '') as string
+              const label = String(option?.props?.children ?? option?.props?.label ?? '')
               return label.toLowerCase().includes(input.toLowerCase())
             }}
             onChange={(value) => {
               setDraft((c) => ({ ...c, type: value as string, config: {} }))
               setTestResult(null)
             }}
-          />
+          >
+            {Object.entries(groupedOptions).map(([group, options]) => (
+              <Select.OptGroup key={group} label={group}>
+                {options.map((opt) => (
+                  <Select.Option key={opt.value} value={opt.value}>{opt.label}</Select.Option>
+                ))}
+              </Select.OptGroup>
+            ))}
+          </Select>
         </div>
 
         <div>
