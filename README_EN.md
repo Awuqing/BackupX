@@ -35,10 +35,10 @@
 | Capability | Details |
 |-----------|---------|
 | **Backup Types** | Files/Directories (multi-source), MySQL, PostgreSQL, SQLite, SAP HANA |
-| **Storage Backends** | Alibaba Cloud OSS, Tencent COS, Qiniu Kodo, S3-compatible (AWS/MinIO/R2), Google Drive, WebDAV, FTP/FTPS, Local Disk |
-| **Scheduling** | Cron-based scheduling + visual editor + auto-retention policy (by days/count) |
-| **Multi-Node** | Master-Agent cluster for managing backups across multiple servers |
-| **Security** | JWT + bcrypt + AES-256-GCM encrypted config + optional backup encryption + audit logs |
+| **70+ Storage Backends** | Built-in Alibaba OSS / Tencent COS / Qiniu / S3 / Google Drive / WebDAV / FTP + 70+ backends via rclone (SFTP, Azure Blob, Dropbox, OneDrive, etc.) |
+| **Scheduling** | Cron-based + visual editor + auto-retention policy (by days/count, auto empty directory cleanup) |
+| **Multi-Node** | Master-Agent cluster for managing backups across multiple servers with remote directory browsing and node editing |
+| **Security** | JWT + bcrypt + AES-256-GCM encrypted config + optional backup encryption + comprehensive audit logs |
 | **Notifications** | Email / Webhook / Telegram — push on success or failure |
 | **Deployment** | Single binary + embedded SQLite, Docker one-click, zero external dependencies |
 
@@ -120,6 +120,9 @@ Go to **Storage Targets** → **Add**, choose a storage type and enter credentia
 | WebDAV | Server URL + Username/Password |
 | FTP | Host + Port + Username/Password |
 | Local Disk | Target directory path |
+| SFTP / Azure / Dropbox / OneDrive etc. | Select the type, fill in required fields; advanced options are collapsible |
+
+> For Chinese cloud providers, just enter Region and AccessKey — the system auto-assembles the Endpoint. Rclone-type configs separate required fields from optional advanced options (collapsed by default).
 
 Click **Test Connection** to verify.
 
@@ -129,9 +132,11 @@ Go to **Backup Tasks** → **Create**, complete 3 steps:
 
 1. **Basic Info** — Task name, backup type, Cron expression (leave empty for manual-only)
 2. **Source Config** — File backup: select source paths (supports multiple); Database: enter connection info
-3. **Storage & Policy** — Select storage target(s), compression, retention days, encryption toggle
+3. **Storage & Policy** — Select storage target(s) (supports multiple), compression, retention days, encryption toggle
 
 Save, then click **Run Now** to test. View real-time logs in **Backup Records**.
+
+> Deleting a backup task automatically cleans up remote storage files while preserving backup records for audit purposes.
 
 ### 5. Set Up Notifications (Optional)
 
@@ -164,6 +169,8 @@ environment:
   - BACKUPX_LOG_LEVEL=debug
   - BACKUPX_BACKUP_MAX_CONCURRENT=4
 ```
+
+To upgrade: go to **System Settings**, click "Check for Updates" to see if a new version is available, then run `docker compose pull && docker compose up -d`.
 
 ### Bare Metal
 
@@ -239,7 +246,10 @@ BackupX supports Master-Agent mode for managing multiple servers:
 2. Deploy Agent on remote server, connect using the Token
 3. Create backup tasks and assign to specific nodes — Master dispatches automatically
 
-The visual directory browser lets you pick directories on remote Agent nodes — no manual path typing.
+- Local node auto-detects IP address and version
+- Remote nodes report system info via Agent heartbeat (hostname, IP, OS, architecture, version)
+- Node names can be edited directly from the console
+- Visual directory browser lets you pick directories on remote Agent nodes
 
 ---
 
@@ -264,7 +274,7 @@ make docker-cn           # Docker build with China mirrors
 ### Release
 
 ```bash
-git tag v1.2.3 && git push --tags
+git tag v1.4.3 && git push --tags
 # GitHub Actions: compile dual-arch binaries → publish GitHub Release → push Docker Hub image
 ```
 
@@ -291,12 +301,16 @@ All endpoints prefixed with `/api`, authenticated via JWT Bearer Token.
 | | `POST /backup/records/:id/restore` | Restore |
 | **Storage Targets** | `GET\|POST /storage-targets` | List / Add |
 | | `POST /storage-targets/test` | Test connection |
+| | `GET /storage-targets/rclone/backends` | Rclone backend list |
 | **Nodes** | `GET\|POST /nodes` | List / Add |
+| | `PUT /nodes/:id` | Edit node |
 | | `GET /nodes/:id/fs/list` | Directory browser |
+| | `POST /agent/heartbeat` | Agent heartbeat (Token auth) |
 | **Notifications** | `GET\|POST /notifications` | List / Add |
 | **Dashboard** | `GET /dashboard/stats` | Overview stats |
 | **Audit Logs** | `GET /audit-logs` | Operation audit |
 | **System** | `GET /system/info` | System info |
+| | `GET /system/update-check` | Check for updates |
 
 ---
 
@@ -304,9 +318,9 @@ All endpoints prefixed with `/api`, authenticated via JWT Bearer Token.
 
 | Component | Technology |
 |-----------|-----------|
-| **Backend** | Go · Gin · GORM · SQLite · robfig/cron |
+| **Backend** | Go · Gin · GORM · SQLite · robfig/cron · rclone |
 | **Frontend** | React 18 · TypeScript · ArcoDesign · Vite · Zustand · ECharts |
-| **Storage** | AWS SDK v2 · Google Drive API v3 · gowebdav · jlaffaye/ftp |
+| **Storage** | rclone (70+ backends) · AWS SDK v2 · Google Drive API v3 |
 | **Security** | JWT · bcrypt · AES-256-GCM |
 
 ## Contributing
