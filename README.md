@@ -35,10 +35,10 @@
 | 能力 | 说明 |
 |------|------|
 | **备份类型** | 文件/目录（多源路径）、MySQL、PostgreSQL、SQLite、SAP HANA |
-| **存储后端** | 阿里云 OSS、腾讯云 COS、七牛云、S3 兼容(AWS/MinIO/R2)、Google Drive、WebDAV、FTP/FTPS、本地磁盘 |
-| **自动调度** | Cron 定时 + 可视化编辑器 + 自动保留策略（按天数/份数清理） |
-| **多节点** | Master-Agent 集群，统一管理多台服务器的备份 |
-| **安全** | JWT + bcrypt + AES-256-GCM 加密配置 + 可选备份文件加密 + 审计日志 |
+| **70+ 存储后端** | 内置阿里云 OSS / 腾讯云 COS / 七牛云 / S3 / Google Drive / WebDAV / FTP + 通过 rclone 集成 SFTP、Azure Blob、Dropbox、OneDrive 等 70+ 后端 |
+| **自动调度** | Cron 定时 + 可视化编辑器 + 自动保留策略（按天数/份数清理，自动回收空目录） |
+| **多节点** | Master-Agent 集群，统一管理多台服务器的备份，支持远程目录浏览与节点编辑 |
+| **安全** | JWT + bcrypt + AES-256-GCM 加密配置 + 可选备份文件加密 + 完整审计日志 |
 | **通知** | 邮件 / Webhook / Telegram，备份成功或失败时自动推送 |
 | **部署** | 单二进制 + 内嵌 SQLite，Docker 一键启动，零外部依赖 |
 
@@ -120,8 +120,9 @@ make docker-cn           # 或用国内镜像构建 Docker（goproxy.cn / npmmir
 | WebDAV | 服务器地址 + 用户名/密码 |
 | FTP | 主机 + 端口 + 用户名/密码 |
 | 本地磁盘 | 目标目录路径 |
+| SFTP / Azure / Dropbox / OneDrive 等 | 选择对应类型后填写必填项，高级配置可折叠展开 |
 
-> 国内云厂商只需填 Region 和 AccessKey，系统自动组装 Endpoint。
+> 国内云厂商只需填 Region 和 AccessKey，系统自动组装 Endpoint。Rclone 类型的配置项按必填/可选分层展示，高级选项默认折叠。
 
 添加后点击 **测试连接** 确认配置正确。
 
@@ -131,9 +132,11 @@ make docker-cn           # 或用国内镜像构建 Docker（goproxy.cn / npmmir
 
 1. **基础信息** — 任务名称、备份类型、Cron 表达式（留空则仅手动执行）
 2. **源配置** — 文件备份选择源路径（支持多个）、数据库备份填写连接信息
-3. **存储与策略** — 选择存储目标、压缩策略、保留天数、是否加密
+3. **存储与策略** — 选择存储目标（支持多个）、压缩策略、保留天数、是否加密
 
 保存后可以点击 **立即执行** 测试，在 **备份记录** 页面实时查看执行日志。
+
+> 删除备份任务时会自动清理远端存储上的备份文件，但保留备份记录以供审计追溯。
 
 ### 5. 配置通知（可选）
 
@@ -166,6 +169,8 @@ environment:
   - BACKUPX_LOG_LEVEL=debug
   - BACKUPX_BACKUP_MAX_CONCURRENT=4
 ```
+
+版本更新：在 **系统设置** 页面点击「检查更新」查看是否有新版本，然后手动执行 `docker compose pull && docker compose up -d` 完成升级。
 
 ### 裸机部署
 
@@ -243,7 +248,10 @@ BackupX 支持 Master-Agent 模式管理多台服务器：
 2. 在远程服务器部署 Agent 并使用 Token 连接 Master
 3. 创建备份任务时选择对应节点，Master 自动下发任务
 
-创建文件备份任务时，可通过可视化目录浏览器远程选择 Agent 节点上的目录，无需手动输入路径。
+- 本机节点自动检测 IP 地址和版本信息
+- 远程节点通过 Agent 心跳上报系统信息（主机名、IP、OS、架构、版本）
+- 支持在控制台直接编辑节点名称
+- 创建文件备份任务时可通过目录浏览器远程选择 Agent 节点上的目录
 
 ---
 
@@ -268,7 +276,7 @@ make docker-cn           # 国内 Docker 构建（镜像加速）
 ### 发版
 
 ```bash
-git tag v1.2.3 && git push --tags
+git tag v1.4.3 && git push --tags
 # GitHub Actions 自动：编译双架构二进制 → 发布 GitHub Release → 推送 Docker Hub 镜像
 ```
 
@@ -295,12 +303,16 @@ git tag v1.2.3 && git push --tags
 | | `POST /backup/records/:id/restore` | 恢复 |
 | **存储目标** | `GET\|POST /storage-targets` | 列表 / 添加 |
 | | `POST /storage-targets/test` | 测试连接 |
+| | `GET /storage-targets/rclone/backends` | Rclone 后端列表 |
 | **节点** | `GET\|POST /nodes` | 列表 / 添加 |
+| | `PUT /nodes/:id` | 编辑节点 |
 | | `GET /nodes/:id/fs/list` | 目录浏览 |
+| | `POST /agent/heartbeat` | Agent 心跳（Token 认证） |
 | **通知** | `GET\|POST /notifications` | 列表 / 添加 |
 | **仪表盘** | `GET /dashboard/stats` | 概览统计 |
 | **审计日志** | `GET /audit-logs` | 操作审计 |
 | **系统** | `GET /system/info` | 系统信息 |
+| | `GET /system/update-check` | 检查版本更新 |
 
 ---
 
@@ -308,9 +320,9 @@ git tag v1.2.3 && git push --tags
 
 | 组件 | 技术 |
 |------|------|
-| **后端** | Go · Gin · GORM · SQLite · robfig/cron |
+| **后端** | Go · Gin · GORM · SQLite · robfig/cron · rclone |
 | **前端** | React 18 · TypeScript · ArcoDesign · Vite · Zustand · ECharts |
-| **存储** | AWS SDK v2 · Google Drive API v3 · gowebdav · jlaffaye/ftp |
+| **存储** | rclone（70+ 后端）· AWS SDK v2 · Google Drive API v3 |
 | **安全** | JWT · bcrypt · AES-256-GCM |
 
 ## Contributing
