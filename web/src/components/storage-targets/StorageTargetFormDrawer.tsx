@@ -1,8 +1,8 @@
-import { Alert, Button, Divider, Drawer, Input, Select, Space, Switch, Typography } from '@arco-design/web-react'
+import { Alert, Button, Collapse, Divider, Drawer, Input, Select, Space, Switch, Typography } from '@arco-design/web-react'
 import { useEffect, useMemo, useState } from 'react'
 import { getStorageTargetFieldConfigs, getStorageTargetTypeLabel, isBuiltinType, buildAllTypeOptions } from './field-config'
 import type { StorageConnectionTestResult, StorageTargetDetail, StorageTargetPayload, StorageTargetType } from '../../types/storage-targets'
-import { listRcloneBackends, type RcloneBackendInfo } from '../../services/rclone'
+import { listRcloneBackends, type RcloneBackendInfo, type RcloneBackendOption } from '../../services/rclone'
 
 interface StorageTargetFormDrawerProps {
   visible: boolean
@@ -138,8 +138,28 @@ export function StorageTargetFormDrawer({
     })
   }
 
-  // 渲染动态字段（rclone 后端）
+  // 渲染单个动态字段
+  function renderDynamicOption(opt: RcloneBackendOption) {
+    return (
+      <div key={opt.key}>
+        <Typography.Text>{opt.key}{opt.required ? ' *' : ''}</Typography.Text>
+        {opt.isPassword ? (
+          <Input.Password value={(draft.config[opt.key] as string) || ''} placeholder={opt.label} onChange={(v) => updateConfig(opt.key, v)} />
+        ) : (
+          <Input value={(draft.config[opt.key] as string) || ''} placeholder={opt.label} onChange={(v) => updateConfig(opt.key, v)} />
+        )}
+        {opt.label && (
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 2, fontSize: 12 }} ellipsis={{ rows: 2, expandable: true }}>{opt.label}</Typography.Paragraph>
+        )}
+      </div>
+    )
+  }
+
+  // 渲染动态字段（rclone 后端）— 必填优先，可选折叠
   function renderDynamicFields() {
+    const requiredOptions = dynamicBackend?.options.filter((opt) => opt.required) ?? []
+    const optionalOptions = dynamicBackend?.options.filter((opt) => !opt.required) ?? []
+
     return (
       <>
         <div>
@@ -147,19 +167,19 @@ export function StorageTargetFormDrawer({
           <Input value={(draft.config.root as string) || ''} placeholder="如 /backups 或 bucket 名" onChange={(v) => updateConfig('root', v)} />
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>远端根路径、桶名或挂载点，留空使用根目录</Typography.Paragraph>
         </div>
-        {dynamicBackend && dynamicBackend.options.length > 0 && dynamicBackend.options.map((opt) => (
-          <div key={opt.key}>
-            <Typography.Text>{opt.key}{opt.required ? ' *' : ''}</Typography.Text>
-            {opt.isPassword ? (
-              <Input.Password value={(draft.config[opt.key] as string) || ''} placeholder={opt.label} onChange={(v) => updateConfig(opt.key, v)} />
-            ) : (
-              <Input value={(draft.config[opt.key] as string) || ''} placeholder={opt.label} onChange={(v) => updateConfig(opt.key, v)} />
-            )}
-            {opt.label && (
-              <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 2, fontSize: 12 }} ellipsis={{ rows: 2, expandable: true }}>{opt.label}</Typography.Paragraph>
-            )}
-          </div>
-        ))}
+        {requiredOptions.map(renderDynamicOption)}
+        {optionalOptions.length > 0 && (
+          <Collapse bordered={false} style={{ background: 'transparent' }}>
+            <Collapse.Item
+              header={<Typography.Text type="secondary">高级配置（{optionalOptions.length} 个可选项）</Typography.Text>}
+              name="advanced"
+            >
+              <Space direction="vertical" size="large" style={{ width: '100%' }}>
+                {optionalOptions.map(renderDynamicOption)}
+              </Space>
+            </Collapse.Item>
+          </Collapse>
+        )}
       </>
     )
   }

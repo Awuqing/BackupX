@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -135,62 +133,3 @@ func (s *SystemService) GetInfo(_ context.Context) *SystemInfo {
 	return info
 }
 
-// UpdateApplyResult 描述自动更新执行结果。
-type UpdateApplyResult struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	Output  string `json:"output,omitempty"`
-}
-
-// IsDockerEnvironment 检测当前是否运行在 Docker 容器中。
-func (s *SystemService) IsDockerEnvironment() bool {
-	if _, err := os.Stat("/.dockerenv"); err == nil {
-		return true
-	}
-	return false
-}
-
-// ApplyDockerUpdate 执行 Docker 自动更新：pull 新镜像 + recreate 容器。
-// 容器会在 docker compose up -d 后自动重启为新版本。
-func (s *SystemService) ApplyDockerUpdate(_ context.Context, targetVersion string) *UpdateApplyResult {
-	if !s.IsDockerEnvironment() {
-		return &UpdateApplyResult{Success: false, Message: "当前非 Docker 环境，请手动下载二进制更新"}
-	}
-
-	image := "awuqing/backupx"
-	tag := strings.TrimSpace(targetVersion)
-	if tag == "" {
-		tag = "latest"
-	}
-	pullTarget := image + ":" + tag
-
-	// Step 1: docker pull
-	pullCmd := exec.Command("docker", "pull", pullTarget)
-	pullOut, pullErr := pullCmd.CombinedOutput()
-	if pullErr != nil {
-		return &UpdateApplyResult{Success: false, Message: fmt.Sprintf("docker pull 失败: %v", pullErr), Output: string(pullOut)}
-	}
-
-	// Step 2: docker compose up -d（后台执行，容器会自重启）
-	// 检测 compose 命令
-	composeBin := "docker"
-	composeArgs := []string{"compose", "up", "-d"}
-	if _, err := exec.LookPath("docker-compose"); err == nil {
-		composeBin = "docker-compose"
-		composeArgs = []string{"up", "-d"}
-	}
-
-	// 异步执行，给 API 响应留时间
-	go func() {
-		time.Sleep(1 * time.Second)
-		cmd := exec.Command(composeBin, composeArgs...)
-		cmd.Dir = "/app" // Docker 容器中的工作目录
-		_ = cmd.Run()
-	}()
-
-	return &UpdateApplyResult{
-		Success: true,
-		Message: fmt.Sprintf("已拉取 %s，容器即将自动重启到新版本", pullTarget),
-		Output:  string(pullOut),
-	}
-}

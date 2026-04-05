@@ -5,11 +5,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strings"
 	"time"
 
 	"backupx/server/internal/apperror"
@@ -37,13 +39,19 @@ type NodeCreateInput struct {
 	Name string `json:"name" binding:"required"`
 }
 
-// NodeService manages the cluster nodes.
-type NodeService struct {
-	repo repository.NodeRepository
+// NodeUpdateInput 是编辑节点的输入。
+type NodeUpdateInput struct {
+	Name string `json:"name" binding:"required"`
 }
 
-func NewNodeService(repo repository.NodeRepository) *NodeService {
-	return &NodeService{repo: repo}
+// NodeService manages the cluster nodes.
+type NodeService struct {
+	repo    repository.NodeRepository
+	version string
+}
+
+func NewNodeService(repo repository.NodeRepository, version string) *NodeService {
+	return &NodeService{repo: repo, version: version}
 }
 
 // EnsureLocalNode creates the default "local" node if it does not exist.
@@ -57,6 +65,8 @@ func (s *NodeService) EnsureLocalNode(ctx context.Context) error {
 		existing.LastSeen = time.Now().UTC()
 		hostname, _ := os.Hostname()
 		existing.Hostname = hostname
+		existing.IPAddress = detectLocalIP()
+		existing.AgentVer = s.version
 		existing.OS = runtime.GOOS
 		existing.Arch = runtime.GOARCH
 		return s.repo.Update(ctx, existing)
@@ -64,14 +74,16 @@ func (s *NodeService) EnsureLocalNode(ctx context.Context) error {
 	hostname, _ := os.Hostname()
 	token, _ := generateToken()
 	node := &model.Node{
-		Name:     "本机 (Local)",
-		Hostname: hostname,
-		Token:    token,
-		Status:   model.NodeStatusOnline,
-		IsLocal:  true,
-		OS:       runtime.GOOS,
-		Arch:     runtime.GOARCH,
-		LastSeen: time.Now().UTC(),
+		Name:      "本机 (Local)",
+		Hostname:  hostname,
+		IPAddress: detectLocalIP(),
+		Token:     token,
+		Status:    model.NodeStatusOnline,
+		IsLocal:   true,
+		OS:        runtime.GOOS,
+		Arch:      runtime.GOARCH,
+		AgentVer:  s.version,
+		LastSeen:  time.Now().UTC(),
 	}
 	return s.repo.Create(ctx, node)
 }
@@ -199,7 +211,7 @@ func (s *NodeService) ListDirectory(ctx context.Context, nodeID uint, path strin
 }
 
 // Heartbeat updates the node status when an agent reports in.
-func (s *NodeService) Heartbeat(ctx context.Context, token string, hostname string, ip string, agentVer string) error {
+func (s *NodeService) Heartbeat(ctx context.Context, token string, hostname string, ip string, agentVer string, osName string, archName string) error {
 	node, err := s.repo.FindByToken(ctx, token)
 	if err != nil {
 		return err
@@ -211,10 +223,34 @@ func (s *NodeService) Heartbeat(ctx context.Context, token string, hostname stri
 	node.Hostname = hostname
 	node.IPAddress = ip
 	node.AgentVer = agentVer
-	node.OS = runtime.GOOS
-	node.Arch = runtime.GOARCH
+	if strings.TrimSpace(osName) != "" {
+		node.OS = osName
+	} else {
+		node.OS = runtime.GOOS
+	}
+	if strings.TrimSpace(archName) != "" {
+		node.Arch = archName
+	} else {
+		node.Arch = runtime.GOARCH
+	}
 	node.LastSeen = time.Now().UTC()
 	return s.repo.Update(ctx, node)
+}
+
+// Update 编辑节点名称。
+func (s *NodeService) Update(ctx context.Context, id uint, input NodeUpdateInput) (*NodeSummary, error) {
+	node, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, apperror.New(http.StatusNotFound, "NODE_NOT_FOUND", "节点不存在", nil)
+	}
+	node.Name = strings.TrimSpace(input.Name)
+	if err := s.repo.Update(ctx, node); err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
 }
 
 // DirEntry represents a file or directory in a node's file system.
@@ -223,6 +259,22 @@ type DirEntry struct {
 	Path  string `json:"path"`
 	IsDir bool   `json:"isDir"`
 	Size  int64  `json:"size"`
+}
+
+// detectLocalIP 获取本机第一个非回环 IPv4 地址。
+func detectLocalIP() string {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return ""
+	}
+	for _, addr := range addrs {
+		if ipNet, ok := addr.(*net.IPNet); ok && !ipNet.IP.IsLoopback() {
+			if ipNet.IP.To4() != nil {
+				return ipNet.IP.String()
+			}
+		}
+	}
+	return ""
 }
 
 func generateToken() (string, error) {

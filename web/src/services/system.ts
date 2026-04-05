@@ -33,17 +33,6 @@ export async function checkUpdate() {
   return response.data.data
 }
 
-export interface UpdateApplyResult {
-  success: boolean
-  message: string
-  output?: string
-}
-
-export async function applyUpdate(version: string) {
-  const response = await http.post<{ code: string; message: string; data: UpdateApplyResult }>('/system/update-apply', { version })
-  return response.data.data
-}
-
 export async function fetchSettings() {
   const response = await http.get<{ code: string; message: string; data: Record<string, string> }>('/settings')
   return response.data.data

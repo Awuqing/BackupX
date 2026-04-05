@@ -79,6 +79,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	storageTargetService.SetBackupTaskRepository(backupTaskRepo)
 	storageTargetService.SetBackupRecordRepository(backupRecordRepo)
 	backupTaskService := service.NewBackupTaskService(backupTaskRepo, storageTargetRepo, configCipher)
+	backupTaskService.SetRecordsAndStorage(backupRecordRepo, storageRegistry)
 	backupRunnerRegistry := backup.NewRegistry(backup.NewFileRunner(), backup.NewSQLiteRunner(), backup.NewMySQLRunner(nil), backup.NewPostgreSQLRunner(nil), backup.NewSAPHANARunner(nil))
 	logHub := backup.NewLogHub()
 	retentionService := backupretention.NewService(backupRecordRepo)
@@ -110,7 +111,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 
 	// Cluster: Node management
 	nodeRepo := repository.NewNodeRepository(db)
-	nodeService := service.NewNodeService(nodeRepo)
+	nodeService := service.NewNodeService(nodeRepo, version)
 	if err := nodeService.EnsureLocalNode(ctx); err != nil {
 		appLogger.Warn("failed to ensure local node", zap.Error(err))
 	}

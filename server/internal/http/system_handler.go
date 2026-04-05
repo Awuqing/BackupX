@@ -18,15 +18,6 @@ func (h *SystemHandler) Info(c *gin.Context) {
 	response.Success(c, h.systemService.GetInfo(c.Request.Context()))
 }
 
-func (h *SystemHandler) ApplyUpdate(c *gin.Context) {
-	var input struct {
-		Version string `json:"version"`
-	}
-	_ = c.ShouldBindJSON(&input)
-	result := h.systemService.ApplyDockerUpdate(c.Request.Context(), input.Version)
-	response.Success(c, result)
-}
-
 func (h *SystemHandler) CheckUpdate(c *gin.Context) {
 	result, err := h.systemService.CheckUpdate(c.Request.Context())
 	if err != nil {

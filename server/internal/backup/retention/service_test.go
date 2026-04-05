@@ -36,6 +36,9 @@ func (r *fakeRecordRepository) Delete(_ context.Context, id uint) error {
 func (r *fakeRecordRepository) ListRecent(context.Context, int) ([]model.BackupRecord, error) {
 	return nil, nil
 }
+func (r *fakeRecordRepository) ListByTask(_ context.Context, _ uint) ([]model.BackupRecord, error) {
+	return r.records, nil
+}
 func (r *fakeRecordRepository) ListSuccessfulByTask(_ context.Context, _ uint) ([]model.BackupRecord, error) {
 	return r.records, nil
 }

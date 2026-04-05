@@ -11,6 +11,7 @@ import (
 	"backupx/server/internal/apperror"
 	"backupx/server/internal/model"
 	"backupx/server/internal/repository"
+	"backupx/server/internal/storage"
 	"backupx/server/internal/storage/codec"
 )
 
@@ -81,10 +82,12 @@ type BackupTaskScheduler interface {
 }
 
 type BackupTaskService struct {
-	tasks     repository.BackupTaskRepository
-	targets   repository.StorageTargetRepository
-	cipher    *codec.ConfigCipher
-	scheduler BackupTaskScheduler
+	tasks           repository.BackupTaskRepository
+	targets         repository.StorageTargetRepository
+	records         repository.BackupRecordRepository
+	storageRegistry *storage.Registry
+	cipher          *codec.ConfigCipher
+	scheduler       BackupTaskScheduler
 }
 
 func NewBackupTaskService(
@@ -93,6 +96,12 @@ func NewBackupTaskService(
 	cipher *codec.ConfigCipher,
 ) *BackupTaskService {
 	return &BackupTaskService{tasks: tasks, targets: targets, cipher: cipher}
+}
+
+// SetRecordsAndStorage 注入备份记录仓库和存储注册表，用于任务删除时清理远端文件。
+func (s *BackupTaskService) SetRecordsAndStorage(records repository.BackupRecordRepository, registry *storage.Registry) {
+	s.records = records
+	s.storageRegistry = registry
 }
 
 func (s *BackupTaskService) SetScheduler(scheduler BackupTaskScheduler) {
@@ -185,26 +194,80 @@ func (s *BackupTaskService) Update(ctx context.Context, id uint, input BackupTas
 	return s.Get(ctx, item.ID)
 }
 
-func (s *BackupTaskService) Delete(ctx context.Context, id uint) error {
+// DeleteResult 描述任务删除的结果信息，用于审计日志。
+type DeleteResult struct {
+	TaskName     string
+	RecordCount  int
+	CleanedFiles int
+}
+
+func (s *BackupTaskService) Delete(ctx context.Context, id uint) (*DeleteResult, error) {
 	existing, err := s.tasks.FindByID(ctx, id)
 	if err != nil {
-		return apperror.Internal("BACKUP_TASK_GET_FAILED", "无法获取备份任务详情", err)
+		return nil, apperror.Internal("BACKUP_TASK_GET_FAILED", "无法获取备份任务详情", err)
 	}
 	if existing == nil {
-		return apperror.New(http.StatusNotFound, "BACKUP_TASK_NOT_FOUND", "备份任务不存在", fmt.Errorf("backup task %d not found", id))
-	}
-	if s.scheduler != nil {
-		if err := s.scheduler.RemoveTask(ctx, id); err != nil {
-			return apperror.Internal("BACKUP_TASK_SCHEDULE_FAILED", "无法移除备份任务调度", err)
-		}
-	}
-	if err := s.tasks.Delete(ctx, id); err != nil {
-		return apperror.Internal("BACKUP_TASK_DELETE_FAILED", "无法删除备份任务", err)
+		return nil, apperror.New(http.StatusNotFound, "BACKUP_TASK_NOT_FOUND", "备份任务不存在", fmt.Errorf("backup task %d not found", id))
 	}
 	if s.scheduler != nil {
 		_ = s.scheduler.RemoveTask(ctx, id)
 	}
-	return nil
+
+	// 清理远端存储文件（尽力而为，不阻止删除）
+	result := &DeleteResult{TaskName: existing.Name}
+	result.RecordCount, result.CleanedFiles = s.cleanupRemoteFiles(ctx, id)
+
+	if err := s.tasks.Delete(ctx, id); err != nil {
+		return nil, apperror.Internal("BACKUP_TASK_DELETE_FAILED", "无法删除备份任务", err)
+	}
+	return result, nil
+}
+
+// cleanupRemoteFiles 尽力删除任务相关的远端备份文件，返回记录数和成功删除的文件数。
+func (s *BackupTaskService) cleanupRemoteFiles(ctx context.Context, taskID uint) (recordCount int, cleanedFiles int) {
+	if s.records == nil || s.storageRegistry == nil {
+		return 0, 0
+	}
+	records, err := s.records.ListByTask(ctx, taskID)
+	if err != nil {
+		return 0, 0
+	}
+	recordCount = len(records)
+	// 缓存 provider 避免同一存储目标重复创建连接
+	providerCache := make(map[uint]storage.StorageProvider)
+	for _, record := range records {
+		if strings.TrimSpace(record.StoragePath) == "" {
+			continue
+		}
+		provider, ok := providerCache[record.StorageTargetID]
+		if !ok {
+			provider, err = s.resolveStorageProvider(ctx, record.StorageTargetID)
+			if err != nil {
+				continue
+			}
+			providerCache[record.StorageTargetID] = provider
+		}
+		if err := provider.Delete(ctx, record.StoragePath); err == nil {
+			cleanedFiles++
+		}
+	}
+	return recordCount, cleanedFiles
+}
+
+func (s *BackupTaskService) resolveStorageProvider(ctx context.Context, targetID uint) (storage.StorageProvider, error) {
+	target, err := s.targets.FindByID(ctx, targetID)
+	if err != nil || target == nil {
+		return nil, fmt.Errorf("target %d not found", targetID)
+	}
+	configMap := map[string]any{}
+	if err := s.cipher.DecryptJSON(target.ConfigCiphertext, &configMap); err != nil {
+		return nil, err
+	}
+	provider, err := s.storageRegistry.Create(ctx, target.Type, configMap)
+	if err != nil {
+		return nil, err
+	}
+	return provider, nil
 }
 
 func (s *BackupTaskService) Toggle(ctx context.Context, id uint, enabled bool) (*BackupTaskSummary, error) {

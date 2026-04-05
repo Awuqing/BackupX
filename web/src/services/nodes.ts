@@ -16,6 +16,11 @@ export async function createNode(name: string) {
   return unwrapApiEnvelope(response.data)
 }
 
+export async function updateNode(id: number, data: { name: string }) {
+  const response = await http.put<ApiEnvelope<NodeSummary>>(`/nodes/${id}`, data)
+  return unwrapApiEnvelope(response.data)
+}
+
 export async function deleteNode(id: number) {
   const response = await http.delete<ApiEnvelope<null>>(`/nodes/${id}`)
   return unwrapApiEnvelope(response.data)
