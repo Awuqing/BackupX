@@ -11,6 +11,28 @@ import (
 	"backupx/server/internal/storage"
 )
 
+// collectDirPrefixes 从待删除的记录中提取唯一的父目录前缀。
+func collectDirPrefixes(records []model.BackupRecord) []string {
+	seen := make(map[string]struct{})
+	var prefixes []string
+	for _, record := range records {
+		path := strings.TrimSpace(record.StoragePath)
+		if path == "" {
+			continue
+		}
+		idx := strings.LastIndex(path, "/")
+		if idx <= 0 {
+			continue
+		}
+		dir := path[:idx]
+		if _, ok := seen[dir]; !ok {
+			seen[dir] = struct{}{}
+			prefixes = append(prefixes, dir)
+		}
+	}
+	return prefixes
+}
+
 type CleanupResult struct {
 	DeletedRecords int
 	DeletedObjects int
@@ -54,6 +76,17 @@ func (s *Service) Cleanup(ctx context.Context, task *model.BackupTask, provider 
 		}
 		result.DeletedRecords++
 	}
+
+	// 清理空目录：收集被删除文件的父目录，尝试移除空目录
+	if dirCleaner, ok := provider.(storage.StorageDirCleaner); ok && result.DeletedObjects > 0 {
+		prefixes := collectDirPrefixes(candidates)
+		for _, prefix := range prefixes {
+			if err := dirCleaner.RemoveEmptyDirs(ctx, prefix); err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("cleanup empty dirs for %s: %v", prefix, err))
+			}
+		}
+	}
+
 	return result, nil
 }
 

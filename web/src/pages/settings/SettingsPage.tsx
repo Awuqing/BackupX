@@ -1,6 +1,6 @@
 import { Badge, Button, Card, Descriptions, Grid, Link, Message, PageHeader, Space, Tag, Typography } from '@arco-design/web-react'
 import { useEffect, useState } from 'react'
-import { fetchSystemInfo, checkUpdate, applyUpdate, type SystemInfo, type UpdateCheckResult } from '../../services/system'
+import { fetchSystemInfo, checkUpdate, type SystemInfo, type UpdateCheckResult } from '../../services/system'
 import { resolveErrorMessage } from '../../utils/error'
 import { formatDuration } from '../../utils/format'
 
@@ -24,7 +24,6 @@ export function SettingsPage() {
   const [error, setError] = useState('')
   const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null)
   const [checking, setChecking] = useState(false)
-  const [applying, setApplying] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -50,24 +49,6 @@ export function SettingsPage() {
       setUpdateResult({ currentVersion: info?.version || '-', latestVersion: '-', hasUpdate: false, error: resolveErrorMessage(e, '检查更新失败') })
     } finally {
       setChecking(false)
-    }
-  }
-
-  async function handleApplyUpdate() {
-    if (!updateResult?.latestVersion) return
-    setApplying(true)
-    try {
-      const result = await applyUpdate(updateResult.latestVersion)
-      if (result.success) {
-        Message.success('更新已触发，容器即将自动重启...')
-        setTimeout(() => Message.info('请等待 10-30 秒后刷新页面'), 3000)
-      } else {
-        Message.warning(result.message)
-      }
-    } catch (e) {
-      Message.error(resolveErrorMessage(e, '触发更新失败'))
-    } finally {
-      setApplying(false)
     }
   }
 
@@ -124,9 +105,6 @@ export function SettingsPage() {
                 </Card>
               )}
               <Space>
-                <Button type="primary" status="success" loading={applying} onClick={handleApplyUpdate}>
-                  一键更新（Docker）
-                </Button>
                 {updateResult.downloadUrl && (
                   <Link href={updateResult.downloadUrl} target="_blank">
                     <Button type="outline">下载二进制包</Button>
@@ -138,13 +116,6 @@ export function SettingsPage() {
                   </Link>
                 )}
               </Space>
-              {updateResult.dockerImage && (
-                <Card size="small" title="Docker 更新命令">
-                  <Typography.Paragraph copyable code style={{ marginBottom: 0 }}>
-                    {`docker pull ${updateResult.dockerImage}:${updateResult.latestVersion} && docker compose up -d`}
-                  </Typography.Paragraph>
-                </Card>
-              )}
             </Space>
           ) : (
             <Space>

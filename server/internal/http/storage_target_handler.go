@@ -65,7 +65,8 @@ func (h *StorageTargetHandler) Create(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	recordAudit(c, h.auditService, "storage_target", "create", "storage_target", fmt.Sprintf("%d", item.ID), item.Name, fmt.Sprintf("类型: %s", input.Type))
+	recordAudit(c, h.auditService, "storage_target", "create", "storage_target", fmt.Sprintf("%d", item.ID), item.Name,
+		fmt.Sprintf("创建存储目标「%s」，类型: %s", item.Name, input.Type))
 	response.Success(c, item)
 }
 
@@ -84,7 +85,8 @@ func (h *StorageTargetHandler) Update(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	recordAudit(c, h.auditService, "storage_target", "update", "storage_target", fmt.Sprintf("%d", item.ID), item.Name, fmt.Sprintf("类型: %s", input.Type))
+	recordAudit(c, h.auditService, "storage_target", "update", "storage_target", fmt.Sprintf("%d", item.ID), item.Name,
+		fmt.Sprintf("更新存储目标「%s」，类型: %s", item.Name, input.Type))
 	response.Success(c, item)
 }
 
@@ -97,7 +99,8 @@ func (h *StorageTargetHandler) Delete(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	recordAudit(c, h.auditService, "storage_target", "delete", "storage_target", fmt.Sprintf("%d", id), "", fmt.Sprintf("删除存储目标 #%d", id))
+	recordAudit(c, h.auditService, "storage_target", "delete", "storage_target", fmt.Sprintf("%d", id), "",
+		fmt.Sprintf("删除存储目标 (ID: %d)", id))
 	response.Success(c, gin.H{"deleted": true})
 }
 

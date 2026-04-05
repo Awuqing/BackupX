@@ -69,7 +69,6 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		system.Use(AuthMiddleware(deps.JWTManager))
 		system.GET("/info", systemHandler.Info)
 		system.GET("/update-check", systemHandler.CheckUpdate)
-		system.POST("/update-apply", systemHandler.ApplyUpdate)
 
 		storageTargets := api.Group("/storage-targets")
 		storageTargets.Use(AuthMiddleware(deps.JWTManager))
@@ -141,12 +140,13 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 			database.POST("/discover", databaseHandler.Discover)
 		}
 
-		nodeHandler := NewNodeHandler(deps.NodeService)
+		nodeHandler := NewNodeHandler(deps.NodeService, deps.AuditService)
 		nodes := api.Group("/nodes")
 		nodes.Use(AuthMiddleware(deps.JWTManager))
 		nodes.GET("", nodeHandler.List)
 		nodes.GET("/:id", nodeHandler.Get)
 		nodes.POST("", nodeHandler.Create)
+		nodes.PUT("/:id", nodeHandler.Update)
 		nodes.DELETE("/:id", nodeHandler.Delete)
 		nodes.GET("/:id/fs/list", nodeHandler.ListDirectory)
 

@@ -145,3 +145,10 @@ type FTPConfig struct {
 	UseTLS   bool   `json:"useTLS"`
 }
 
+// StorageDirCleaner 是可选能力接口，支持清理空目录。
+// 主要用于本地磁盘等文件系统类存储，对象存储通常不需要。
+// 通过 type assertion 检测 provider 是否实现该接口。
+type StorageDirCleaner interface {
+	RemoveEmptyDirs(ctx context.Context, prefix string) error
+}
+

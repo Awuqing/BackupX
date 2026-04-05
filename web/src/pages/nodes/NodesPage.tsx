@@ -3,10 +3,10 @@ import {
   Table, Button, Space, Tag, Typography, PageHeader, Modal, Input, Message, Badge, Popconfirm, Card, Descriptions, Empty
 } from '@arco-design/web-react'
 import {
-  IconPlus, IconDelete, IconDesktop, IconCloudDownload
+  IconPlus, IconDelete, IconDesktop, IconCloudDownload, IconEdit
 } from '@arco-design/web-react/icon'
 import type { NodeSummary } from '../../types/nodes'
-import { listNodes, createNode, deleteNode } from '../../services/nodes'
+import { listNodes, createNode, deleteNode, updateNode } from '../../services/nodes'
 
 const { Title, Text } = Typography
 
@@ -16,6 +16,11 @@ export default function NodesPage() {
   const [createVisible, setCreateVisible] = useState(false)
   const [newNodeName, setNewNodeName] = useState('')
   const [newToken, setNewToken] = useState('')
+
+  // 编辑状态
+  const [editVisible, setEditVisible] = useState(false)
+  const [editNode, setEditNode] = useState<NodeSummary | null>(null)
+  const [editName, setEditName] = useState('')
 
   const fetchNodes = useCallback(async () => {
     setLoading(true)
@@ -53,6 +58,21 @@ export default function NodesPage() {
       fetchNodes()
     } catch {
       Message.error('删除节点失败')
+    }
+  }
+
+  const handleEdit = async () => {
+    if (!editNode || !editName.trim()) {
+      Message.warning('请输入节点名称')
+      return
+    }
+    try {
+      await updateNode(editNode.id, { name: editName.trim() })
+      Message.success('节点更新成功')
+      setEditVisible(false)
+      fetchNodes()
+    } catch {
+      Message.error('更新节点失败')
     }
   }
 
@@ -110,15 +130,22 @@ export default function NodesPage() {
     },
     {
       title: '操作',
-      width: 80,
-      render: (_: unknown, record: NodeSummary) => {
-        if (record.isLocal) return <Text type="secondary">-</Text>
-        return (
-          <Popconfirm title="确定删除该节点？" onOk={() => handleDelete(record.id)}>
-            <Button type="text" status="danger" icon={<IconDelete />} size="small" />
-          </Popconfirm>
-        )
-      },
+      width: 120,
+      render: (_: unknown, record: NodeSummary) => (
+        <Space>
+          <Button
+            type="text"
+            icon={<IconEdit />}
+            size="small"
+            onClick={() => { setEditNode(record); setEditName(record.name); setEditVisible(true) }}
+          />
+          {!record.isLocal && (
+            <Popconfirm title="确定删除该节点？" onOk={() => handleDelete(record.id)}>
+              <Button type="text" status="danger" icon={<IconDelete />} size="small" />
+            </Popconfirm>
+          )}
+        </Space>
+      ),
     },
   ]
 
@@ -145,6 +172,7 @@ export default function NodesPage() {
         />
       </Card>
 
+      {/* 添加节点弹窗 */}
       <Modal
         title="添加远程节点"
         visible={createVisible}
@@ -174,6 +202,25 @@ export default function NodesPage() {
             </div>
           </div>
         )}
+      </Modal>
+
+      {/* 编辑节点弹窗 */}
+      <Modal
+        title="编辑节点"
+        visible={editVisible}
+        onCancel={() => setEditVisible(false)}
+        onOk={handleEdit}
+        okText="保存"
+        cancelText="取消"
+      >
+        <div style={{ marginBottom: 8 }}>
+          <Text type="secondary">节点名称</Text>
+        </div>
+        <Input
+          placeholder="输入节点名称"
+          value={editName}
+          onChange={setEditName}
+        />
       </Modal>
     </div>
   )

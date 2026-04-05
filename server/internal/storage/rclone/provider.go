@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -122,6 +123,36 @@ func (p *Provider) About(ctx context.Context) (*storage.StorageUsageInfo, error)
 		Free:    usage.Free,
 		Objects: usage.Objects,
 	}, nil
+}
+
+// RemoveEmptyDirs 递归删除 prefix 下的空目录，从最深层开始。
+// 非空目录删除会失败（安全忽略），仅清理真正的空目录。
+func (p *Provider) RemoveEmptyDirs(ctx context.Context, prefix string) error {
+	var dirs []string
+	err := walk.ListR(ctx, p.rfs, prefix, true, -1, walk.ListDirs, func(entries fs.DirEntries) error {
+		for _, entry := range entries {
+			if _, ok := entry.(fs.Directory); ok {
+				dirs = append(dirs, entry.Remote())
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		// 列目录失败（比如目录不存在）静默返回
+		return nil
+	}
+	// 按路径长度倒序（深目录优先删除），同长度保持稳定顺序
+	sort.SliceStable(dirs, func(i, j int) bool {
+		return len(dirs[i]) > len(dirs[j])
+	})
+	for _, dir := range dirs {
+		_ = p.rfs.Rmdir(ctx, dir)
+	}
+	// 尝试清理 prefix 本身
+	if prefix != "" {
+		_ = p.rfs.Rmdir(ctx, prefix)
+	}
+	return nil
 }
 
 // pathDir 返回 objectKey 的目录部分（正斜杠分隔）。

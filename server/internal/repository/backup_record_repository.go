@@ -37,6 +37,7 @@ type BackupRecordRepository interface {
 	Update(context.Context, *model.BackupRecord) error
 	Delete(context.Context, uint) error
 	ListRecent(context.Context, int) ([]model.BackupRecord, error)
+	ListByTask(context.Context, uint) ([]model.BackupRecord, error)
 	ListSuccessfulByTask(context.Context, uint) ([]model.BackupRecord, error)
 	Count(context.Context) (int64, error)
 	CountSince(context.Context, time.Time) (int64, error)
@@ -110,6 +111,14 @@ func (r *GormBackupRecordRepository) ListRecent(ctx context.Context, limit int) 
 	}
 	var items []model.BackupRecord
 	if err := r.db.WithContext(ctx).Preload("Task").Preload("Task.StorageTarget").Order("started_at desc").Limit(limit).Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func (r *GormBackupRecordRepository) ListByTask(ctx context.Context, taskID uint) ([]model.BackupRecord, error) {
+	var items []model.BackupRecord
+	if err := r.db.WithContext(ctx).Where("task_id = ?", taskID).Order("id desc").Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil

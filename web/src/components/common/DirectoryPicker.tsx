@@ -1,5 +1,5 @@
-import { Button, Input, Message, Modal, Space, Spin, Tree, Typography } from '@arco-design/web-react'
-import { IconFolder, IconFile } from '@arco-design/web-react/icon'
+import { Button, Input, Message, Modal, Space, Spin, Tree, Typography, Empty } from '@arco-design/web-react'
+import { IconFolder, IconFile, IconFolderAdd } from '@arco-design/web-react/icon'
 import { useCallback, useState } from 'react'
 import { listNodeDirectory } from '../../services/nodes'
 import type { DirEntry } from '../../types/nodes'
@@ -27,7 +27,7 @@ function entriesToTreeNodes(entries: DirEntry[], mode: 'directory' | 'file'): Tr
     .map((entry) => ({
       key: entry.path,
       title: entry.name,
-      icon: entry.isDir ? <IconFolder /> : <IconFile />,
+      icon: entry.isDir ? <IconFolder style={{ color: 'var(--color-warning-6)' }} /> : <IconFile />,
       isLeaf: !entry.isDir,
     }))
 }
@@ -94,46 +94,83 @@ export function DirectoryPicker({ value, onChange, placeholder, mode = 'director
     setModalVisible(false)
   }
 
+  function handleInputKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const trimmed = value?.trim()
+      if (trimmed) {
+        onChange(trimmed)
+      }
+    }
+  }
+
   // 没有 nodeId 时退化为普通输入框
   if (nodeId === undefined) {
-    return <Input value={value} placeholder={placeholder} onChange={onChange} />
+    return <Input value={value} placeholder={placeholder} onChange={onChange} onKeyDown={handleInputKeyDown} />
   }
 
   return (
     <>
-      <Space style={{ width: '100%' }}>
-        <Input style={{ flex: 1 }} value={value} placeholder={placeholder} onChange={onChange} />
-        <Button type="outline" size="small" onClick={handleOpen}>
+      <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+        <Input
+          style={{ flex: 1 }}
+          value={value}
+          placeholder={placeholder}
+          onChange={onChange}
+          onKeyDown={handleInputKeyDown}
+          allowClear
+        />
+        <Button type="outline" size="default" onClick={handleOpen} icon={<IconFolderAdd />}>
           浏览
         </Button>
-      </Space>
+      </div>
 
       <Modal
         title={mode === 'directory' ? '选择目录' : '选择文件'}
         visible={modalVisible}
         onCancel={() => setModalVisible(false)}
         onOk={handleConfirm}
-        okText="选择"
+        okText="确认选择"
         cancelText="取消"
-        style={{ width: 560 }}
+        style={{ width: 640 }}
         okButtonProps={{ disabled: !selectedPath }}
         unmountOnExit
       >
-        {selectedPath && (
-          <div style={{ padding: '8px 12px', marginBottom: 12, background: 'var(--color-fill-2)', borderRadius: 4 }}>
-            <Typography.Text copyable style={{ fontSize: 13 }}>
+        {/* 当前选中路径 */}
+        <div style={{
+          padding: '10px 14px',
+          marginBottom: 16,
+          background: selectedPath ? 'var(--color-primary-light-1)' : 'var(--color-fill-2)',
+          borderRadius: 6,
+          border: selectedPath ? '1px solid var(--color-primary-light-3)' : '1px solid var(--color-border)',
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          minHeight: 40,
+        }}>
+          <IconFolder style={{ color: selectedPath ? 'var(--color-primary-6)' : 'var(--color-text-4)', fontSize: 16, flexShrink: 0 }} />
+          {selectedPath ? (
+            <Typography.Text copyable style={{ fontSize: 13, fontFamily: 'monospace', wordBreak: 'break-all' }}>
               {selectedPath}
             </Typography.Text>
-          </div>
-        )}
+          ) : (
+            <Typography.Text type="secondary" style={{ fontSize: 13 }}>请在下方目录树中选择路径</Typography.Text>
+          )}
+        </div>
+
+        {/* 目录树 */}
         {loading ? (
-          <Spin style={{ display: 'block', textAlign: 'center', padding: 40 }} />
+          <Spin style={{ display: 'block', textAlign: 'center', padding: 48 }} tip="加载目录中..." />
         ) : treeData.length === 0 ? (
-          <Typography.Text type="secondary" style={{ display: 'block', textAlign: 'center', padding: 40 }}>
-            目录为空
-          </Typography.Text>
+          <Empty style={{ padding: 48 }} description="目录为空" />
         ) : (
-          <div style={{ maxHeight: 420, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 4, padding: '4px 0' }}>
+          <div style={{
+            maxHeight: 400,
+            overflow: 'auto',
+            border: '1px solid var(--color-border)',
+            borderRadius: 6,
+            padding: '6px 0',
+          }}>
             <Tree
               blockNode
               showLine
