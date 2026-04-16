@@ -7,6 +7,7 @@ const (
 	BackupTaskTypeMySQL      = "mysql"
 	BackupTaskTypeSQLite     = "sqlite"
 	BackupTaskTypePostgreSQL = "postgresql"
+	BackupTaskTypeSAPHANA    = "saphana"
 )
 
 const (
@@ -31,6 +32,8 @@ type BackupTask struct {
 	DBPasswordCiphertext string          `gorm:"column:db_password_ciphertext;type:text" json:"-"`
 	DBName               string          `gorm:"column:db_name;size:255" json:"dbName"`
 	DBPath               string          `gorm:"column:db_path;size:500" json:"dbPath"`
+	// ExtraConfig 类型特有的扩展配置（JSON），如 SAP HANA 的 backupLevel / backupChannels 等
+	ExtraConfig string `gorm:"column:extra_config;type:text" json:"extraConfig"`
 	StorageTargetID      uint            `gorm:"column:storage_target_id;index;not null" json:"storageTargetId"`           // deprecated: 保留兼容
 	StorageTarget        StorageTarget   `json:"storageTarget,omitempty"`                                                  // deprecated: 保留兼容
 	StorageTargets       []StorageTarget `gorm:"many2many:backup_task_storage_targets" json:"storageTargets,omitempty"`

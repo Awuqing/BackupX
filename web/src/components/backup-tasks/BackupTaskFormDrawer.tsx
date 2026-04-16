@@ -11,10 +11,15 @@ import { StorageTargetFormDrawer } from '../storage-targets/StorageTargetFormDra
 import {
   backupCompressionOptions,
   backupTaskTypeOptions,
+  defaultSapHanaExtraConfig,
   getDefaultPort,
   isDatabaseBackupTask,
   isFileBackupTask,
+  isSapHanaBackupTask,
   isSQLiteBackupTask,
+  sapHanaBackupLevelOptions,
+  sapHanaBackupTypeOptions,
+  type SapHanaExtraConfig,
 } from './field-config'
 
 interface BackupTaskFormDrawerProps {
@@ -55,6 +60,7 @@ function createEmptyDraft(storageTargets?: StorageTargetSummary[]): BackupTaskPa
     compression: 'gzip',
     encrypt: false,
     maxBackups: 10,
+    extraConfig: undefined,
   }
 }
 
@@ -114,6 +120,7 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       compression: initialValue.compression,
       encrypt: initialValue.encrypt,
       maxBackups: initialValue.maxBackups,
+      extraConfig: initialValue.extraConfig,
     })
     setExcludePatternsText(initialValue.excludePatterns.join('\n'))
     setCurrentStep(0)
@@ -152,10 +159,26 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       dbPassword: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbPassword : '',
       dbName: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbName : '',
       dbPath: value === 'sqlite' ? current.dbPath : '',
+      // 切换到 SAP HANA 时初始化扩展配置；切换到其他类型时清空
+      extraConfig: value === 'saphana'
+        ? ({ ...defaultSapHanaExtraConfig(), ...(current.extraConfig as SapHanaExtraConfig | undefined) } as unknown as Record<string, unknown>)
+        : undefined,
     }))
     if (value !== 'file') {
       setExcludePatternsText('')
     }
+  }
+
+  // 更新 SAP HANA 扩展配置的辅助函数
+  function updateHanaExtraConfig(patch: Partial<SapHanaExtraConfig>) {
+    setDraft((current) => {
+      const merged: SapHanaExtraConfig = {
+        ...defaultSapHanaExtraConfig(),
+        ...(current.extraConfig as SapHanaExtraConfig | undefined),
+        ...patch,
+      }
+      return { ...current, extraConfig: merged as unknown as Record<string, unknown> }
+    })
   }
 
   function validate(value: BackupTaskPayload) {
@@ -368,9 +391,75 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
                 <Input value={draft.dbName} placeholder="例如：app_prod" onChange={(value) => updateDraft({ dbName: value })} />
               )}
             </div>
+            {isSapHanaBackupTask(draft.type) ? renderSapHanaExtraFields() : null}
           </>
         ) : null}
       </Space>
+    )
+  }
+
+  function renderSapHanaExtraFields() {
+    const hana: SapHanaExtraConfig = {
+      ...defaultSapHanaExtraConfig(),
+      ...(draft.extraConfig as SapHanaExtraConfig | undefined),
+    }
+    return (
+      <>
+        <Divider style={{ margin: '8px 0' }} orientation="left">
+          <Typography.Text type="secondary">SAP HANA 扩展配置</Typography.Text>
+        </Divider>
+        <div>
+          <Typography.Text>备份类型</Typography.Text>
+          <Select
+            style={{ width: '100%' }}
+            value={hana.backupType}
+            options={[...sapHanaBackupTypeOptions]}
+            onChange={(value) => updateHanaExtraConfig({ backupType: value as SapHanaExtraConfig['backupType'] })}
+          />
+        </div>
+        <div>
+          <Typography.Text>备份级别</Typography.Text>
+          <Select
+            style={{ width: '100%' }}
+            value={hana.backupLevel}
+            options={[...sapHanaBackupLevelOptions]}
+            disabled={hana.backupType === 'log'}
+            onChange={(value) => updateHanaExtraConfig({ backupLevel: value as SapHanaExtraConfig['backupLevel'] })}
+          />
+          {hana.backupType === 'log' ? (
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>日志备份不支持级别配置</Typography.Text>
+          ) : null}
+        </div>
+        <div>
+          <Typography.Text>并行通道数</Typography.Text>
+          <InputNumber
+            style={{ width: '100%' }}
+            value={hana.backupChannels}
+            min={1}
+            max={32}
+            onChange={(value) => updateHanaExtraConfig({ backupChannels: Number(value ?? 1) })}
+          />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>{'>'} 1 时启用 HANA 多路径并行备份</Typography.Text>
+        </div>
+        <div>
+          <Typography.Text>失败重试次数</Typography.Text>
+          <InputNumber
+            style={{ width: '100%' }}
+            value={hana.maxRetries}
+            min={1}
+            max={10}
+            onChange={(value) => updateHanaExtraConfig({ maxRetries: Number(value ?? 3) })}
+          />
+        </div>
+        <div>
+          <Typography.Text>实例编号（可选）</Typography.Text>
+          <Input
+            value={hana.instanceNumber}
+            placeholder="留空将根据端口自动推断（例如 30015 → 0）"
+            onChange={(value) => updateHanaExtraConfig({ instanceNumber: value })}
+          />
+        </div>
+      </>
     )
   }
 

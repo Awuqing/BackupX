@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestSAPHANARunnerRun_BackupDataCommand(t *testing.T) {
@@ -270,6 +271,246 @@ func TestSAPHANARunnerRestore_TenantRecoverCommand(t *testing.T) {
 
 	if !strings.Contains(capturedSQL, "RECOVER DATA FOR HDB USING FILE") {
 		t.Fatalf("expected RECOVER DATA FOR HDB in SQL, got: %s", capturedSQL)
+	}
+}
+
+func TestBuildBackupSQL_FullSystemDB(t *testing.T) {
+	sql := buildBackupSQL("SYSTEMDB", []string{"/tmp/p1"}, "data", "full")
+	if sql != "BACKUP DATA USING FILE ('/tmp/p1')" {
+		t.Fatalf("unexpected SQL: %s", sql)
+	}
+}
+
+func TestBuildBackupSQL_IncrementalTenant(t *testing.T) {
+	sql := buildBackupSQL("HDB", []string{"/tmp/p1"}, "data", "incremental")
+	expected := "BACKUP DATA FOR HDB INCREMENTAL USING FILE ('/tmp/p1')"
+	if sql != expected {
+		t.Fatalf("expected %q, got %q", expected, sql)
+	}
+}
+
+func TestBuildBackupSQL_DifferentialTenant(t *testing.T) {
+	sql := buildBackupSQL("HDB", []string{"/tmp/p1"}, "data", "differential")
+	expected := "BACKUP DATA FOR HDB DIFFERENTIAL USING FILE ('/tmp/p1')"
+	if sql != expected {
+		t.Fatalf("expected %q, got %q", expected, sql)
+	}
+}
+
+func TestBuildBackupSQL_LogBackup(t *testing.T) {
+	sql := buildBackupSQL("HDB", []string{"/tmp/log"}, "log", "full")
+	expected := "BACKUP LOG FOR HDB USING FILE ('/tmp/log')"
+	if sql != expected {
+		t.Fatalf("expected %q, got %q", expected, sql)
+	}
+}
+
+func TestBuildBackupSQL_ParallelChannels(t *testing.T) {
+	sql := buildBackupSQL("SYSTEMDB", []string{"/tmp/c0/p", "/tmp/c1/p", "/tmp/c2/p"}, "data", "full")
+	expected := "BACKUP DATA USING FILE ('/tmp/c0/p', '/tmp/c1/p', '/tmp/c2/p')"
+	if sql != expected {
+		t.Fatalf("expected %q, got %q", expected, sql)
+	}
+}
+
+func TestNormalizeBackupLevel(t *testing.T) {
+	cases := map[string]string{
+		"":             "full",
+		"FULL":         "full",
+		"incremental":  "incremental",
+		"DIFFERENTIAL": "differential",
+		"unknown":      "full",
+	}
+	for in, want := range cases {
+		if got := normalizeBackupLevel(in); got != want {
+			t.Errorf("normalizeBackupLevel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestNormalizeBackupType(t *testing.T) {
+	cases := map[string]string{
+		"":     "data",
+		"DATA": "data",
+		"log":  "log",
+		"LOG":  "log",
+	}
+	for in, want := range cases {
+		if got := normalizeBackupType(in); got != want {
+			t.Errorf("normalizeBackupType(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSAPHANARunnerRun_IncrementalBackup(t *testing.T) {
+	var capturedSQL string
+	executor := &fakeCommandExecutor{
+		runFunc: func(name string, args []string, options CommandOptions) error {
+			capturedSQL = args[len(args)-1]
+			startIdx := strings.Index(capturedSQL, "('") + 2
+			endIdx := strings.Index(capturedSQL, "')")
+			if startIdx > 1 && endIdx > startIdx {
+				prefix := capturedSQL[startIdx:endIdx]
+				_ = os.MkdirAll(filepath.Dir(prefix), 0o755)
+				_ = os.WriteFile(prefix+"_databackup_0_1", []byte("incremental data"), 0o644)
+			}
+			return nil
+		},
+	}
+
+	runner := NewSAPHANARunner(executor)
+	result, err := runner.Run(context.Background(), TaskSpec{
+		Name: "hana-incremental",
+		Type: "saphana",
+		Database: DatabaseSpec{
+			Host:        "10.0.0.1",
+			Port:        30015,
+			User:        "SYSTEM",
+			Password:    "secret",
+			Names:       []string{"HDB"},
+			BackupLevel: "incremental",
+		},
+	}, NopLogWriter{})
+
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	defer os.RemoveAll(result.TempDir)
+
+	if !strings.Contains(capturedSQL, "INCREMENTAL USING FILE") {
+		t.Fatalf("expected INCREMENTAL in SQL, got: %s", capturedSQL)
+	}
+}
+
+func TestSAPHANARunnerRun_LogBackup(t *testing.T) {
+	var capturedSQL string
+	executor := &fakeCommandExecutor{
+		runFunc: func(name string, args []string, options CommandOptions) error {
+			capturedSQL = args[len(args)-1]
+			startIdx := strings.Index(capturedSQL, "('") + 2
+			endIdx := strings.Index(capturedSQL, "')")
+			if startIdx > 1 && endIdx > startIdx {
+				prefix := capturedSQL[startIdx:endIdx]
+				_ = os.MkdirAll(filepath.Dir(prefix), 0o755)
+				_ = os.WriteFile(prefix+"_logbackup_0_1", []byte("log data"), 0o644)
+			}
+			return nil
+		},
+	}
+
+	runner := NewSAPHANARunner(executor)
+	result, err := runner.Run(context.Background(), TaskSpec{
+		Name: "hana-log",
+		Type: "saphana",
+		Database: DatabaseSpec{
+			Host: "10.0.0.1", Port: 30015, User: "SYSTEM", Password: "secret",
+			Names:      []string{"HDB"},
+			BackupType: "log",
+		},
+	}, NopLogWriter{})
+
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	defer os.RemoveAll(result.TempDir)
+
+	if !strings.Contains(capturedSQL, "BACKUP LOG FOR HDB USING FILE") {
+		t.Fatalf("expected log backup SQL, got: %s", capturedSQL)
+	}
+}
+
+func TestSAPHANARunnerRun_ParallelChannels(t *testing.T) {
+	var capturedSQL string
+	executor := &fakeCommandExecutor{
+		runFunc: func(name string, args []string, options CommandOptions) error {
+			capturedSQL = args[len(args)-1]
+			// 模拟为每个通道生成备份文件
+			parts := strings.Split(capturedSQL, "',")
+			for _, p := range parts {
+				p = strings.TrimSpace(p)
+				if idx := strings.Index(p, "'"); idx >= 0 {
+					prefix := p[idx+1:]
+					prefix = strings.TrimSuffix(prefix, "')")
+					prefix = strings.TrimSuffix(prefix, "'")
+					if prefix != "" {
+						_ = os.MkdirAll(filepath.Dir(prefix), 0o755)
+						_ = os.WriteFile(prefix+"_databackup_0_1", []byte("data"), 0o644)
+					}
+				}
+			}
+			return nil
+		},
+	}
+
+	runner := NewSAPHANARunner(executor)
+	result, err := runner.Run(context.Background(), TaskSpec{
+		Name: "hana-parallel",
+		Type: "saphana",
+		Database: DatabaseSpec{
+			Host: "10.0.0.1", Port: 30015, User: "SYSTEM", Password: "secret",
+			Names:          []string{"SYSTEMDB"},
+			BackupChannels: 3,
+		},
+	}, NopLogWriter{})
+
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	defer os.RemoveAll(result.TempDir)
+
+	// 应该包含 3 个路径
+	if strings.Count(capturedSQL, "'") != 6 { // 3 路径 × 2 引号
+		t.Fatalf("expected 3 channels (6 quotes), got SQL: %s", capturedSQL)
+	}
+	if !strings.Contains(capturedSQL, "chan_0") || !strings.Contains(capturedSQL, "chan_2") {
+		t.Fatalf("expected channel directories in SQL, got: %s", capturedSQL)
+	}
+}
+
+func TestSAPHANARunnerRun_RetryOnFailure(t *testing.T) {
+	attempts := 0
+	executor := &fakeCommandExecutor{
+		runFunc: func(name string, args []string, options CommandOptions) error {
+			attempts++
+			if attempts < 2 {
+				return errors.New("transient failure")
+			}
+			// 第二次成功，写入备份文件
+			sql := args[len(args)-1]
+			startIdx := strings.Index(sql, "('") + 2
+			endIdx := strings.Index(sql, "')")
+			if startIdx > 1 && endIdx > startIdx {
+				prefix := sql[startIdx:endIdx]
+				_ = os.MkdirAll(filepath.Dir(prefix), 0o755)
+				_ = os.WriteFile(prefix+"_databackup_0_1", []byte("data"), 0o644)
+			}
+			return nil
+		},
+	}
+
+	// 使用极短的重试周期版本（这里通过 fake context 机制无法快进时间，所以直接验证 attempts）
+	// 设置 MaxRetries=2 以加快测试，不会真实等待 5s
+	runner := NewSAPHANARunner(executor)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	result, err := runner.Run(ctx, TaskSpec{
+		Name: "hana-retry",
+		Type: "saphana",
+		Database: DatabaseSpec{
+			Host: "10.0.0.1", Port: 30015, User: "SYSTEM", Password: "secret",
+			Names:      []string{"SYSTEMDB"},
+			MaxRetries: 2,
+		},
+	}, NopLogWriter{})
+
+	if err != nil {
+		t.Fatalf("Run returned error after retry: %v", err)
+	}
+	defer os.RemoveAll(result.TempDir)
+
+	if attempts != 2 {
+		t.Fatalf("expected 2 attempts, got %d", attempts)
 	}
 }
 
