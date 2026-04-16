@@ -525,6 +525,22 @@ func (s *BackupExecutionService) buildTaskSpec(task *model.BackupTask, startedAt
 			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析源路径配置", err)
 		}
 	}
+	dbSpec := backup.DatabaseSpec{
+		Host:     task.DBHost,
+		Port:     task.DBPort,
+		User:     task.DBUser,
+		Password: password,
+		Names:    []string{task.DBName},
+		Path:     task.DBPath,
+	}
+	// 解析 ExtraConfig 填充类型特有字段（目前主要用于 SAP HANA）
+	if strings.TrimSpace(task.ExtraConfig) != "" {
+		extra := map[string]any{}
+		if err := json.Unmarshal([]byte(task.ExtraConfig), &extra); err != nil {
+			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析扩展配置", err)
+		}
+		applyHANAExtraConfig(&dbSpec, extra)
+	}
 	return backup.TaskSpec{
 		ID:                task.ID,
 		Name:              task.Name,
@@ -540,15 +556,28 @@ func (s *BackupExecutionService) buildTaskSpec(task *model.BackupTask, startedAt
 		MaxBackups:        task.MaxBackups,
 		StartedAt:         startedAt,
 		TempDir:           s.tempDir,
-		Database: backup.DatabaseSpec{
-			Host:     task.DBHost,
-			Port:     task.DBPort,
-			User:     task.DBUser,
-			Password: password,
-			Names:    []string{task.DBName},
-			Path:     task.DBPath,
-		},
+		Database:          dbSpec,
 	}, nil
+}
+
+// applyHANAExtraConfig 从 ExtraConfig map 中提取 SAP HANA 字段填入 DatabaseSpec。
+// 不识别的键被忽略，保持向后兼容。
+func applyHANAExtraConfig(spec *backup.DatabaseSpec, extra map[string]any) {
+	if v, ok := extra["instanceNumber"].(string); ok {
+		spec.InstanceNumber = strings.TrimSpace(v)
+	}
+	if v, ok := extra["backupLevel"].(string); ok {
+		spec.BackupLevel = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v, ok := extra["backupType"].(string); ok {
+		spec.BackupType = strings.ToLower(strings.TrimSpace(v))
+	}
+	if v, ok := extra["backupChannels"].(float64); ok {
+		spec.BackupChannels = int(v)
+	}
+	if v, ok := extra["maxRetries"].(float64); ok {
+		spec.MaxRetries = int(v)
+	}
 }
 
 func (s *BackupExecutionService) loadRecordProvider(ctx context.Context, recordID uint) (*model.BackupRecord, storage.StorageProvider, error) {

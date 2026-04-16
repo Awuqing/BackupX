@@ -33,6 +33,8 @@ export interface BackupTaskDetail extends BackupTaskSummary {
   dbUser: string
   dbName: string
   dbPath: string
+  /** 类型特有的扩展配置（如 SAP HANA 的 backupLevel/backupChannels 等） */
+  extraConfig?: Record<string, unknown>
   maskedFields?: string[]
   createdAt: string
 }
@@ -59,6 +61,8 @@ export interface BackupTaskPayload {
   compression: BackupCompression
   encrypt: boolean
   maxBackups: number
+  /** 类型特有的扩展配置（如 SAP HANA 的 backupLevel/backupChannels 等） */
+  extraConfig?: Record<string, unknown>
 }
 
 export interface BackupTaskTogglePayload {
