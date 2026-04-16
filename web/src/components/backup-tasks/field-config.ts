@@ -86,3 +86,39 @@ export function getDefaultPort(type: BackupTaskType) {
 export function getCompressionLabel(compression: BackupCompression) {
   return compression === 'gzip' ? 'Gzip' : '无'
 }
+
+/** SAP HANA 备份级别选项 */
+export const sapHanaBackupLevelOptions = [
+  { label: '完整备份 (Full)', value: 'full' },
+  { label: '增量备份 (Incremental)', value: 'incremental' },
+  { label: '差异备份 (Differential)', value: 'differential' },
+] as const
+
+/** SAP HANA 备份类型选项 */
+export const sapHanaBackupTypeOptions = [
+  { label: '数据备份 (Data)', value: 'data' },
+  { label: '日志备份 (Log)', value: 'log' },
+] as const
+
+/** SAP HANA 扩展配置默认值 */
+export interface SapHanaExtraConfig {
+  backupType?: 'data' | 'log'
+  backupLevel?: 'full' | 'incremental' | 'differential'
+  backupChannels?: number
+  maxRetries?: number
+  instanceNumber?: string
+}
+
+export function isSapHanaBackupTask(type: BackupTaskType) {
+  return type === 'saphana'
+}
+
+export function defaultSapHanaExtraConfig(): SapHanaExtraConfig {
+  return {
+    backupType: 'data',
+    backupLevel: 'full',
+    backupChannels: 1,
+    maxRetries: 3,
+    instanceNumber: '',
+  }
+}

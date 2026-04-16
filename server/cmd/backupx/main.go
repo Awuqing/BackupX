@@ -24,6 +24,11 @@ func main() {
 		runResetPassword(os.Args[2:])
 		return
 	}
+	// 子命令分发：backint（SAP HANA Backint Agent 模式）
+	if len(os.Args) > 1 && os.Args[1] == "backint" {
+		runBackint(os.Args[2:])
+		return
+	}
 
 	var configPath string
 	var showVersion bool

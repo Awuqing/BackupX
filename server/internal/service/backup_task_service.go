@@ -19,7 +19,7 @@ const backupTaskMaskedValue = "********"
 
 type BackupTaskUpsertInput struct {
 	Name             string   `json:"name" binding:"required,min=1,max=100"`
-	Type             string   `json:"type" binding:"required,oneof=file mysql sqlite postgresql pgsql"`
+	Type             string   `json:"type" binding:"required,oneof=file mysql sqlite postgresql pgsql saphana"`
 	Enabled          bool     `json:"enabled"`
 	CronExpr         string   `json:"cronExpr" binding:"max=64"`
 	SourcePath       string   `json:"sourcePath" binding:"max=500"`
@@ -37,6 +37,8 @@ type BackupTaskUpsertInput struct {
 	Compression      string   `json:"compression" binding:"omitempty,oneof=gzip none"`
 	Encrypt          bool     `json:"encrypt"`
 	MaxBackups       int      `json:"maxBackups"`
+	// ExtraConfig 类型特有扩展配置（如 SAP HANA 的 backupLevel/backupChannels）
+	ExtraConfig map[string]any `json:"extraConfig"`
 }
 
 type BackupTaskToggleInput struct {
@@ -64,16 +66,17 @@ type BackupTaskSummary struct {
 
 type BackupTaskDetail struct {
 	BackupTaskSummary
-	SourcePath      string    `json:"sourcePath"`
-	SourcePaths     []string  `json:"sourcePaths"`
-	ExcludePatterns []string  `json:"excludePatterns"`
-	DBHost          string    `json:"dbHost"`
-	DBPort          int       `json:"dbPort"`
-	DBUser          string    `json:"dbUser"`
-	DBName          string    `json:"dbName"`
-	DBPath          string    `json:"dbPath"`
-	MaskedFields    []string  `json:"maskedFields,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
+	SourcePath      string         `json:"sourcePath"`
+	SourcePaths     []string       `json:"sourcePaths"`
+	ExcludePatterns []string       `json:"excludePatterns"`
+	DBHost          string         `json:"dbHost"`
+	DBPort          int            `json:"dbPort"`
+	DBUser          string         `json:"dbUser"`
+	DBName          string         `json:"dbName"`
+	DBPath          string         `json:"dbPath"`
+	ExtraConfig     map[string]any `json:"extraConfig,omitempty"`
+	MaskedFields    []string       `json:"maskedFields,omitempty"`
+	CreatedAt       time.Time      `json:"createdAt"`
 }
 
 type BackupTaskScheduler interface {
@@ -346,7 +349,7 @@ func validateTaskTypeSpecificFields(input BackupTaskUpsertInput, passwordRequire
 		if !hasSourcePaths {
 			return apperror.BadRequest("BACKUP_TASK_INVALID", "文件备份必须填写源路径", nil)
 		}
-	case "mysql", "postgresql":
+	case "mysql", "postgresql", "saphana":
 		if strings.TrimSpace(input.DBHost) == "" {
 			return apperror.BadRequest("BACKUP_TASK_INVALID", "数据库主机不能为空", nil)
 		}
@@ -417,6 +420,10 @@ func (s *BackupTaskService) buildTask(existing *model.BackupTask, input BackupTa
 	if len(resolvedPaths) > 0 {
 		primarySourcePath = resolvedPaths[0]
 	}
+	extraConfigJSON, err := encodeExtraConfig(input.ExtraConfig)
+	if err != nil {
+		return nil, apperror.BadRequest("BACKUP_TASK_INVALID", "扩展配置格式不合法", err)
+	}
 	item := &model.BackupTask{
 		Name:                 strings.TrimSpace(input.Name),
 		Type:                 normalizeBackupTaskType(input.Type),
@@ -431,6 +438,7 @@ func (s *BackupTaskService) buildTask(existing *model.BackupTask, input BackupTa
 		DBPasswordCiphertext: passwordCiphertext,
 		DBName:               strings.TrimSpace(input.DBName),
 		DBPath:               strings.TrimSpace(input.DBPath),
+		ExtraConfig:          extraConfigJSON,
 		StorageTargetID:      primaryTargetID,
 		StorageTargets:       storageTargets,
 		RetentionDays:        input.RetentionDays,
@@ -456,6 +464,10 @@ func (s *BackupTaskService) toDetail(item *model.BackupTask) (*BackupTaskDetail,
 	if err != nil {
 		return nil, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析源路径配置", err)
 	}
+	extraConfig, err := decodeExtraConfig(item.ExtraConfig)
+	if err != nil {
+		return nil, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析扩展配置", err)
+	}
 	detail := &BackupTaskDetail{
 		BackupTaskSummary: toBackupTaskSummary(item),
 		SourcePath:        item.SourcePath,
@@ -466,6 +478,7 @@ func (s *BackupTaskService) toDetail(item *model.BackupTask) (*BackupTaskDetail,
 		DBUser:            item.DBUser,
 		DBName:            item.DBName,
 		DBPath:            item.DBPath,
+		ExtraConfig:       extraConfig,
 		CreatedAt:         item.CreatedAt,
 	}
 	if item.DBPasswordCiphertext != "" {
@@ -578,6 +591,29 @@ func decodeSourcePaths(value string) ([]string, error) {
 		return nil, err
 	}
 	return items, nil
+}
+
+func encodeExtraConfig(value map[string]any) (string, error) {
+	if len(value) == 0 {
+		return "", nil
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func decodeExtraConfig(value string) (map[string]any, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed == "{}" {
+		return nil, nil
+	}
+	result := map[string]any{}
+	if err := json.Unmarshal([]byte(trimmed), &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func normalizeBackupTaskType(value string) string {

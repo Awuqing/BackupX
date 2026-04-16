@@ -12,6 +12,12 @@ type DatabaseSpec struct {
 	Password string
 	Names    []string
 	Path     string
+	// SAP HANA 特有字段（其他类型忽略）
+	InstanceNumber string // 实例编号（从端口推断或手动指定）
+	BackupLevel    string // "full"(默认) / "incremental" / "differential"
+	BackupType     string // "data"(默认) / "log"
+	BackupChannels int    // 并行通道数（默认 1）
+	MaxRetries     int    // 最大重试次数（默认 3）
 }
 
 type TaskSpec struct {

@@ -35,6 +35,12 @@ func (r *SAPHANARunner) Type() string {
 // Run executes a SAP HANA data-level backup using hdbsql + BACKUP DATA USING FILE.
 // The backup files are written to a temporary directory, then packaged into a tar
 // archive as the artifact for BackupX to compress/encrypt/upload.
+//
+// 支持以下增强（通过 task.Database 字段配置）：
+//   - BackupLevel: full / incremental / differential
+//   - BackupType:  data / log
+//   - BackupChannels: 并行通道数（>1 时生成多路径 SQL）
+//   - MaxRetries: hdbsql 执行失败的重试次数
 func (r *SAPHANARunner) Run(ctx context.Context, task TaskSpec, writer LogWriter) (*RunResult, error) {
 	if _, err := r.executor.LookPath("hdbsql"); err != nil {
 		return nil, fmt.Errorf("未找到 hdbsql 命令 (请确保服务器已安装 SAP HANA Client)")
@@ -68,32 +74,46 @@ func (r *SAPHANARunner) Run(ctx context.Context, task TaskSpec, writer LogWriter
 		port = 30015
 	}
 
-	writer.WriteLine(fmt.Sprintf("连接到 SAP HANA: %s:%d", task.Database.Host, port))
+	backupLevel := normalizeBackupLevel(task.Database.BackupLevel)
+	backupType := normalizeBackupType(task.Database.BackupType)
+	channels := task.Database.BackupChannels
+	if channels < 1 {
+		channels = 1
+	}
+	maxRetries := task.Database.MaxRetries
+	if maxRetries < 1 {
+		maxRetries = 3
+	}
+	instance := task.Database.InstanceNumber
+	if strings.TrimSpace(instance) == "" {
+		instance = hanaInstanceNumber(port)
+	}
+
+	writer.WriteLine(fmt.Sprintf("连接到 SAP HANA: %s:%d (实例 %s)", task.Database.Host, port, instance))
 	writer.WriteLine(fmt.Sprintf("备份数据库: %s", tenantDB))
+	writer.WriteLine(fmt.Sprintf("备份配置: 类型=%s, 级别=%s, 通道数=%d, 最大重试=%d", backupType, backupLevel, channels, maxRetries))
 
 	// Build backup prefix — HANA will create files like <prefix>_databackup_<N>_1.
 	timestamp := startedAt.UTC().Format("20060102_150405")
-	backupPrefix := filepath.Join(backupDir, fmt.Sprintf("hana_%s_%s", strings.ToLower(tenantDB), timestamp))
-
-	// Build `BACKUP DATA USING FILE` SQL.
-	backupSQL := fmt.Sprintf(`BACKUP DATA USING FILE ('%s')`, backupPrefix)
-	if strings.ToUpper(tenantDB) != "SYSTEMDB" {
-		backupSQL = fmt.Sprintf(`BACKUP DATA FOR %s USING FILE ('%s')`, tenantDB, backupPrefix)
+	prefixes, err := buildBackupPrefixes(backupDir, tenantDB, timestamp, channels)
+	if err != nil {
+		return nil, err
 	}
+
+	// Build SQL based on backup type and level.
+	backupSQL := buildBackupSQL(tenantDB, prefixes, backupType, backupLevel)
+	writer.WriteLine(fmt.Sprintf("生成 SQL: %s", backupSQL))
 
 	// Construct hdbsql connection arguments.
 	args := buildHdbsqlArgs(task.Database.Host, port, task.Database.User, task.Database.Password, tenantDB, backupSQL)
 
-	stderrWriter := newLogLineWriter(writer, "hdbsql")
-	writer.WriteLine("开始执行 SAP HANA BACKUP DATA USING FILE")
+	writer.WriteLine("开始执行 SAP HANA 备份命令")
 
-	if err := r.executor.Run(ctx, "hdbsql", args, CommandOptions{
-		Stderr: stderrWriter,
-	}); err != nil {
-		return nil, fmt.Errorf("run hdbsql BACKUP DATA: %w: %s", err, stderrWriter.collected())
+	if err := r.runHdbsqlWithRetry(ctx, "hdbsql", args, maxRetries, writer); err != nil {
+		return nil, fmt.Errorf("run hdbsql backup: %w", err)
 	}
 
-	writer.WriteLine("SAP HANA BACKUP DATA 命令执行完成，开始打包备份文件")
+	writer.WriteLine("SAP HANA 备份命令执行完成，开始打包备份文件")
 
 	// Package all generated backup files into a tar archive.
 	if err := packageBackupFiles(backupDir, artifactPath, writer); err != nil {
@@ -166,12 +186,12 @@ func (r *SAPHANARunner) Restore(ctx context.Context, task TaskSpec, artifactPath
 
 	args := buildHdbsqlArgs(task.Database.Host, port, task.Database.User, task.Database.Password, tenantDB, recoverSQL)
 
-	stderrWriter := newLogLineWriter(writer, "hdbsql")
-	if err := r.executor.Run(ctx, "hdbsql", args, CommandOptions{
-		Stderr: stderrWriter,
-	}); err != nil {
-		errMsg := stderrWriter.collected()
-		return fmt.Errorf("run hdbsql RECOVER DATA: %w: %s", err, strings.TrimSpace(errMsg))
+	maxRetries := task.Database.MaxRetries
+	if maxRetries < 1 {
+		maxRetries = 3
+	}
+	if err := r.runHdbsqlWithRetry(ctx, "hdbsql", args, maxRetries, writer); err != nil {
+		return fmt.Errorf("run hdbsql RECOVER DATA: %w", err)
 	}
 
 	writer.WriteLine("SAP HANA 恢复完成")
@@ -186,6 +206,111 @@ func hanaInstanceNumber(port int) string {
 		return strconv.Itoa(instance)
 	}
 	return "00"
+}
+
+// normalizeBackupLevel 规范化备份级别值，无效或空值默认为 "full"。
+func normalizeBackupLevel(level string) string {
+	switch strings.ToLower(strings.TrimSpace(level)) {
+	case "incremental":
+		return "incremental"
+	case "differential":
+		return "differential"
+	default:
+		return "full"
+	}
+}
+
+// normalizeBackupType 规范化备份类型，无效或空值默认为 "data"。
+func normalizeBackupType(t string) string {
+	switch strings.ToLower(strings.TrimSpace(t)) {
+	case "log":
+		return "log"
+	default:
+		return "data"
+	}
+}
+
+// buildBackupPrefixes 为每个并行通道生成独立子目录和路径前缀。
+// 当 channels=1 时返回单个直接位于 backupDir 下的前缀；
+// 当 channels>1 时为每个通道创建 chan_N/ 子目录。
+func buildBackupPrefixes(backupDir, tenantDB, timestamp string, channels int) ([]string, error) {
+	tenantLower := strings.ToLower(tenantDB)
+	if channels <= 1 {
+		return []string{filepath.Join(backupDir, fmt.Sprintf("hana_%s_%s", tenantLower, timestamp))}, nil
+	}
+	prefixes := make([]string, 0, channels)
+	for i := 0; i < channels; i++ {
+		chanDir := filepath.Join(backupDir, fmt.Sprintf("chan_%d", i))
+		if err := os.MkdirAll(chanDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create channel %d dir: %w", i, err)
+		}
+		prefixes = append(prefixes, filepath.Join(chanDir, fmt.Sprintf("hana_%s_%s", tenantLower, timestamp)))
+	}
+	return prefixes, nil
+}
+
+// buildBackupSQL 根据备份类型和级别构建 SAP HANA BACKUP SQL 语句。
+//
+// 支持的语法：
+//
+//	全量数据备份:    BACKUP DATA [FOR <tenant>] USING FILE ('p1' [, 'p2', ...])
+//	增量数据备份:    BACKUP DATA [FOR <tenant>] INCREMENTAL USING FILE ('...')
+//	差异数据备份:    BACKUP DATA [FOR <tenant>] DIFFERENTIAL USING FILE ('...')
+//	日志备份:        BACKUP LOG [FOR <tenant>] USING FILE ('...')
+func buildBackupSQL(tenantDB string, prefixes []string, backupType, backupLevel string) string {
+	tenantClause := ""
+	if strings.ToUpper(tenantDB) != "SYSTEMDB" {
+		tenantClause = fmt.Sprintf(" FOR %s", tenantDB)
+	}
+
+	// 多路径以 'p1', 'p2', ... 拼接（HANA 多通道并行语法）
+	quoted := make([]string, len(prefixes))
+	for i, p := range prefixes {
+		quoted[i] = fmt.Sprintf("'%s'", p)
+	}
+	pathClause := strings.Join(quoted, ", ")
+
+	if backupType == "log" {
+		// LOG 备份不支持 INCREMENTAL/DIFFERENTIAL 关键字
+		return fmt.Sprintf("BACKUP LOG%s USING FILE (%s)", tenantClause, pathClause)
+	}
+
+	levelClause := ""
+	switch backupLevel {
+	case "incremental":
+		levelClause = " INCREMENTAL"
+	case "differential":
+		levelClause = " DIFFERENTIAL"
+	}
+	return fmt.Sprintf("BACKUP DATA%s%s USING FILE (%s)", tenantClause, levelClause, pathClause)
+}
+
+// runHdbsqlWithRetry 执行 hdbsql 命令并在失败时按指数退避重试。
+// 退避公式：5s × attempt²，并在 ctx 取消时立即返回。
+func (r *SAPHANARunner) runHdbsqlWithRetry(ctx context.Context, name string, args []string, maxAttempts int, writer LogWriter) error {
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt > 1 {
+			backoff := time.Duration(attempt*attempt) * 5 * time.Second
+			writer.WriteLine(fmt.Sprintf("hdbsql 第 %d 次重试（等待 %s）", attempt, backoff))
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+		}
+		stderrWriter := newLogLineWriter(writer, "hdbsql")
+		err := r.executor.Run(ctx, name, args, CommandOptions{Stderr: stderrWriter})
+		if err == nil {
+			return nil
+		}
+		lastErr = fmt.Errorf("%w: %s", err, strings.TrimSpace(stderrWriter.collected()))
+		writer.WriteLine(fmt.Sprintf("hdbsql 执行失败（第 %d/%d 次）: %v", attempt, maxAttempts, lastErr))
+	}
+	return lastErr
 }
 
 // buildHdbsqlArgs constructs the common hdbsql CLI arguments.
