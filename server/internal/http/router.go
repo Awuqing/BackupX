@@ -28,6 +28,7 @@ type RouterDependencies struct {
 	DashboardService         *service.DashboardService
 	SettingsService          *service.SettingsService
 	NodeService              *service.NodeService
+	AgentService             *service.AgentService
 	DatabaseDiscoveryService *service.DatabaseDiscoveryService
 	AuditService             *service.AuditService
 	JWTManager               *security.JWTManager
@@ -150,8 +151,19 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		nodes.DELETE("/:id", nodeHandler.Delete)
 		nodes.GET("/:id/fs/list", nodeHandler.ListDirectory)
 
-		// Agent heartbeat (public, token-authenticated)
-		api.POST("/agent/heartbeat", nodeHandler.Heartbeat)
+		// Agent API（token 认证，无需 JWT）
+		if deps.AgentService != nil {
+			agentHandler := NewAgentHandler(deps.AgentService, deps.NodeService)
+			agent := api.Group("/agent")
+			agent.POST("/heartbeat", agentHandler.Heartbeat)
+			agent.POST("/commands/poll", agentHandler.Poll)
+			agent.POST("/commands/:id/result", agentHandler.SubmitCommandResult)
+			agent.GET("/tasks/:id", agentHandler.GetTaskSpec)
+			agent.POST("/records/:id", agentHandler.UpdateRecord)
+		} else {
+			// 未启用 Agent 服务时，保留原有 heartbeat 端点以兼容
+			api.POST("/agent/heartbeat", nodeHandler.Heartbeat)
+		}
 	}
 
 	engine.NoRoute(func(c *gin.Context) {

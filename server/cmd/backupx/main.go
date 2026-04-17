@@ -29,6 +29,11 @@ func main() {
 		runBackint(os.Args[2:])
 		return
 	}
+	// 子命令分发：agent（远程节点 Agent 模式）
+	if len(os.Args) > 1 && os.Args[1] == "agent" {
+		runAgent(os.Args[2:])
+		return
+	}
 
 	var configPath string
 	var showVersion bool

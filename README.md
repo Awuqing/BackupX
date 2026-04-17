@@ -319,16 +319,81 @@ Backint Agent 使用本地 SQLite 维护 `EBID ↔ 对象键` 目录，所有操
 
 ## 多节点集群
 
-BackupX 支持 Master-Agent 模式管理多台服务器：
+BackupX 支持 Master-Agent 模式管理多台服务器：备份任务可以指定在哪个节点执行，Agent 在本地完成备份并直接上传到存储后端。
 
-1. Web 控制台 → **节点管理** → **添加节点**，系统生成 Token
-2. 在远程服务器部署 Agent 并使用 Token 连接 Master
-3. 创建备份任务时选择对应节点，Master 自动下发任务
+### 架构概览
 
-- 本机节点自动检测 IP 地址和版本信息
-- 远程节点通过 Agent 心跳上报系统信息（主机名、IP、OS、架构、版本）
-- 支持在控制台直接编辑节点名称
-- 创建文件备份任务时可通过目录浏览器远程选择 Agent 节点上的目录
+```
+[Web 控制台] ←── JWT ──→ [Master (backupx)]
+                              ↑  ↓
+                              │  │ HTTP 长轮询 (token 认证)
+                              │  ↓
+                          [Agent (backupx agent)]  ← 运行在远程服务器
+                              ↓
+                          [70+ 存储后端]
+```
+
+- **通信协议**：HTTP 长轮询，Agent 主动发起所有连接，无需 Master 反向访问
+- **心跳**：Agent 每 15s 上报一次；Master 每 15s 扫描，超过 45s 未心跳判为离线
+- **任务下发**：Master 通过数据库命令队列派发 `run_task`，Agent 轮询拉取
+- **执行**：Agent 本地复用 BackupRunner（file / mysql / postgresql / sqlite / saphana）并直接上传到存储
+- **安全**：每个节点独立 Token；Agent 不持有 Master 的 JWT 密钥和加密密钥
+
+### 使用步骤
+
+**1. 在 Master 创建节点并获取 Token**
+
+Web 控制台 → **节点管理** → **添加节点**，填写节点名称并保存。界面会显示一个 64 字节十六进制令牌（仅显示一次，请妥善保存）。
+
+**2. 在远程服务器部署 Agent**
+
+把 BackupX 二进制上传到目标服务器（与 Master 同一个文件），然后用以下任一方式启动：
+
+```bash
+# 方式 A：CLI 参数
+backupx agent --master http://master.example.com:8340 --token <token>
+
+# 方式 B：配置文件
+cat > /etc/backupx/agent.yaml <<EOF
+master: http://master.example.com:8340
+token: <token>
+heartbeatInterval: 15s
+pollInterval: 5s
+tempDir: /var/lib/backupx-agent
+EOF
+backupx agent --config /etc/backupx/agent.yaml
+
+# 方式 C：环境变量（适合 Docker / systemd）
+BACKUPX_AGENT_MASTER=http://master.example.com:8340 \
+BACKUPX_AGENT_TOKEN=<token> \
+backupx agent
+```
+
+启动成功后，Master 的节点列表会把该节点标记为**在线**。
+
+**3. 创建路由到该节点的备份任务**
+
+在 **备份任务** 页面新建任务时选择对应节点。任务被触发后：
+
+- 本机节点或未指定节点（`nodeId=0`）：由 Master 进程本地执行
+- 远程节点：Master 写入命令队列 → Agent 轮询拉取 → 本地执行并上传 → 上报记录
+
+### 限制说明
+
+- **不支持加密备份**：Agent 不持有 Master 的 AES-256 加密密钥，启用 `encrypt: true` 的任务会路由到 Agent 时失败
+- **目录浏览超时**：远程目录浏览通过命令队列做同步 RPC，默认 15s 超时，网络慢时可能失败
+- **命令超时**：Agent 领取但未完成的命令超过 10min 会被标记为超时
+
+### CLI 参考
+
+```bash
+backupx agent --help
+  -master string    Master URL
+  -token string     Agent 认证令牌
+  -config string    YAML 配置文件路径（优先级高于环境变量）
+  -temp-dir string  本地临时目录（默认 /tmp/backupx-agent）
+  -insecure-tls     跳过 TLS 证书校验（仅测试用）
+```
 
 ---
 

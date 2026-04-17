@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -46,12 +47,31 @@ type NodeUpdateInput struct {
 
 // NodeService manages the cluster nodes.
 type NodeService struct {
-	repo    repository.NodeRepository
-	version string
+	repo      repository.NodeRepository
+	taskRepo  repository.BackupTaskRepository
+	agentRPC  NodeAgentRPC
+	version   string
+}
+
+// NodeAgentRPC 抽象 Agent 远程调用能力（避免 service 内循环依赖）。
+// 由 AgentService 实现；当 Agent 未启用时可不注入，远程目录浏览返回提示。
+type NodeAgentRPC interface {
+	EnqueueCommand(ctx context.Context, nodeID uint, cmdType string, payload any) (uint, error)
+	WaitForCommandResult(ctx context.Context, cmdID uint, timeout time.Duration) (*model.AgentCommand, error)
 }
 
 func NewNodeService(repo repository.NodeRepository, version string) *NodeService {
 	return &NodeService{repo: repo, version: version}
+}
+
+// SetTaskRepository 注入任务仓储以支持删除前引用检查。可选注入，便于测试。
+func (s *NodeService) SetTaskRepository(taskRepo repository.BackupTaskRepository) {
+	s.taskRepo = taskRepo
+}
+
+// SetAgentRPC 注入 Agent RPC 能力，启用远程目录浏览。
+func (s *NodeService) SetAgentRPC(rpc NodeAgentRPC) {
+	s.agentRPC = rpc
 }
 
 // EnsureLocalNode creates the default "local" node if it does not exist.
@@ -165,6 +185,20 @@ func (s *NodeService) Delete(ctx context.Context, id uint) error {
 	if node.IsLocal {
 		return apperror.BadRequest("NODE_DELETE_LOCAL", "无法删除本机节点", nil)
 	}
+	// 删除前检查是否有关联备份任务，避免孤立任务
+	if s.taskRepo != nil {
+		count, err := s.taskRepo.CountByNodeID(ctx, id)
+		if err != nil {
+			return err
+		}
+		if count > 0 {
+			return apperror.BadRequest(
+				"NODE_HAS_TASKS",
+				fmt.Sprintf("无法删除：该节点上还有 %d 个备份任务，请先删除或迁移", count),
+				nil,
+			)
+		}
+	}
 	return s.repo.Delete(ctx, id)
 }
 
@@ -178,7 +212,8 @@ func (s *NodeService) ListDirectory(ctx context.Context, nodeID uint, path strin
 		return nil, apperror.New(http.StatusNotFound, "NODE_NOT_FOUND", "节点不存在", nil)
 	}
 	if !node.IsLocal {
-		return nil, apperror.BadRequest("NODE_REMOTE_FS_NOT_SUPPORTED", "远程节点的目录浏览需要 Agent 在线连接（即将支持）", nil)
+		// 远程节点：通过 Agent 命令队列做同步 RPC
+		return s.remoteListDirectory(ctx, node, path)
 	}
 
 	cleanPath := filepath.Clean(path)
@@ -208,6 +243,31 @@ func (s *NodeService) ListDirectory(ctx context.Context, nodeID uint, path strin
 		return result[i].Name < result[j].Name
 	})
 	return result, nil
+}
+
+// OfflineThreshold 节点被判定为离线的心跳超时阈值。
+// Agent 默认 15s 心跳一次；45s 未见视为离线，预留 3 次重试空间。
+const OfflineThreshold = 45 * time.Second
+
+// StartOfflineMonitor 启动后台 goroutine，定期把超时未心跳的节点标记为离线。
+// 传入的 ctx 被取消后退出。
+func (s *NodeService) StartOfflineMonitor(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				threshold := time.Now().UTC().Add(-OfflineThreshold)
+				_, _ = s.repo.MarkStaleOffline(ctx, threshold)
+			}
+		}
+	}()
 }
 
 // Heartbeat updates the node status when an agent reports in.
@@ -259,6 +319,42 @@ type DirEntry struct {
 	Path  string `json:"path"`
 	IsDir bool   `json:"isDir"`
 	Size  int64  `json:"size"`
+}
+
+// remoteListDirectory 通过命令队列下发 list_dir 给 Agent 并同步等待结果。
+// Agent 必须在线，且响应需在 15s 内返回，否则返回超时错误。
+func (s *NodeService) remoteListDirectory(ctx context.Context, node *model.Node, path string) ([]DirEntry, error) {
+	if s.agentRPC == nil {
+		return nil, apperror.BadRequest("NODE_REMOTE_FS_NOT_SUPPORTED", "远程目录浏览未启用，需要 Master 启用 Agent 服务", nil)
+	}
+	if node.Status != model.NodeStatusOnline {
+		return nil, apperror.BadRequest("NODE_OFFLINE", "节点当前不在线，无法浏览其目录", nil)
+	}
+	if strings.TrimSpace(path) == "" {
+		path = "/"
+	}
+	cmdID, err := s.agentRPC.EnqueueCommand(ctx, node.ID, model.AgentCommandTypeListDir, map[string]any{"path": path})
+	if err != nil {
+		return nil, apperror.Internal("AGENT_COMMAND_ENQUEUE_FAILED", "下发目录浏览命令失败", err)
+	}
+	cmd, err := s.agentRPC.WaitForCommandResult(ctx, cmdID, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if cmd.Status != model.AgentCommandStatusSucceeded {
+		msg := cmd.ErrorMessage
+		if msg == "" {
+			msg = fmt.Sprintf("command status: %s", cmd.Status)
+		}
+		return nil, apperror.BadRequest("NODE_FS_READ_ERROR", fmt.Sprintf("远程目录浏览失败: %s", msg), nil)
+	}
+	var result struct {
+		Entries []DirEntry `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(cmd.Result), &result); err != nil {
+		return nil, apperror.Internal("AGENT_RESULT_INVALID", "Agent 返回结果格式错误", err)
+	}
+	return result.Entries, nil
 }
 
 // detectLocalIP 获取本机第一个非回环 IPv4 地址。

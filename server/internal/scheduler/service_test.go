@@ -31,6 +31,12 @@ func (r *fakeTaskRepository) CountEnabled(context.Context) (int64, error) { retu
 func (r *fakeTaskRepository) CountByStorageTargetID(context.Context, uint) (int64, error) {
 	return 0, nil
 }
+func (r *fakeTaskRepository) CountByNodeID(context.Context, uint) (int64, error) {
+	return 0, nil
+}
+func (r *fakeTaskRepository) ListByNodeID(context.Context, uint) ([]model.BackupTask, error) {
+	return nil, nil
+}
 func (r *fakeTaskRepository) Create(context.Context, *model.BackupTask) error { return nil }
 func (r *fakeTaskRepository) Update(context.Context, *model.BackupTask) error { return nil }
 func (r *fakeTaskRepository) Delete(context.Context, uint) error              { return nil }
