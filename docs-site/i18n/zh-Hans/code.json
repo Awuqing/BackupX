@@ -1,26 +1,82 @@
 {
+  "home.badge": {
+    "message": "开源 · v1.6.0",
+    "description": "Version badge on the hero"
+  },
+  "home.title.part1": {
+    "message": "为每一台服务器提供",
+    "description": "Hero title, first line"
+  },
+  "home.title.part2": {
+    "message": "自托管备份管理。",
+    "description": "Hero title accent second line"
+  },
   "home.tagline": {
-    "message": "自托管服务器备份管理 — 一个二进制，一条命令，管好所有备份",
+    "message": "一个二进制，一条命令。文件 / 数据库 / SAP HANA 备份直送 70+ 存储后端。",
     "description": "Tagline on the home page"
+  },
+  "home.pageTitle": {
+    "message": "自托管备份管理",
+    "description": "Page <title> element on the home page"
   },
   "home.getStarted": {
     "message": "快速开始",
     "description": "Primary CTA on the home page"
   },
-  "home.title": {
-    "message": "自托管备份管理",
-    "description": "Title on the home page"
+  "home.metric.backends": {
+    "message": "存储后端",
+    "description": "Hero metric label: storage backends"
   },
+  "home.metric.backupTypes": {
+    "message": "备份类型",
+    "description": "Hero metric label: backup types"
+  },
+  "home.metric.license": {
+    "message": "开源协议",
+    "description": "Hero metric label: license"
+  },
+
+  "section.features.tag": {
+    "message": "核心能力",
+    "description": "FEATURES section tag"
+  },
+  "section.features.title": {
+    "message": "该有的都有，多余的没有",
+    "description": "Features section title"
+  },
+  "section.features.subtitle": {
+    "message": "备份 Runner、存储 Provider、调度、集群 — 每一块都经过打磨。",
+    "description": "Features section subtitle"
+  },
+
   "feat.types.title": {"message": "多种备份类型"},
   "feat.types.desc": {"message": "文件与目录（支持多源路径），以及 MySQL、PostgreSQL、SQLite、SAP HANA 统一管理。"},
   "feat.storage.title": {"message": "70+ 存储后端"},
-  "feat.storage.desc": {"message": "内置阿里云 OSS、腾讯云 COS、七牛、S3、Google Drive、WebDAV、FTP，以及通过 rclone 接入的 SFTP、Azure Blob、Dropbox、OneDrive 等数十种。"},
+  "feat.storage.desc": {"message": "内置阿里云 OSS、腾讯云 COS、七牛、S3、Google Drive、WebDAV、FTP，以及 SFTP、Azure Blob、Dropbox 等 rclone 后端。"},
   "feat.scheduling.title": {"message": "调度与保留策略"},
   "feat.scheduling.desc": {"message": "基于 Cron 的可视化调度编辑器，支持按天数/份数自动保留和空目录清理。"},
   "feat.cluster.title": {"message": "多节点集群"},
-  "feat.cluster.desc": {"message": "Master-Agent 模式跨多台服务器管理备份，Agent 在本地执行任务并直接上传到存储，无需反向连通性。"},
+  "feat.cluster.desc": {"message": "Master-Agent 基于 HTTP 长轮询。Agent 在本地执行任务并直接上传到存储 — 无需反向连通性。"},
   "feat.security.title": {"message": "默认安全"},
   "feat.security.desc": {"message": "JWT 认证、bcrypt、AES-256-GCM 加密配置、可选备份加密、完整审计日志。"},
   "feat.deploy.title": {"message": "部署轻量"},
-  "feat.deploy.desc": {"message": "单个静态二进制 + 内嵌 SQLite。Docker 一键启动或通过 install.sh 裸机部署 — 零外部依赖。"}
+  "feat.deploy.desc": {"message": "单个静态二进制 + 内嵌 SQLite。Docker 一键启动或裸机 — 零外部依赖。"},
+  "feat.learnMore": {"message": "了解更多"},
+
+  "showcase.tag": {"message": "产品界面"},
+  "showcase.title": {"message": "精心打磨的控制台，而非 DIY 脚本"},
+  "showcase.subtitle": {"message": "每个页面都为运维而生 — 可观测优先，可配置次之。"},
+  "showcase.tab.dashboard": {"message": "仪表盘"},
+  "showcase.tab.tasks": {"message": "备份任务"},
+  "showcase.tab.storage": {"message": "存储目标"},
+  "showcase.tab.nodes": {"message": "多节点"},
+  "showcase.dashboard.title": {"message": "一眼掌握全局"},
+  "showcase.dashboard.desc": {"message": "备份成功率、存储使用量、最近执行记录、即将触发的计划 — 一页实时数据。"},
+  "showcase.tasks.title": {"message": "可视化任务编辑器"},
+  "showcase.tasks.desc": {"message": "文件、MySQL、PostgreSQL、SQLite、SAP HANA — 三步完成。Cron 编辑器、多目标分发、保留策略、压缩、加密 — 点击即用。"},
+  "showcase.storage.title": {"message": "70+ 后端，统一体验"},
+  "showcase.storage.desc": {"message": "阿里云 OSS、腾讯云 COS、S3、Google Drive、WebDAV — 加上每一种 rclone 后端。测试连接、收藏、查看实时容量。"},
+  "showcase.nodes.title": {"message": "几分钟搭起 Master-Agent"},
+  "showcase.nodes.desc": {"message": "创建节点、复制令牌、在任意远程主机启动 Agent。路由到节点的任务在本地执行并直接上传到存储 — 无需反向连通性。"},
+  "showcase.cta": {"message": "开始阅读文档"}
 }

@@ -1,19 +1,56 @@
 /**
  * BackupX 官方文档站样式
+ * 灵感：Ant Design / Arco Design
  */
 
 :root {
+  /* Primary palette (Arco blue) */
   --ifm-color-primary: #165dff;
   --ifm-color-primary-dark: #0e4fe6;
-  --ifm-color-primary-darker: #0e4bd9;
-  --ifm-color-primary-darkest: #0b3eb3;
+  --ifm-color-primary-darker: #0b4bd9;
+  --ifm-color-primary-darkest: #093eb3;
   --ifm-color-primary-light: #2f6cff;
   --ifm-color-primary-lighter: #3d75ff;
   --ifm-color-primary-lightest: #668eff;
-  --ifm-code-font-size: 92%;
-  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
-  --ifm-font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+
+  /* Surfaces */
+  --ifm-background-color: #ffffff;
+  --ifm-background-surface-color: #ffffff;
+  --ifm-color-emphasis-100: #f7f9fc;
+  --ifm-color-emphasis-200: #eef1f6;
+  --ifm-color-emphasis-300: #dde3ec;
+
+  /* Typography */
+  --ifm-font-family-base: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --ifm-font-family-monospace: 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
   --ifm-heading-font-weight: 600;
+  --ifm-code-font-size: 92%;
+  --ifm-h1-font-size: 2.25rem;
+  --ifm-h2-font-size: 1.75rem;
+  --ifm-h3-font-size: 1.35rem;
+  --ifm-line-height-base: 1.7;
+
+  --ifm-color-content: #1d2129;
+  --ifm-color-content-secondary: #4e5969;
+  --ifm-heading-color: #1d2129;
+
+  /* Navbar */
+  --ifm-navbar-height: 64px;
+  --ifm-navbar-background-color: rgba(255, 255, 255, 0.82);
+  --ifm-navbar-link-color: #4e5969;
+  --ifm-navbar-link-hover-color: var(--ifm-color-primary);
+
+  /* Sidebar */
+  --ifm-menu-color: #4e5969;
+  --ifm-menu-color-background-active: rgba(22, 93, 255, 0.08);
+  --ifm-menu-color-background-hover: var(--ifm-color-emphasis-100);
+
+  /* Code */
+  --ifm-code-background: rgba(22, 93, 255, 0.06);
+  --docusaurus-highlighted-code-line-bg: rgba(22, 93, 255, 0.08);
+
+  /* Hero background helper (consumed in index.module.css) */
+  --bx-hero-bg: transparent;
 }
 
 [data-theme='dark'] {
@@ -24,14 +61,174 @@
   --ifm-color-primary-light: #5a93ff;
   --ifm-color-primary-lighter: #74a5ff;
   --ifm-color-primary-lightest: #9dbfff;
-  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.08);
+
   --ifm-background-color: #0f1115;
+  --ifm-background-surface-color: #16181d;
+  --ifm-color-emphasis-100: #1a1d23;
+  --ifm-color-emphasis-200: #23272f;
+  --ifm-color-emphasis-300: #2e343d;
+
+  --ifm-color-content: #e6e9ef;
+  --ifm-color-content-secondary: #9aa3b2;
+  --ifm-heading-color: #f0f2f5;
+
+  --ifm-navbar-background-color: rgba(15, 17, 21, 0.82);
+  --ifm-navbar-link-color: #c9d1db;
+
+  --ifm-menu-color: #c9d1db;
+  --ifm-menu-color-background-active: rgba(64, 128, 255, 0.15);
+  --ifm-menu-color-background-hover: rgba(255, 255, 255, 0.04);
+
+  --ifm-code-background: rgba(64, 128, 255, 0.14);
+  --docusaurus-highlighted-code-line-bg: rgba(64, 128, 255, 0.18);
 }
 
-.hero--primary {
-  background: linear-gradient(135deg, #165dff 0%, #0b3eb3 100%);
+/* Frosted-glass navbar */
+.navbar {
+  backdrop-filter: saturate(180%) blur(10px);
+  -webkit-backdrop-filter: saturate(180%) blur(10px);
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .navbar {
+  border-bottom-color: rgba(255, 255, 255, 0.06);
 }
 
 .navbar__title {
   font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.navbar__link {
+  font-weight: 500;
+  font-size: 14px;
+}
+
+/* Sidebar tweaks */
+.menu__link {
+  font-size: 14px;
+  border-radius: 6px;
+  padding: 6px 10px;
+  line-height: 1.4;
+}
+
+.menu__link--active,
+.menu__link--active:hover {
+  font-weight: 600;
+}
+
+.theme-doc-sidebar-container {
+  border-right: 1px solid var(--ifm-color-emphasis-200) !important;
+}
+
+[data-theme='dark'] .theme-doc-sidebar-container {
+  border-right-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* Article: better heading rhythm */
+.markdown h2 {
+  margin-top: 2.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--ifm-color-emphasis-200);
+}
+
+[data-theme='dark'] .markdown h2 {
+  border-top-color: rgba(255, 255, 255, 0.06);
+}
+
+.markdown h3 {
+  margin-top: 2rem;
+}
+
+/* Tables */
+.markdown table {
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 0 0 1px var(--ifm-color-emphasis-200);
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.markdown table thead tr {
+  background: var(--ifm-color-emphasis-100);
+}
+
+.markdown table th,
+.markdown table td {
+  border: none;
+  border-bottom: 1px solid var(--ifm-color-emphasis-200);
+  padding: 10px 14px;
+}
+
+.markdown table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Inline code */
+code {
+  background: var(--ifm-code-background);
+  border: none;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.92em;
+}
+
+/* Admonitions: softer */
+.theme-admonition {
+  border-radius: 8px;
+  border-width: 1px;
+  border-left-width: 4px;
+}
+
+/* Footer */
+.footer {
+  --ifm-footer-background-color: #141720;
+  --ifm-footer-color: #9aa3b2;
+  --ifm-footer-link-color: #c9d1db;
+  --ifm-footer-link-hover-color: #ffffff;
+  --ifm-footer-title-color: #f0f2f5;
+  padding: 3.5rem 0 2.5rem;
+}
+
+.footer__title {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.footer__link-item {
+  font-size: 14px;
+  transition: color 0.15s ease;
+}
+
+.footer__bottom {
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding-top: 2rem;
+  margin-top: 2.5rem;
+}
+
+.footer__copyright {
+  font-size: 13px;
+  color: #6b7280;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ifm-color-emphasis-300);
+  border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ifm-color-emphasis-400, #adb5bd);
+}
+
+[data-theme='dark'] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
 }
