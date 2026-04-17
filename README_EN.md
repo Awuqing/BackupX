@@ -317,16 +317,81 @@ The Backint Agent maintains an `EBID ↔ object-key` catalog in a local SQLite D
 
 ## Multi-Node Cluster
 
-BackupX supports Master-Agent mode for managing multiple servers:
+BackupX supports Master-Agent mode for managing multiple servers. Backup tasks can be routed to specific nodes — the Agent runs the backup locally and uploads straight to storage backends.
 
-1. Web Console → **Node Management** → **Add Node** — system generates a Token
-2. Deploy Agent on remote server, connect using the Token
-3. Create backup tasks and assign to specific nodes — Master dispatches automatically
+### Architecture
 
-- Local node auto-detects IP address and version
-- Remote nodes report system info via Agent heartbeat (hostname, IP, OS, architecture, version)
-- Node names can be edited directly from the console
-- Visual directory browser lets you pick directories on remote Agent nodes
+```
+[Web Console] ←── JWT ──→ [Master (backupx)]
+                              ↑  ↓
+                              │  │ HTTP long-poll (token auth)
+                              │  ↓
+                         [Agent (backupx agent)]  ← runs on remote host
+                              ↓
+                          [70+ Storage Backends]
+```
+
+- **Protocol**: HTTP long-polling; the Agent initiates all connections — Master never needs reverse access
+- **Heartbeat**: Agent reports every 15s; Master marks nodes offline after 45s of silence
+- **Dispatch**: Master persists `run_task` commands to a queue; Agent polls and claims them
+- **Execution**: Agent reuses the same BackupRunner (file / mysql / postgresql / sqlite / saphana) and uploads directly to storage
+- **Security**: Each node gets its own token; the Agent never holds the Master's JWT secret or encryption key
+
+### Walkthrough
+
+**1. Create a node on Master and copy the token**
+
+Web Console → **Node Management** → **Add Node**. The dialog shows a 64-byte hex token once — keep it safe.
+
+**2. Deploy the Agent on a remote host**
+
+Upload the BackupX binary (same file as Master) to the target host, then start the Agent:
+
+```bash
+# Option A: CLI flags
+backupx agent --master http://master.example.com:8340 --token <token>
+
+# Option B: config file
+cat > /etc/backupx/agent.yaml <<EOF
+master: http://master.example.com:8340
+token: <token>
+heartbeatInterval: 15s
+pollInterval: 5s
+tempDir: /var/lib/backupx-agent
+EOF
+backupx agent --config /etc/backupx/agent.yaml
+
+# Option C: environment variables (Docker / systemd-friendly)
+BACKUPX_AGENT_MASTER=http://master.example.com:8340 \
+BACKUPX_AGENT_TOKEN=<token> \
+backupx agent
+```
+
+Once connected, the node appears as **online** in the list.
+
+**3. Create a task routed to that node**
+
+In the **Backup Tasks** page, pick the target node when creating the task. When triggered:
+
+- Local / unassigned (`nodeId=0`) tasks run in-process on Master
+- Remote-node tasks are enqueued → Agent claims → Agent runs locally → uploads → reports back
+
+### Limitations
+
+- **No encrypted backups via Agent**: the Agent doesn't hold Master's AES-256 key. Tasks with `encrypt: true` will fail if routed to an Agent
+- **Directory browse timeout**: remote dir listing is a synchronous RPC through the queue; default 15s timeout
+- **Command timeout**: claimed-but-unfinished commands are marked timed out after 10 minutes
+
+### CLI Reference
+
+```bash
+backupx agent --help
+  -master string    Master URL
+  -token string     Agent auth token
+  -config string    YAML config path (takes precedence over env)
+  -temp-dir string  Local temp directory (default /tmp/backupx-agent)
+  -insecure-tls     Skip TLS verification (testing only)
+```
 
 ---
 

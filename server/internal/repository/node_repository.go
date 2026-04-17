@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"time"
 
 	"backupx/server/internal/model"
 	"gorm.io/gorm"
@@ -16,6 +17,7 @@ type NodeRepository interface {
 	Create(context.Context, *model.Node) error
 	Update(context.Context, *model.Node) error
 	Delete(context.Context, uint) error
+	MarkStaleOffline(ctx context.Context, threshold time.Time) (int64, error)
 }
 
 type GormNodeRepository struct {
@@ -77,4 +79,17 @@ func (r *GormNodeRepository) Update(ctx context.Context, item *model.Node) error
 
 func (r *GormNodeRepository) Delete(ctx context.Context, id uint) error {
 	return r.db.WithContext(ctx).Delete(&model.Node{}, id).Error
+}
+
+// MarkStaleOffline 把最近心跳早于 threshold 的在线远程节点标记为离线。
+// 本机节点 (is_local=true) 不受影响，由主程序自己维护 online 状态。
+// 返回受影响行数。
+func (r *GormNodeRepository) MarkStaleOffline(ctx context.Context, threshold time.Time) (int64, error) {
+	result := r.db.WithContext(ctx).Model(&model.Node{}).
+		Where("is_local = ? AND status = ? AND last_seen < ?", false, model.NodeStatusOnline, threshold).
+		Update("status", model.NodeStatusOffline)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return result.RowsAffected, nil
 }
