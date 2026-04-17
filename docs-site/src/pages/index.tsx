@@ -44,11 +44,26 @@ function HomepageHeader() {
             </Link>
           </div>
           <div className={styles.metrics}>
-            <MetricItem labelId="home.metric.backends" valueClass={styles.metricValue}>70+</MetricItem>
+            <div className={styles.metric}>
+              <div className={styles.metricValue}>70+</div>
+              <div className={styles.metricLabel}>
+                <Translate id="home.metric.backends">Storage backends</Translate>
+              </div>
+            </div>
             <div className={styles.metricDivider} />
-            <MetricItem labelId="home.metric.backupTypes" valueClass={styles.metricValue}>5</MetricItem>
+            <div className={styles.metric}>
+              <div className={styles.metricValue}>5</div>
+              <div className={styles.metricLabel}>
+                <Translate id="home.metric.backupTypes">Backup types</Translate>
+              </div>
+            </div>
             <div className={styles.metricDivider} />
-            <MetricItem labelId="home.metric.license" valueClass={styles.metricValue}>Apache 2.0</MetricItem>
+            <div className={styles.metric}>
+              <div className={styles.metricValue}>Apache 2.0</div>
+              <div className={styles.metricLabel}>
+                <Translate id="home.metric.license">License</Translate>
+              </div>
+            </div>
           </div>
         </div>
         <div className={styles.heroCode}>
@@ -78,21 +93,6 @@ function HomepageHeader() {
         </div>
       </div>
     </header>
-  );
-}
-
-function MetricItem({children, labelId, valueClass}: {children: ReactNode; labelId: string; valueClass: string}) {
-  return (
-    <div className={styles.metric}>
-      <div className={valueClass}>{children}</div>
-      <div className={styles.metricLabel}>
-        <Translate id={labelId}>
-          {labelId === 'home.metric.backends' ? 'Storage backends'
-            : labelId === 'home.metric.backupTypes' ? 'Backup types'
-            : 'License'}
-        </Translate>
-      </div>
-    </div>
   );
 }
 
