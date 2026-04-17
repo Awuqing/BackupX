@@ -1,0 +1,8 @@
+{
+  "version.label": {"message": "Next"},
+  "sidebar.docs.category.Getting Started": {"message": "快速开始"},
+  "sidebar.docs.category.Deployment": {"message": "部署"},
+  "sidebar.docs.category.Features": {"message": "功能特性"},
+  "sidebar.docs.category.Reference": {"message": "参考"},
+  "sidebar.docs.category.Development": {"message": "开发"}
+}
