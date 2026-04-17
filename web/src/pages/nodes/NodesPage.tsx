@@ -177,6 +177,7 @@ export default function NodesPage() {
         title="添加远程节点"
         visible={createVisible}
         onCancel={() => setCreateVisible(false)}
+        style={{ width: 640 }}
         footer={newToken ? (
           <Button type="primary" onClick={() => setCreateVisible(false)}>完成</Button>
         ) : undefined}
@@ -197,7 +198,24 @@ export default function NodesPage() {
             ]} />
             <div style={{ marginTop: 12, padding: '8px 12px', background: 'var(--color-fill-2)', borderRadius: 6 }}>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                请将此令牌配置到远程服务器的 Agent 启动参数中。令牌仅显示一次，请妥善保存。
+                令牌仅显示一次，请妥善保存。将其配置到远程服务器后，Agent 会自动连接 Master。
+              </Text>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <Text bold style={{ fontSize: 13 }}>Agent 部署步骤</Text>
+              <ol style={{ fontSize: 12, color: 'var(--color-text-2)', paddingLeft: 20, marginTop: 8 }}>
+                <li>把 BackupX 二进制上传到目标服务器（与 Master 同一个可执行文件）</li>
+                <li>通过以下命令启动 Agent（替换 MASTER_URL）：</li>
+              </ol>
+              <div style={{ background: 'var(--color-fill-2)', padding: '8px 12px', borderRadius: 6, marginTop: 4 }}>
+                <Text copyable style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+                  {`backupx agent --master ${window.location.origin} --token ${newToken}`}
+                </Text>
+              </div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+                或使用配置文件 / 环境变量：<br />
+                <code>BACKUPX_AGENT_MASTER={window.location.origin}</code><br />
+                <code>BACKUPX_AGENT_TOKEN={newToken}</code>
               </Text>
             </div>
           </div>

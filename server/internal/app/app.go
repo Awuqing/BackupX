@@ -112,9 +112,21 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	// Cluster: Node management
 	nodeRepo := repository.NewNodeRepository(db)
 	nodeService := service.NewNodeService(nodeRepo, version)
+	nodeService.SetTaskRepository(backupTaskRepo)
 	if err := nodeService.EnsureLocalNode(ctx); err != nil {
 		appLogger.Warn("failed to ensure local node", zap.Error(err))
 	}
+	// 启动离线检测：每 15s 扫描一次，超过 45s 未心跳的远程节点标记为离线
+	nodeService.StartOfflineMonitor(ctx, 15*time.Second)
+
+	// Agent 协议服务：命令队列 + 任务下发 + 记录上报
+	agentCmdRepo := repository.NewAgentCommandRepository(db)
+	agentService := service.NewAgentService(nodeRepo, backupTaskRepo, backupRecordRepo, storageTargetRepo, agentCmdRepo, configCipher)
+	agentService.StartCommandTimeoutMonitor(ctx, 30*time.Second, 10*time.Minute)
+	// 把 Agent 下发能力注入到备份执行服务，实现多节点路由
+	backupExecutionService.SetClusterDependencies(nodeRepo, agentService)
+	// 启用远程目录浏览：NodeService 通过 AgentService 做同步 RPC
+	nodeService.SetAgentRPC(agentService)
 
 	router := aphttp.NewRouter(aphttp.RouterDependencies{
 		Config:                 cfg,
@@ -130,6 +142,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 		DashboardService:       dashboardService,
 		SettingsService:        settingsService,
 		NodeService:              nodeService,
+		AgentService:             agentService,
 		DatabaseDiscoveryService: databaseDiscoveryService,
 		AuditService:            auditService,
 		JWTManager:               jwtManager,

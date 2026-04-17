@@ -75,18 +75,32 @@ type BackupExecutionService struct {
 	tasks           repository.BackupTaskRepository
 	records         repository.BackupRecordRepository
 	targets         repository.StorageTargetRepository
+	nodeRepo        repository.NodeRepository
 	storageRegistry *storage.Registry
 	runnerRegistry  *backup.Registry
 	logHub          *backup.LogHub
 	retention       *backupretention.Service
 	cipher          *codec.ConfigCipher
 	notifier        BackupResultNotifier
+	agentDispatcher AgentDispatcher
 	async           func(func())
 	now             func() time.Time
 	tempDir         string
 	semaphore       chan struct{}
 	retries         int    // rclone 底层重试次数
 	bandwidthLimit  string // rclone 带宽限制
+}
+
+// AgentDispatcher 抽象把任务下发给 Agent 的能力，由 AgentService 实现。
+// 用接口避免 execution service ↔ agent service 的循环依赖风险。
+type AgentDispatcher interface {
+	EnqueueCommand(ctx context.Context, nodeID uint, cmdType string, payload any) (uint, error)
+}
+
+// SetClusterDependencies 注入集群相关的依赖，使备份执行时可把任务路由到远程节点。
+func (s *BackupExecutionService) SetClusterDependencies(nodeRepo repository.NodeRepository, dispatcher AgentDispatcher) {
+	s.nodeRepo = nodeRepo
+	s.agentDispatcher = dispatcher
 }
 
 func NewBackupExecutionService(
@@ -243,6 +257,20 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 	if err := s.tasks.Update(ctx, task); err != nil {
 		return nil, apperror.Internal("BACKUP_TASK_UPDATE_FAILED", "无法更新任务状态", err)
 	}
+	// 多节点路由：task.NodeID 指向远程节点时，把执行任务入队给 Agent；
+	// NodeID=0 或本机节点时由 Master 直接执行。
+	if s.isRemoteNode(ctx, task.NodeID) {
+		if _, enqueueErr := s.agentDispatcher.EnqueueCommand(ctx, task.NodeID, model.AgentCommandTypeRunTask, map[string]any{
+			"taskId":   task.ID,
+			"recordId": record.ID,
+		}); enqueueErr != nil {
+			// 入队失败 → 在记录中标记失败，继续返回详情
+			_ = s.finalizeRecord(ctx, task, record.ID, startedAt, model.BackupRecordStatusFailed,
+				"无法下发任务到远程节点: "+enqueueErr.Error(), "", "", 0, "", "")
+			return nil, apperror.Internal("AGENT_COMMAND_ENQUEUE_FAILED", "无法下发任务到远程节点", enqueueErr)
+		}
+		return s.getRecordDetail(ctx, record.ID)
+	}
 	run := func() {
 		s.executeTask(context.Background(), task, record.ID, startedAt)
 	}
@@ -252,6 +280,19 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 		run()
 	}
 	return s.getRecordDetail(ctx, record.ID)
+}
+
+// isRemoteNode 判断 NodeID 是否指向一个有效的远程（非本机）节点。
+// 当未注入集群依赖、nodeID 为 0、或节点为本机时，均返回 false（走本地执行）。
+func (s *BackupExecutionService) isRemoteNode(ctx context.Context, nodeID uint) bool {
+	if s.nodeRepo == nil || s.agentDispatcher == nil || nodeID == 0 {
+		return false
+	}
+	node, err := s.nodeRepo.FindByID(ctx, nodeID)
+	if err != nil || node == nil {
+		return false
+	}
+	return !node.IsLocal
 }
 
 func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time) {
