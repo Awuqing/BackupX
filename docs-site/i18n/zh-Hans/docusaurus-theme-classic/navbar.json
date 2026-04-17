@@ -1,0 +1,14 @@
+{
+  "item.label.Docs": {
+    "message": "文档",
+    "description": "Navbar item: Docs"
+  },
+  "item.label.Downloads": {
+    "message": "下载",
+    "description": "Navbar item: Downloads"
+  },
+  "item.label.GitHub": {
+    "message": "GitHub",
+    "description": "Navbar item: GitHub"
+  }
+}

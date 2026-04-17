@@ -1,0 +1,26 @@
+{
+  "home.tagline": {
+    "message": "自托管服务器备份管理 — 一个二进制，一条命令，管好所有备份",
+    "description": "Tagline on the home page"
+  },
+  "home.getStarted": {
+    "message": "快速开始",
+    "description": "Primary CTA on the home page"
+  },
+  "home.title": {
+    "message": "自托管备份管理",
+    "description": "Title on the home page"
+  },
+  "feat.types.title": {"message": "多种备份类型"},
+  "feat.types.desc": {"message": "文件与目录（支持多源路径），以及 MySQL、PostgreSQL、SQLite、SAP HANA 统一管理。"},
+  "feat.storage.title": {"message": "70+ 存储后端"},
+  "feat.storage.desc": {"message": "内置阿里云 OSS、腾讯云 COS、七牛、S3、Google Drive、WebDAV、FTP，以及通过 rclone 接入的 SFTP、Azure Blob、Dropbox、OneDrive 等数十种。"},
+  "feat.scheduling.title": {"message": "调度与保留策略"},
+  "feat.scheduling.desc": {"message": "基于 Cron 的可视化调度编辑器，支持按天数/份数自动保留和空目录清理。"},
+  "feat.cluster.title": {"message": "多节点集群"},
+  "feat.cluster.desc": {"message": "Master-Agent 模式跨多台服务器管理备份，Agent 在本地执行任务并直接上传到存储，无需反向连通性。"},
+  "feat.security.title": {"message": "默认安全"},
+  "feat.security.desc": {"message": "JWT 认证、bcrypt、AES-256-GCM 加密配置、可选备份加密、完整审计日志。"},
+  "feat.deploy.title": {"message": "部署轻量"},
+  "feat.deploy.desc": {"message": "单个静态二进制 + 内嵌 SQLite。Docker 一键启动或通过 install.sh 裸机部署 — 零外部依赖。"}
+}

@@ -1,0 +1,37 @@
+/**
+ * BackupX 官方文档站样式
+ */
+
+:root {
+  --ifm-color-primary: #165dff;
+  --ifm-color-primary-dark: #0e4fe6;
+  --ifm-color-primary-darker: #0e4bd9;
+  --ifm-color-primary-darkest: #0b3eb3;
+  --ifm-color-primary-light: #2f6cff;
+  --ifm-color-primary-lighter: #3d75ff;
+  --ifm-color-primary-lightest: #668eff;
+  --ifm-code-font-size: 92%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+  --ifm-font-family-base: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  --ifm-heading-font-weight: 600;
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #4080ff;
+  --ifm-color-primary-dark: #3371f2;
+  --ifm-color-primary-darker: #2c6ae6;
+  --ifm-color-primary-darkest: #2359c7;
+  --ifm-color-primary-light: #5a93ff;
+  --ifm-color-primary-lighter: #74a5ff;
+  --ifm-color-primary-lightest: #9dbfff;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.08);
+  --ifm-background-color: #0f1115;
+}
+
+.hero--primary {
+  background: linear-gradient(135deg, #165dff 0%, #0b3eb3 100%);
+}
+
+.navbar__title {
+  font-weight: 700;
+}

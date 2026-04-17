@@ -1,0 +1,15 @@
+{
+  "link.title.Docs": {"message": "文档"},
+  "link.title.Features": {"message": "功能"},
+  "link.title.More": {"message": "更多"},
+  "link.item.label.Introduction": {"message": "简介"},
+  "link.item.label.Quick Start": {"message": "快速开始"},
+  "link.item.label.Installation": {"message": "安装"},
+  "link.item.label.SAP HANA": {"message": "SAP HANA"},
+  "link.item.label.Multi-Node Cluster": {"message": "多节点集群"},
+  "link.item.label.API Reference": {"message": "API 参考"},
+  "link.item.label.GitHub": {"message": "GitHub"},
+  "link.item.label.Releases": {"message": "Releases"},
+  "link.item.label.Docker Hub": {"message": "Docker Hub"},
+  "link.item.label.Issues": {"message": "Issues"}
+}
