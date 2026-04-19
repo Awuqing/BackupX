@@ -23,7 +23,7 @@ func Open(cfg config.DatabaseConfig, logger *zap.Logger) (*gorm.DB, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
-	if err := db.AutoMigrate(&model.User{}, &model.SystemConfig{}, &model.StorageTarget{}, &model.OAuthSession{}, &model.BackupTask{}, &model.BackupRecord{}, &model.Notification{}, &model.Node{}, &model.BackupTaskStorageTarget{}, &model.AuditLog{}, &model.AgentCommand{}); err != nil {
+	if err := db.AutoMigrate(&model.User{}, &model.SystemConfig{}, &model.StorageTarget{}, &model.OAuthSession{}, &model.BackupTask{}, &model.BackupRecord{}, &model.Notification{}, &model.Node{}, &model.BackupTaskStorageTarget{}, &model.AuditLog{}, &model.AgentCommand{}, &model.AgentInstallToken{}); err != nil {
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
 
