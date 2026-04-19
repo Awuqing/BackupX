@@ -373,6 +373,115 @@ func detectLocalIP() string {
 	return ""
 }
 
+// NodeCreateResult 批量创建结果。注意：不暴露 agent token，token 获取走 install-token 流程。
+type NodeCreateResult struct {
+	ID   uint   `json:"id"`
+	Name string `json:"name"`
+}
+
+// BatchCreate 批量创建远程节点。
+// 校验：1-50 项、每项 1-128 字符、批次内去重、与已有节点名去重。
+// 返回 NodeCreateResult 列表（不含 token，调用方应再调 install-tokens 接口）。
+func (s *NodeService) BatchCreate(ctx context.Context, names []string) ([]NodeCreateResult, error) {
+	cleaned, err := validateBatchNames(names)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := s.repo.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	existingSet := make(map[string]bool, len(existing))
+	for _, n := range existing {
+		existingSet[n.Name] = true
+	}
+	for _, name := range cleaned {
+		if existingSet[name] {
+			return nil, apperror.BadRequest("NODE_DUPLICATE_NAME",
+				fmt.Sprintf("节点名「%s」已存在", name), nil)
+		}
+	}
+
+	results := make([]NodeCreateResult, 0, len(cleaned))
+	for _, name := range cleaned {
+		tok, err := generateToken()
+		if err != nil {
+			return nil, fmt.Errorf("generate token: %w", err)
+		}
+		node := &model.Node{
+			Name:     name,
+			Token:    tok,
+			Status:   model.NodeStatusOffline,
+			IsLocal:  false,
+			LastSeen: time.Now().UTC(),
+		}
+		if err := s.repo.Create(ctx, node); err != nil {
+			return nil, err
+		}
+		results = append(results, NodeCreateResult{ID: node.ID, Name: node.Name})
+	}
+	return results, nil
+}
+
+// RotateToken 轮换指定节点的 agent token。
+// 旧 token 复制到 prev_token，24h 内新旧 token 均可认证。
+func (s *NodeService) RotateToken(ctx context.Context, id uint) (string, error) {
+	node, err := s.repo.FindByID(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if node == nil {
+		return "", apperror.New(http.StatusNotFound, "NODE_NOT_FOUND", "节点不存在", nil)
+	}
+	if node.IsLocal {
+		return "", apperror.BadRequest("NODE_ROTATE_LOCAL", "本机节点无需轮换 Token", nil)
+	}
+	newTok, err := generateToken()
+	if err != nil {
+		return "", fmt.Errorf("generate: %w", err)
+	}
+	expires := time.Now().UTC().Add(24 * time.Hour)
+	node.PrevToken = node.Token
+	node.PrevTokenExpires = &expires
+	node.Token = newTok
+	if err := s.repo.Update(ctx, node); err != nil {
+		return "", err
+	}
+	return newTok, nil
+}
+
+// validateBatchNames 校验并去重批次内名称（空白行忽略）。
+func validateBatchNames(names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, apperror.BadRequest("NODE_BATCH_EMPTY", "节点名列表不能为空", nil)
+	}
+	if len(names) > 50 {
+		return nil, apperror.BadRequest("NODE_BATCH_TOO_MANY", "单次最多创建 50 个节点", nil)
+	}
+	seen := make(map[string]bool, len(names))
+	out := make([]string, 0, len(names))
+	for _, raw := range names {
+		name := strings.TrimSpace(raw)
+		if name == "" {
+			continue
+		}
+		if len(name) > 128 {
+			return nil, apperror.BadRequest("NODE_NAME_TOO_LONG",
+				fmt.Sprintf("节点名「%s」超过 128 字符", name), nil)
+		}
+		if seen[name] {
+			return nil, apperror.BadRequest("NODE_DUPLICATE_NAME",
+				fmt.Sprintf("批次内重复节点名「%s」", name), nil)
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	if len(out) == 0 {
+		return nil, apperror.BadRequest("NODE_BATCH_EMPTY", "去除空白后列表为空", nil)
+	}
+	return out, nil
+}
+
 func generateToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
