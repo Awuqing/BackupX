@@ -141,7 +141,8 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 			database.POST("/discover", databaseHandler.Discover)
 		}
 
-		nodeHandler := NewNodeHandler(deps.NodeService, deps.AuditService)
+		// 临时让 build 通过：InstallTokenService 与 externalURL 传 nil 和 ""，Task 11 会替换成真实值
+		nodeHandler := NewNodeHandler(deps.NodeService, deps.AuditService, nil, "")
 		nodes := api.Group("/nodes")
 		nodes.Use(AuthMiddleware(deps.JWTManager))
 		nodes.GET("", nodeHandler.List)
