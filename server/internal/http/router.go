@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	stdhttp "net/http"
 
@@ -15,6 +16,9 @@ import (
 )
 
 type RouterDependencies struct {
+	// Context 控制 handler 启动的后台协程（如 ipLimiter GC）的生命周期。
+	// app 应传入随进程退出可取消的 ctx；若为 nil 则退化为 context.Background()。
+	Context                  context.Context
 	Config                   config.Config
 	Version                  string
 	Logger                   *zap.Logger
@@ -34,6 +38,8 @@ type RouterDependencies struct {
 	JWTManager               *security.JWTManager
 	UserRepository           repository.UserRepository
 	SystemConfigRepo         repository.SystemConfigRepository
+	InstallTokenService      *service.InstallTokenService
+	MasterExternalURL        string
 }
 
 func NewRouter(deps RouterDependencies) *gin.Engine {
@@ -141,7 +147,7 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 			database.POST("/discover", databaseHandler.Discover)
 		}
 
-		nodeHandler := NewNodeHandler(deps.NodeService, deps.AuditService)
+		nodeHandler := NewNodeHandler(deps.NodeService, deps.AuditService, deps.InstallTokenService, deps.UserRepository, deps.MasterExternalURL)
 		nodes := api.Group("/nodes")
 		nodes.Use(AuthMiddleware(deps.JWTManager))
 		nodes.GET("", nodeHandler.List)
@@ -150,6 +156,10 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		nodes.PUT("/:id", nodeHandler.Update)
 		nodes.DELETE("/:id", nodeHandler.Delete)
 		nodes.GET("/:id/fs/list", nodeHandler.ListDirectory)
+			nodes.POST("/batch", nodeHandler.BatchCreate)
+			nodes.POST("/:id/install-tokens", nodeHandler.CreateInstallToken)
+			nodes.POST("/:id/rotate-token", nodeHandler.RotateToken)
+			nodes.GET("/:id/install-script-preview", nodeHandler.PreviewScript)
 
 		// Agent API（token 认证，无需 JWT）
 		if deps.AgentService != nil {
@@ -160,10 +170,25 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 			agent.POST("/commands/:id/result", agentHandler.SubmitCommandResult)
 			agent.GET("/tasks/:id", agentHandler.GetTaskSpec)
 			agent.POST("/records/:id", agentHandler.UpdateRecord)
+
+			// Agent v1（安装脚本探活用），仅 Self 端点
+			v1Agent := api.Group("/v1/agent")
+			v1Agent.GET("/self", agentHandler.Self)
 		} else {
 			// 未启用 Agent 服务时，保留原有 heartbeat 端点以兼容
 			api.POST("/agent/heartbeat", nodeHandler.Heartbeat)
 		}
+	}
+
+	// 公开安装路由（不走 JWT 中间件）
+	if deps.InstallTokenService != nil {
+		gcCtx := deps.Context
+		if gcCtx == nil {
+			gcCtx = context.Background()
+		}
+		installHandler := NewInstallHandler(gcCtx, deps.InstallTokenService, deps.AuditService, deps.MasterExternalURL)
+		engine.GET("/install/:token", installHandler.Script)
+		engine.GET("/install/:token/compose.yml", installHandler.Compose)
 	}
 
 	engine.NoRoute(func(c *gin.Context) {

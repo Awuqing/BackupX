@@ -28,45 +28,42 @@ BackupX supports Master-Agent mode: backup tasks can be routed to specific nodes
 
 ## Walkthrough
 
-### 1. Create a node on Master
+### 1. Open the install wizard
 
-Web Console → **Node Management** → **Add Node**. A 64-byte hex token is shown **once** — keep it safe.
+In the Web Console → **Node Management** → **Add Node**. You'll see a three-step wizard.
 
-### 2. Deploy the Agent on a remote host
+- **Step 1 — Node info.** Give the node a name, or switch to batch mode and paste multiple names (one per line, max 50).
+- **Step 2 — Deploy options.** Pick install mode (`systemd` recommended, `docker`, or `foreground` for debugging), architecture (auto-detect by default), agent version (defaults to the master's version), TTL for the install link (5 min / 15 min / 1 h / 24 h), and download source (`github` direct, or the `ghproxy` mirror for mainland China).
+- **Step 3 — Copy the command.** A single `curl ... | sudo sh` line is shown with a live countdown. Click copy, paste into the target machine, and run with root privileges.
 
-Upload the BackupX binary (same file as Master) to the target host, then start the Agent:
+### 2. One-line install on the target host
 
-**Option A: CLI flags**
-
-```bash
-backupx agent --master http://master.example.com:8340 --token <token>
-```
-
-**Option B: config file**
-
-```yaml title="/etc/backupx/agent.yaml"
-master: http://master.example.com:8340
-token: <token>
-heartbeatInterval: 15s
-pollInterval: 5s
-tempDir: /var/lib/backupx-agent
-```
+Example (systemd mode):
 
 ```bash
-backupx agent --config /etc/backupx/agent.yaml
+curl -fsSL https://master.example.com/install/Xk3p9...vM | sudo sh
 ```
 
-**Option C: environment variables** (Docker / systemd friendly)
+The script runs automatically and:
 
-```bash
-BACKUPX_AGENT_MASTER=http://master.example.com:8340 \
-BACKUPX_AGENT_TOKEN=<token> \
-backupx agent
-```
+1. Detects OS and architecture (`uname -m`)
+2. Downloads the matching `backupx` binary from GitHub Release (or the ghproxy mirror)
+3. Installs to `/opt/backupx-agent` and creates a `backupx` system user
+4. Writes `/etc/systemd/system/backupx-agent.service` with the token baked into environment variables
+5. Runs `systemctl enable --now backupx-agent`
+6. Polls `/api/v1/agent/self` until the master confirms `status: online` (up to 30 s)
 
-Once connected, the node shows as **online** in the list.
+Reruns are idempotent — to upgrade or re-provision, simply generate a new install command and run it again. The one-time install link expires after its TTL or after first consumption, whichever is sooner.
 
-### 3. Route a task to the node
+### 3. Rotate agent tokens at any time
+
+Go to the node's action menu (︙) → **Rotate Token**. The new token is shown once and the old token remains valid for 24 h, allowing rolling restarts without downtime. After 24 h, the old token is rejected.
+
+### 4. Batch deployment
+
+In Step 1 choose "Batch" and paste node names (one per line, max 50). Step 3 shows a table with one command per node plus a **Download .sh** button that bundles all commands into a shell script, convenient for SSH loops or Ansible tasks.
+
+### 5. Route a task to the node
 
 In the **Backup Tasks** page, pick the target node when creating the task. When the task runs:
 

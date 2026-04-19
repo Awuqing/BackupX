@@ -19,10 +19,12 @@ type Node struct {
 	IsLocal   bool      `gorm:"not null;default:false" json:"isLocal"`
 	OS        string    `gorm:"size:64" json:"os"`
 	Arch      string    `gorm:"size:32" json:"arch"`
-	AgentVer  string    `gorm:"column:agent_version;size:32" json:"agentVersion"`
-	LastSeen  time.Time `gorm:"column:last_seen" json:"lastSeen"`
-	CreatedAt time.Time `json:"createdAt"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	AgentVer             string     `gorm:"column:agent_version;size:32" json:"agentVersion"`
+	LastSeen             time.Time  `gorm:"column:last_seen" json:"lastSeen"`
+	PrevToken            string     `gorm:"size:128;index" json:"-"`
+	PrevTokenExpires     *time.Time `gorm:"column:prev_token_expires" json:"-"`
+	CreatedAt            time.Time  `json:"createdAt"`
+	UpdatedAt            time.Time  `json:"updatedAt"`
 }
 
 func (Node) TableName() string {

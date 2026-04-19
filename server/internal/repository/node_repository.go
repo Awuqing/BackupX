@@ -15,6 +15,8 @@ type NodeRepository interface {
 	FindByToken(context.Context, string) (*model.Node, error)
 	FindLocal(context.Context) (*model.Node, error)
 	Create(context.Context, *model.Node) error
+	// BatchCreate 在单一事务内批量创建节点，任一失败即全部回滚。
+	BatchCreate(ctx context.Context, nodes []*model.Node) error
 	Update(context.Context, *model.Node) error
 	Delete(context.Context, uint) error
 	MarkStaleOffline(ctx context.Context, threshold time.Time) (int64, error)
@@ -49,7 +51,20 @@ func (r *GormNodeRepository) FindByID(ctx context.Context, id uint) (*model.Node
 
 func (r *GormNodeRepository) FindByToken(ctx context.Context, token string) (*model.Node, error) {
 	var item model.Node
-	if err := r.db.WithContext(ctx).Where("token = ?", token).First(&item).Error; err != nil {
+	// 主 token 查询
+	err := r.db.WithContext(ctx).Where("token = ?", token).First(&item).Error
+	if err == nil {
+		return &item, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	// 回退：prev_token 且未过期
+	now := time.Now().UTC()
+	err = r.db.WithContext(ctx).
+		Where("prev_token = ? AND prev_token_expires IS NOT NULL AND prev_token_expires > ?", token, now).
+		First(&item).Error
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -71,6 +86,22 @@ func (r *GormNodeRepository) FindLocal(ctx context.Context) (*model.Node, error)
 
 func (r *GormNodeRepository) Create(ctx context.Context, item *model.Node) error {
 	return r.db.WithContext(ctx).Create(item).Error
+}
+
+// BatchCreate 在单一事务中批量创建节点。任一记录失败即事务回滚。
+// 节点 ID 在事务提交后回填到入参切片元素上。
+func (r *GormNodeRepository) BatchCreate(ctx context.Context, nodes []*model.Node) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		for _, n := range nodes {
+			if err := tx.Create(n).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (r *GormNodeRepository) Update(ctx context.Context, item *model.Node) error {

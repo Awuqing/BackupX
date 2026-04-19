@@ -346,3 +346,24 @@ func (s *AgentService) StartCommandTimeoutMonitor(ctx context.Context, interval 
 		}
 	}()
 }
+
+// AgentSelfStatus 是 /api/v1/agent/self 端点返回给 Agent 的轻量状态摘要。
+type AgentSelfStatus struct {
+	ID       uint      `json:"id"`
+	Name     string    `json:"name"`
+	Status   string    `json:"status"`
+	LastSeen time.Time `json:"lastSeen"`
+}
+
+// SelfStatus 返回 Agent token 所属节点的当前状态，供安装脚本末尾探活。
+func (s *AgentService) SelfStatus(ctx context.Context, node *model.Node) (*AgentSelfStatus, error) {
+	if node == nil {
+		return nil, apperror.Unauthorized("NODE_INVALID_TOKEN", "节点不存在", nil)
+	}
+	return &AgentSelfStatus{
+		ID:       node.ID,
+		Name:     node.Name,
+		Status:   node.Status,
+		LastSeen: node.LastSeen,
+	}, nil
+}

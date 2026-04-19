@@ -123,12 +123,19 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	agentCmdRepo := repository.NewAgentCommandRepository(db)
 	agentService := service.NewAgentService(nodeRepo, backupTaskRepo, backupRecordRepo, storageTargetRepo, agentCmdRepo, configCipher)
 	agentService.StartCommandTimeoutMonitor(ctx, 30*time.Second, 10*time.Minute)
+
+	// 一键部署：install token service + 后台 GC
+	installTokenRepo := repository.NewAgentInstallTokenRepository(db)
+	installTokenService := service.NewInstallTokenService(installTokenRepo, nodeRepo)
+	installTokenService.StartGC(ctx, time.Hour)
+
 	// 把 Agent 下发能力注入到备份执行服务，实现多节点路由
 	backupExecutionService.SetClusterDependencies(nodeRepo, agentService)
 	// 启用远程目录浏览：NodeService 通过 AgentService 做同步 RPC
 	nodeService.SetAgentRPC(agentService)
 
 	router := aphttp.NewRouter(aphttp.RouterDependencies{
+		Context:                ctx,
 		Config:                 cfg,
 		Version:                version,
 		Logger:                 appLogger,
@@ -146,8 +153,10 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 		DatabaseDiscoveryService: databaseDiscoveryService,
 		AuditService:            auditService,
 		JWTManager:               jwtManager,
-		UserRepository:         userRepo,
-		SystemConfigRepo:       systemConfigRepo,
+		UserRepository:           userRepo,
+		SystemConfigRepo:         systemConfigRepo,
+		InstallTokenService:      installTokenService,
+		MasterExternalURL:        "", // 如需覆盖 URL，可扩展 cfg.Server 增字段；目前留空依赖 X-Forwarded-* / Request.Host
 	})
 
 	httpServer := &stdhttp.Server{
