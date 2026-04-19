@@ -1,0 +1,179 @@
+package http
+
+import (
+	stdhttp "net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"backupx/server/internal/installscript"
+	"backupx/server/internal/model"
+	"backupx/server/internal/service"
+	"github.com/gin-gonic/gin"
+)
+
+// InstallHandler 公开路由（不走 JWT 中间件）：/install/:token 与 /install/:token/compose.yml。
+type InstallHandler struct {
+	tokenService *service.InstallTokenService
+	auditService *service.AuditService
+	externalURL  string
+	limiter      *ipLimiter
+}
+
+func NewInstallHandler(tokenService *service.InstallTokenService, auditService *service.AuditService, externalURL string) *InstallHandler {
+	return &InstallHandler{
+		tokenService: tokenService,
+		auditService: auditService,
+		externalURL:  externalURL,
+		limiter:      newIPLimiter(20, time.Minute),
+	}
+}
+
+// Script 消费 install token 并返回 shell 脚本；Mode 由 token 存储决定（systemd/docker/foreground 均返回 shell）。
+func (h *InstallHandler) Script(c *gin.Context) {
+	if !h.limiter.allow(c.ClientIP()) {
+		c.String(stdhttp.StatusTooManyRequests, "请求过于频繁，请稍后再试\n")
+		return
+	}
+	token := strings.TrimSpace(c.Param("token"))
+	consumed, err := h.tokenService.Consume(c.Request.Context(), token)
+	if err != nil {
+		c.String(stdhttp.StatusInternalServerError, "server error\n")
+		return
+	}
+	if consumed == nil {
+		c.String(stdhttp.StatusGone, "install token 不存在、已过期或已消费\n")
+		return
+	}
+	h.recordConsumeAudit(c, consumed, "script")
+	script, err := installscript.RenderScript(installscript.Context{
+		MasterURL:     resolveMasterURL(c, h.externalURL),
+		AgentToken:    consumed.Node.Token,
+		AgentVersion:  consumed.Record.AgentVer,
+		Mode:          consumed.Record.Mode,
+		Arch:          consumed.Record.Arch,
+		DownloadBase:  installscript.DownloadBaseFor(consumed.Record.DownloadSrc),
+		InstallPrefix: "/opt/backupx-agent",
+		NodeID:        consumed.Node.ID,
+	})
+	if err != nil {
+		c.String(stdhttp.StatusInternalServerError, "render error\n")
+		return
+	}
+	c.Data(stdhttp.StatusOK, "text/x-shellscript; charset=utf-8", []byte(script))
+}
+
+// Compose 消费 install token 并返回 docker-compose YAML，仅 Mode=docker 有效。
+// 注意：/install/:token 与 /install/:token/compose.yml 共享同一 token 的消费状态，任一首次命中即消费。
+func (h *InstallHandler) Compose(c *gin.Context) {
+	if !h.limiter.allow(c.ClientIP()) {
+		c.String(stdhttp.StatusTooManyRequests, "请求过于频繁，请稍后再试\n")
+		return
+	}
+	token := strings.TrimSpace(c.Param("token"))
+	// 先 Peek 看 Mode（不消费），若非 docker 直接 400
+	record, err := h.tokenService.Peek(c.Request.Context(), token)
+	if err != nil {
+		c.String(stdhttp.StatusInternalServerError, "server error\n")
+		return
+	}
+	if record == nil {
+		c.String(stdhttp.StatusGone, "install token 不存在\n")
+		return
+	}
+	if record.Mode != model.InstallModeDocker {
+		c.String(stdhttp.StatusBadRequest, "该 install token 的模式不是 docker\n")
+		return
+	}
+	// 消费
+	consumed, err := h.tokenService.Consume(c.Request.Context(), token)
+	if err != nil {
+		c.String(stdhttp.StatusInternalServerError, "server error\n")
+		return
+	}
+	if consumed == nil {
+		c.String(stdhttp.StatusGone, "install token 已过期或已消费\n")
+		return
+	}
+	h.recordConsumeAudit(c, consumed, "compose")
+	yaml, err := installscript.RenderComposeYaml(installscript.Context{
+		MasterURL:    resolveMasterURL(c, h.externalURL),
+		AgentToken:   consumed.Node.Token,
+		AgentVersion: consumed.Record.AgentVer,
+		Mode:         model.InstallModeDocker,
+		NodeID:       consumed.Node.ID,
+	})
+	if err != nil {
+		c.String(stdhttp.StatusInternalServerError, "render error\n")
+		return
+	}
+	c.Data(stdhttp.StatusOK, "text/yaml; charset=utf-8", []byte(yaml))
+}
+
+func (h *InstallHandler) recordConsumeAudit(c *gin.Context, consumed *service.ConsumedInstallToken, kind string) {
+	if h.auditService == nil {
+		return
+	}
+	h.auditService.Record(service.AuditEntry{
+		Category:   "install_token",
+		Action:     "consume",
+		TargetType: "node",
+		TargetID:   strconv.FormatUint(uint64(consumed.Node.ID), 10),
+		TargetName: consumed.Node.Name,
+		Detail:     "install token 消费 (" + kind + ")",
+		ClientIP:   c.ClientIP(),
+	})
+}
+
+// resolveMasterURL 按优先级推导 Master URL：外部配置 > X-Forwarded-* > Request.Host。
+// 此为包级 helper，供 install_handler 和 node_handler 共用。
+func resolveMasterURL(c *gin.Context, externalURL string) string {
+	if strings.TrimSpace(externalURL) != "" {
+		return strings.TrimRight(externalURL, "/")
+	}
+	scheme := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto"))
+	if scheme == "" {
+		if c.Request.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	host := strings.TrimSpace(c.GetHeader("X-Forwarded-Host"))
+	if host == "" {
+		host = c.Request.Host
+	}
+	return scheme + "://" + host
+}
+
+// ipLimiter 简单内存滑动窗口限流，按 client IP 维度。
+type ipLimiter struct {
+	mu     sync.Mutex
+	events map[string][]time.Time
+	limit  int
+	window time.Duration
+}
+
+func newIPLimiter(limit int, window time.Duration) *ipLimiter {
+	return &ipLimiter{events: make(map[string][]time.Time), limit: limit, window: window}
+}
+
+func (l *ipLimiter) allow(ip string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	cutoff := now.Add(-l.window)
+	keep := l.events[ip][:0]
+	for _, t := range l.events[ip] {
+		if t.After(cutoff) {
+			keep = append(keep, t)
+		}
+	}
+	if len(keep) >= l.limit {
+		l.events[ip] = keep
+		return false
+	}
+	l.events[ip] = append(keep, now)
+	return true
+}
