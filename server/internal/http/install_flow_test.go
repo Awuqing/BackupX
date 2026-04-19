@@ -61,7 +61,13 @@ func setupInstallFlowRouter(t *testing.T) (http.Handler, string) {
 	auditLogRepo := repository.NewAuditLogRepository(db)
 	auditSvc := service.NewAuditService(auditLogRepo)
 
+	// 用 cancelable ctx，测试结束时停掉 handler 启动的后台 GC 协程，
+	// 避免 goroutine 持有 map 导致 tempdir 清理失败。
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
 	router := NewRouter(RouterDependencies{
+		Context:             ctx,
 		Config:              cfg,
 		Version:             "test",
 		Logger:              log,

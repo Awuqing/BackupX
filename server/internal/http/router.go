@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	stdhttp "net/http"
 
@@ -15,6 +16,9 @@ import (
 )
 
 type RouterDependencies struct {
+	// Context 控制 handler 启动的后台协程（如 ipLimiter GC）的生命周期。
+	// app 应传入随进程退出可取消的 ctx；若为 nil 则退化为 context.Background()。
+	Context                  context.Context
 	Config                   config.Config
 	Version                  string
 	Logger                   *zap.Logger
@@ -143,7 +147,7 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 			database.POST("/discover", databaseHandler.Discover)
 		}
 
-		nodeHandler := NewNodeHandler(deps.NodeService, deps.AuditService, deps.InstallTokenService, deps.MasterExternalURL)
+		nodeHandler := NewNodeHandler(deps.NodeService, deps.AuditService, deps.InstallTokenService, deps.UserRepository, deps.MasterExternalURL)
 		nodes := api.Group("/nodes")
 		nodes.Use(AuthMiddleware(deps.JWTManager))
 		nodes.GET("", nodeHandler.List)
@@ -178,7 +182,11 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 
 	// 公开安装路由（不走 JWT 中间件）
 	if deps.InstallTokenService != nil {
-		installHandler := NewInstallHandler(deps.InstallTokenService, deps.AuditService, deps.MasterExternalURL)
+		gcCtx := deps.Context
+		if gcCtx == nil {
+			gcCtx = context.Background()
+		}
+		installHandler := NewInstallHandler(gcCtx, deps.InstallTokenService, deps.AuditService, deps.MasterExternalURL)
 		engine.GET("/install/:token", installHandler.Script)
 		engine.GET("/install/:token/compose.yml", installHandler.Compose)
 	}

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	stdhttp "net/http"
 	"strconv"
 	"strings"
@@ -21,12 +22,16 @@ type InstallHandler struct {
 	limiter      *ipLimiter
 }
 
-func NewInstallHandler(tokenService *service.InstallTokenService, auditService *service.AuditService, externalURL string) *InstallHandler {
+// NewInstallHandler 构造 handler 并启动限流器的后台 GC 协程。
+// gcCtx 控制 GC 协程生命周期，建议传入 app context。
+func NewInstallHandler(gcCtx context.Context, tokenService *service.InstallTokenService, auditService *service.AuditService, externalURL string) *InstallHandler {
+	limiter := newIPLimiter(20, time.Minute)
+	limiter.startGC(gcCtx)
 	return &InstallHandler{
 		tokenService: tokenService,
 		auditService: auditService,
 		externalURL:  externalURL,
-		limiter:      newIPLimiter(20, time.Minute),
+		limiter:      limiter,
 	}
 }
 
@@ -176,4 +181,41 @@ func (l *ipLimiter) allow(ip string) bool {
 	}
 	l.events[ip] = append(keep, now)
 	return true
+}
+
+// gc 清理窗口外所有过期的 IP 条目，防止公网扫描导致 map 无界增长。
+// 由后台 goroutine 周期性调用。
+func (l *ipLimiter) gc(now time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	cutoff := now.Add(-l.window)
+	for k, v := range l.events {
+		stale := true
+		for _, t := range v {
+			if t.After(cutoff) {
+				stale = false
+				break
+			}
+		}
+		if stale {
+			delete(l.events, k)
+		}
+	}
+}
+
+// startGC 启动后台清理协程，每 window 周期清扫一次 map。
+// ctx 取消时协程退出。
+func (l *ipLimiter) startGC(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(l.window)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case t := <-ticker.C:
+				l.gc(t)
+			}
+		}
+	}()
 }
