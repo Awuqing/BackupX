@@ -49,7 +49,20 @@ func (r *GormNodeRepository) FindByID(ctx context.Context, id uint) (*model.Node
 
 func (r *GormNodeRepository) FindByToken(ctx context.Context, token string) (*model.Node, error) {
 	var item model.Node
-	if err := r.db.WithContext(ctx).Where("token = ?", token).First(&item).Error; err != nil {
+	// 主 token 查询
+	err := r.db.WithContext(ctx).Where("token = ?", token).First(&item).Error
+	if err == nil {
+		return &item, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
+	}
+	// 回退：prev_token 且未过期
+	now := time.Now().UTC()
+	err = r.db.WithContext(ctx).
+		Where("prev_token = ? AND prev_token_expires IS NOT NULL AND prev_token_expires > ?", token, now).
+		First(&item).Error
+	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
