@@ -135,6 +135,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	nodeService.SetAgentRPC(agentService)
 
 	router := aphttp.NewRouter(aphttp.RouterDependencies{
+		Context:                ctx,
 		Config:                 cfg,
 		Version:                version,
 		Logger:                 appLogger,

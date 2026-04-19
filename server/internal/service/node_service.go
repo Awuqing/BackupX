@@ -402,23 +402,29 @@ func (s *NodeService) BatchCreate(ctx context.Context, names []string) ([]NodeCr
 		}
 	}
 
-	results := make([]NodeCreateResult, 0, len(cleaned))
+	// 预先构造所有 Node，token 生成在事务外完成（纯内存操作，失败不会影响 DB 状态）
+	nodes := make([]*model.Node, 0, len(cleaned))
+	now := time.Now().UTC()
 	for _, name := range cleaned {
 		tok, err := generateToken()
 		if err != nil {
 			return nil, fmt.Errorf("generate token: %w", err)
 		}
-		node := &model.Node{
+		nodes = append(nodes, &model.Node{
 			Name:     name,
 			Token:    tok,
 			Status:   model.NodeStatusOffline,
 			IsLocal:  false,
-			LastSeen: time.Now().UTC(),
-		}
-		if err := s.repo.Create(ctx, node); err != nil {
-			return nil, err
-		}
-		results = append(results, NodeCreateResult{ID: node.ID, Name: node.Name})
+			LastSeen: now,
+		})
+	}
+	// 事务内批量创建：任一失败整体回滚
+	if err := s.repo.BatchCreate(ctx, nodes); err != nil {
+		return nil, err
+	}
+	results := make([]NodeCreateResult, 0, len(nodes))
+	for _, n := range nodes {
+		results = append(results, NodeCreateResult{ID: n.ID, Name: n.Name})
 	}
 	return results, nil
 }

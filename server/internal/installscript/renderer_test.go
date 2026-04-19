@@ -7,9 +7,10 @@ import (
 	"backupx/server/internal/model"
 )
 
+// 使用合法 hex token（32 字节 = 64 字符）以通过 validateAgentToken 校验
 var testCtx = Context{
 	MasterURL:     "https://master.example.com",
-	AgentToken:    "test-token-hex",
+	AgentToken:    "deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcdef",
 	AgentVersion:  "v1.7.0",
 	Mode:          model.InstallModeSystemd,
 	Arch:          model.InstallArchAuto,
@@ -30,7 +31,7 @@ func TestRenderScriptSystemd(t *testing.T) {
 		"systemctl enable --now backupx-agent",
 		"X-Agent-Token: ${AGENT_TOKEN}",
 		"MASTER_URL=\"https://master.example.com\"",
-		"AGENT_TOKEN=\"test-token-hex\"",
+		"AGENT_TOKEN=\"deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcdef\"",
 	}
 	for _, s := range mustContain {
 		if !strings.Contains(got, s) {
@@ -91,8 +92,57 @@ func TestRenderComposeYaml(t *testing.T) {
 	if !strings.Contains(got, "image: awuqing/backupx:v1.7.0") {
 		t.Errorf("compose missing image:\n%s", got)
 	}
-	if !strings.Contains(got, `BACKUPX_AGENT_TOKEN: "test-token-hex"`) {
+	if !strings.Contains(got, `BACKUPX_AGENT_TOKEN: "deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcdef"`) {
 		t.Errorf("compose missing token env:\n%s", got)
+	}
+}
+
+func TestRenderScriptRejectsInjectedMasterURL(t *testing.T) {
+	bad := []string{
+		"https://example.com\" other: inject", // 含引号和空格
+		"javascript:alert(1)",                  // scheme 非法
+		"https://example.com\n- privileged",    // 含换行，YAML 注入经典 payload
+		"",                                     // 空
+	}
+	for _, u := range bad {
+		ctx := testCtx
+		ctx.MasterURL = u
+		if _, err := RenderScript(ctx); err == nil {
+			t.Errorf("RenderScript should reject MasterURL %q", u)
+		}
+	}
+}
+
+func TestRenderComposeYamlRejectsInjectedMasterURL(t *testing.T) {
+	ctx := testCtx
+	ctx.Mode = model.InstallModeDocker
+	ctx.MasterURL = "https://example.com\n- privileged: true"
+	if _, err := RenderComposeYaml(ctx); err == nil {
+		t.Errorf("RenderComposeYaml should reject injected MasterURL")
+	}
+}
+
+func TestRenderScriptRejectsBadToken(t *testing.T) {
+	ctx := testCtx
+	ctx.AgentToken = "not-hex-token" // 非 hex
+	if _, err := RenderScript(ctx); err == nil {
+		t.Errorf("should reject non-hex agent token")
+	}
+}
+
+func TestRenderScriptAcceptsPlaceholderToken(t *testing.T) {
+	ctx := testCtx
+	ctx.AgentToken = "<AGENT_TOKEN>" // Preview 占位符
+	if _, err := RenderScript(ctx); err != nil {
+		t.Errorf("should accept placeholder token: %v", err)
+	}
+}
+
+func TestRenderScriptRejectsBadVersion(t *testing.T) {
+	ctx := testCtx
+	ctx.AgentVersion = "v1.7 && rm -rf /" // 含非法字符
+	if _, err := RenderScript(ctx); err == nil {
+		t.Errorf("should reject version with shell metacharacters")
 	}
 }
 

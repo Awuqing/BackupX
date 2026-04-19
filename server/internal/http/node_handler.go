@@ -7,6 +7,7 @@ import (
 
 	"backupx/server/internal/apperror"
 	"backupx/server/internal/installscript"
+	"backupx/server/internal/repository"
 	"backupx/server/internal/service"
 	"backupx/server/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -16,21 +17,47 @@ type NodeHandler struct {
 	service         *service.NodeService
 	auditService    *service.AuditService
 	installTokenSvc *service.InstallTokenService
+	userRepo        repository.UserRepository
 	externalURL     string
 }
 
+// NewNodeHandler 构造 handler。
+// userRepo 用于把 JWT subject（用户名）解析为 user.ID，填入 install_token.created_by_id 做审计追溯；
+// 传 nil 时 created_by_id 记为 0（仍可用，不阻断）。
 func NewNodeHandler(
 	nodeService *service.NodeService,
 	auditService *service.AuditService,
 	installTokenSvc *service.InstallTokenService,
+	userRepo repository.UserRepository,
 	externalURL string,
 ) *NodeHandler {
 	return &NodeHandler{
 		service:         nodeService,
 		auditService:    auditService,
 		installTokenSvc: installTokenSvc,
+		userRepo:        userRepo,
 		externalURL:     externalURL,
 	}
+}
+
+// resolveCurrentUserID 从 JWT subject 解析出 user.ID，失败返回 0。
+func (h *NodeHandler) resolveCurrentUserID(c *gin.Context) uint {
+	if h.userRepo == nil {
+		return 0
+	}
+	subjectValue, ok := c.Get(contextUserSubjectKey)
+	if !ok {
+		return 0
+	}
+	subject, err := service.SubjectFromContextValue(subjectValue)
+	if err != nil || subject == "" {
+		return 0
+	}
+	user, err := h.userRepo.FindByUsername(c.Request.Context(), subject)
+	if err != nil || user == nil {
+		return 0
+	}
+	return user.ID
 }
 
 func (h *NodeHandler) List(c *gin.Context) {
@@ -224,7 +251,7 @@ func (h *NodeHandler) CreateInstallToken(c *gin.Context) {
 		AgentVersion: input.AgentVersion,
 		DownloadSrc:  input.DownloadSrc,
 		TTLSeconds:   input.TTLSeconds,
-		CreatedByID:  0, // 如需关联 userID，后续可通过 auth 中间件注入
+		CreatedByID:  h.resolveCurrentUserID(c),
 	})
 	if err != nil {
 		response.Error(c, err)

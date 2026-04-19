@@ -128,12 +128,14 @@ func (s *InstallTokenService) Consume(ctx context.Context, token string) (*Consu
 	return &ConsumedInstallToken{Record: record, Node: node}, nil
 }
 
-// Peek 只读查询（不消费），供 compose 端点预检 Mode。
+// Peek 只读查询（不消费）且仅返回有效 token（未消费、未过期），供 compose 端点预检 Mode。
+// 对已过期/已消费的 token 返回 (nil, nil)，与 Consume 语义保持一致，
+// 避免 compose handler 误放行"僵尸 token"造成后续 Consume 必然失败的迷惑链路。
 func (s *InstallTokenService) Peek(ctx context.Context, token string) (*model.AgentInstallToken, error) {
 	if strings.TrimSpace(token) == "" {
 		return nil, nil
 	}
-	return s.repo.FindByToken(ctx, token)
+	return s.repo.FindValidByToken(ctx, token)
 }
 
 // StartGC 启动后台 GC，按 interval 扫描并删 ExpiresAt < now-7d 的记录。
