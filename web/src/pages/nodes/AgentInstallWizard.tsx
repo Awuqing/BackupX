@@ -1,5 +1,5 @@
-import React, { useState } from 'react'
-import { Modal, Steps, Button, Space, Message, Spin } from '@arco-design/web-react'
+import React, { useEffect, useRef, useState } from 'react'
+import { Modal, Steps, Button, Space, Message, Spin, Progress } from '@arco-design/web-react'
 import { Step1NodeName, type Mode } from './wizard/Step1NodeName'
 import { Step2DeployOptions, type DeployOptions } from './wizard/Step2DeployOptions'
 import { Step3CommandPreview } from './wizard/Step3CommandPreview'
@@ -13,7 +13,8 @@ interface Props {
   visible: boolean
   onClose: () => void
   onSuccess: () => void
-  masterVersion: string
+  // null = 正在拉取；空字符串 = 拉取失败（Step2 将展示手动输入框而非 Select）
+  masterVersion: string | null
   // 当从节点列表直接点"生成安装命令"时传入，跳过 Step1
   fixedNode?: { id: number; name: string }
 }
@@ -24,13 +25,32 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
   const [singleName, setSingleName] = useState('')
   const [batchText, setBatchText] = useState('')
 
+  // 批量进度（已生成 / 总数）
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null)
+
   const [deploy, setDeploy] = useState<DeployOptions>({
     mode: 'systemd',
     arch: 'auto',
-    agentVersion: masterVersion,
+    agentVersion: masterVersion || '',
     downloadSrc: 'github',
     ttlSeconds: 900,
   })
+
+  // 当父组件异步拿到 masterVersion 后，同步到 deploy.agentVersion（仅初始为空时）
+  useEffect(() => {
+    if (masterVersion && !deploy.agentVersion) {
+      setDeploy((prev) => ({ ...prev, agentVersion: masterVersion }))
+    }
+  }, [masterVersion]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // unmount 保护：用户关 Modal / 切页时，已发出的请求完成后不再更新 state
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
 
   const [singleToken, setSingleToken] = useState<InstallTokenResult | null>(null)
   const [singleNodeInfo, setSingleNodeInfo] = useState<{ id: number; name: string } | null>(null)
@@ -45,6 +65,7 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
     setSingleToken(null)
     setSingleNodeInfo(null)
     setBatchRows([])
+    setBatchProgress(null)
   }
 
   const handleClose = () => {
@@ -76,6 +97,24 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
   }
 
   const handleGenerate = async () => {
+    if (!deploy.agentVersion.trim()) {
+      Message.warning('请填写 Agent 版本号（形如 v1.7.0）')
+      return
+    }
+    // 步骤 1 的批次内去重在前端先提示一次，再由后端最终校验
+    if (mode === 'batch' && !fixedNode) {
+      const names = parseBatchNames()
+      const seen = new Set<string>()
+      const dups: string[] = []
+      for (const n of names) {
+        if (seen.has(n)) dups.push(n)
+        seen.add(n)
+      }
+      if (dups.length > 0) {
+        Message.warning(`批次内有重复节点名：${Array.from(new Set(dups)).join(', ')}`)
+        return
+      }
+    }
     setSubmitting(true)
     try {
       if (fixedNode) {
@@ -103,23 +142,30 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
       } else {
         const names = parseBatchNames()
         const created = await batchCreateNodes(names)
-        const rows: BatchCommandRow[] = []
-        for (const c of created) {
-          const tok = await createInstallToken(c.id, {
-            mode: deploy.mode,
-            arch: deploy.arch,
-            agentVersion: deploy.agentVersion,
-            downloadSrc: deploy.downloadSrc,
-            ttlSeconds: deploy.ttlSeconds,
-          })
-          rows.push({
-            nodeId: c.id,
-            nodeName: c.name,
-            command: `curl -fsSL ${tok.url} | sudo sh`,
-            expiresAt: tok.expiresAt,
-          })
-        }
-        setBatchRows(rows)
+        setBatchProgress({ done: 0, total: created.length })
+        // 并发生成 install token（Promise.all），每完成一个递增 done 计数
+        let done = 0
+        const tokens = await Promise.all(
+          created.map(async (c) => {
+            const tok = await createInstallToken(c.id, {
+              mode: deploy.mode,
+              arch: deploy.arch,
+              agentVersion: deploy.agentVersion,
+              downloadSrc: deploy.downloadSrc,
+              ttlSeconds: deploy.ttlSeconds,
+            })
+            done += 1
+            if (mountedRef.current) setBatchProgress({ done, total: created.length })
+            return { c, tok }
+          }),
+        )
+        const rows: BatchCommandRow[] = tokens.map(({ c, tok }) => ({
+          nodeId: c.id,
+          nodeName: c.name,
+          command: `curl -fsSL ${tok.url} | sudo sh`,
+          expiresAt: tok.expiresAt,
+        }))
+        if (mountedRef.current) setBatchRows(rows)
       }
       setStep(2)
       onSuccess()
@@ -178,6 +224,17 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
       {submitting && (
         <div style={{ textAlign: 'center', padding: 32 }}>
           <Spin />
+          {batchProgress && (
+            <div style={{ marginTop: 16, maxWidth: 360, marginLeft: 'auto', marginRight: 'auto' }}>
+              <div style={{ fontSize: 13, marginBottom: 6 }}>
+                正在生成安装命令 {batchProgress.done} / {batchProgress.total}
+              </div>
+              <Progress
+                percent={Math.round((batchProgress.done / batchProgress.total) * 100)}
+                showText
+              />
+            </div>
+          )}
         </div>
       )}
 

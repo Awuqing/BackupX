@@ -19,7 +19,8 @@ export default function NodesPage() {
 
   const [wizardVisible, setWizardVisible] = useState(false)
   const [wizardFixedNode, setWizardFixedNode] = useState<{ id: number; name: string } | undefined>()
-  const [masterVersion, setMasterVersion] = useState('latest')
+  // null = 拉取中 / 未知；空字符串 = 拉取失败（UI 将要求用户手动输入版本，避免生成无效 URL）
+  const [masterVersion, setMasterVersion] = useState<string | null>(null)
 
   const [editVisible, setEditVisible] = useState(false)
   const [editNode, setEditNode] = useState<NodeSummary | null>(null)
@@ -39,10 +40,11 @@ export default function NodesPage() {
 
   useEffect(() => {
     fetchNodes()
-    // 取 Master 版本号作为 Wizard agentVersion 默认值
+    // 取 Master 版本号作为 Wizard agentVersion 默认值。
+    // 拉取失败或字段缺失时置为空串，Wizard 会提示用户手动输入。
     fetchSystemInfo().then((info) => {
-      if (info?.version) setMasterVersion(info.version)
-    }).catch(() => {})
+      setMasterVersion(info?.version || '')
+    }).catch(() => setMasterVersion(''))
   }, [fetchNodes])
 
   const handleDelete = async (id: number) => {

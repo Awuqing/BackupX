@@ -1,5 +1,5 @@
 import React from 'react'
-import { Form, Radio, Select, Typography } from '@arco-design/web-react'
+import { Form, Radio, Select, Input, Typography } from '@arco-design/web-react'
 import type { InstallMode, InstallArch, InstallSource } from '../../../types/nodes'
 
 const { Text } = Typography
@@ -13,13 +13,16 @@ export interface DeployOptions {
 }
 
 interface Props {
-  masterVersion: string
+  // null = 拉取中；空串 = 拉取失败（改为手动输入）
+  masterVersion: string | null
   value: DeployOptions
   onChange: (v: DeployOptions) => void
 }
 
 export function Step2DeployOptions({ masterVersion, value, onChange }: Props) {
   const update = (patch: Partial<DeployOptions>) => onChange({ ...value, ...patch })
+  const versionKnown = !!masterVersion
+  const versionLoading = masterVersion === null
 
   return (
     <Form layout="vertical" size="default">
@@ -48,14 +51,32 @@ export function Step2DeployOptions({ masterVersion, value, onChange }: Props) {
         />
       </Form.Item>
 
-      <Form.Item label="Agent 版本">
-        <Select
-          value={value.agentVersion}
-          onChange={(v) => update({ agentVersion: v })}
-          options={[
-            { label: `${masterVersion}（跟随 Master，推荐）`, value: masterVersion },
-          ]}
-        />
+      <Form.Item
+        label="Agent 版本"
+        extra={
+          !versionKnown && !versionLoading ? (
+            <Text type="warning" style={{ fontSize: 12 }}>
+              未能自动获取 Master 版本，请手动输入（形如 v1.7.0）
+            </Text>
+          ) : undefined
+        }
+      >
+        {versionKnown ? (
+          <Select
+            value={value.agentVersion}
+            onChange={(v) => update({ agentVersion: v })}
+            options={[
+              { label: `${masterVersion}（跟随 Master，推荐）`, value: masterVersion as string },
+            ]}
+          />
+        ) : (
+          <Input
+            placeholder={versionLoading ? '加载中...' : 'v1.7.0'}
+            value={value.agentVersion}
+            onChange={(v) => update({ agentVersion: v })}
+            disabled={versionLoading}
+          />
+        )}
       </Form.Item>
 
       <Form.Item label="安装命令有效期">
