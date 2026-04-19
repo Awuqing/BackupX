@@ -1,0 +1,108 @@
+#!/bin/sh
+# BackupX Agent 一键安装脚本（由 Master 动态渲染）
+# 模式: {{.Mode}} | 架构: {{.Arch}} | 版本: {{.AgentVersion}}
+set -eu
+
+MASTER_URL="{{.MasterURL}}"
+AGENT_TOKEN="{{.AgentToken}}"
+AGENT_VERSION="{{.AgentVersion}}"
+DOWNLOAD_BASE="{{.DownloadBase}}"
+INSTALL_PREFIX="{{.InstallPrefix}}"
+ARCH="{{.Arch}}"
+
+# 1. 前置检查
+[ "$(id -u)" -eq 0 ] || { echo "请使用 root 或 sudo 执行" >&2; exit 1; }
+command -v curl >/dev/null || command -v wget >/dev/null \
+    || { echo "需要 curl 或 wget" >&2; exit 1; }
+{{if eq .Mode "systemd"}}command -v systemctl >/dev/null || { echo "不支持非 systemd 系统" >&2; exit 1; }
+{{end}}{{if eq .Mode "docker"}}command -v docker >/dev/null || { echo "需要先安装 docker" >&2; exit 1; }
+{{end}}
+# 2. 架构检测
+if [ "$ARCH" = "auto" ]; then
+    case "$(uname -m)" in
+        x86_64|amd64)  ARCH=amd64 ;;
+        aarch64|arm64) ARCH=arm64 ;;
+        *) echo "不支持的架构: $(uname -m)" >&2; exit 1 ;;
+    esac
+fi
+
+{{if ne .Mode "docker"}}
+# 3. 下载二进制（systemd / foreground 模式）
+ARCHIVE="backupx-${AGENT_VERSION}-linux-${ARCH}.tar.gz"
+URL="${DOWNLOAD_BASE}/${AGENT_VERSION}/${ARCHIVE}"
+TMPDIR="$(mktemp -d)"; trap 'rm -rf "$TMPDIR"' EXIT
+echo "[1/4] 下载 ${URL}"
+if command -v curl >/dev/null; then
+    curl -fsSL "$URL" -o "$TMPDIR/pkg.tar.gz"
+else
+    wget -qO "$TMPDIR/pkg.tar.gz" "$URL"
+fi
+tar xzf "$TMPDIR/pkg.tar.gz" -C "$TMPDIR"
+
+# 4. 安装二进制 + 用户
+echo "[2/4] 安装到 ${INSTALL_PREFIX}"
+id backupx >/dev/null 2>&1 || useradd --system --home-dir "$INSTALL_PREFIX" --shell /usr/sbin/nologin backupx
+install -d -o backupx -g backupx "$INSTALL_PREFIX" /var/lib/backupx-agent
+install -m 0755 "$TMPDIR/backupx-${AGENT_VERSION}-linux-${ARCH}/backupx" "$INSTALL_PREFIX/backupx"
+{{end}}
+
+{{if eq .Mode "systemd"}}
+# 5. systemd unit
+echo "[3/4] 配置 systemd"
+cat > /etc/systemd/system/backupx-agent.service <<UNIT
+[Unit]
+Description=BackupX Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=backupx
+Environment="BACKUPX_AGENT_MASTER=${MASTER_URL}"
+Environment="BACKUPX_AGENT_TOKEN=${AGENT_TOKEN}"
+ExecStart=${INSTALL_PREFIX}/backupx agent --temp-dir /var/lib/backupx-agent
+Restart=on-failure
+RestartSec=10s
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now backupx-agent
+
+# 6. 等待上线
+echo "[4/4] 等待节点上线"
+for i in $(seq 1 15); do
+    sleep 2
+    if curl -fsSL -H "X-Agent-Token: ${AGENT_TOKEN}" "${MASTER_URL}/api/v1/agent/self" 2>/dev/null \
+        | grep -q '"status":"online"'; then
+        echo "✓ 节点已上线"
+        exit 0
+    fi
+done
+echo "⚠ 30s 内未收到上线心跳，请检查防火墙或 journalctl -u backupx-agent"
+exit 2
+{{end}}
+
+{{if eq .Mode "foreground"}}
+# 5. 前台运行
+echo "[3/3] 前台启动 agent（Ctrl+C 退出）"
+export BACKUPX_AGENT_MASTER="${MASTER_URL}"
+export BACKUPX_AGENT_TOKEN="${AGENT_TOKEN}"
+exec "${INSTALL_PREFIX}/backupx" agent --temp-dir /var/lib/backupx-agent
+{{end}}
+
+{{if eq .Mode "docker"}}
+# Docker 模式：直接用镜像启动容器
+echo "[1/2] 拉取镜像 awuqing/backupx:${AGENT_VERSION}"
+docker pull "awuqing/backupx:${AGENT_VERSION}"
+echo "[2/2] 启动容器 backupx-agent"
+docker rm -f backupx-agent >/dev/null 2>&1 || true
+docker run -d --name backupx-agent --restart=unless-stopped \
+    -e "BACKUPX_AGENT_MASTER=${MASTER_URL}" \
+    -e "BACKUPX_AGENT_TOKEN=${AGENT_TOKEN}" \
+    -v /var/lib/backupx-agent:/tmp/backupx-agent \
+    "awuqing/backupx:${AGENT_VERSION}" agent
+echo "✓ 容器已启动"
+{{end}}
