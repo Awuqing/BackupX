@@ -154,3 +154,18 @@ func (h *AgentHandler) UpdateRecord(c *gin.Context) {
 	}
 	response.Success(c, gin.H{"status": "ok"})
 }
+
+// Self 返回当前 Agent token 所属节点的状态，供安装脚本末尾探活。
+func (h *AgentHandler) Self(c *gin.Context) {
+	node, err := h.agentService.AuthenticatedNode(c.Request.Context(), extractToken(c))
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	status, err := h.agentService.SelfStatus(c.Request.Context(), node)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Success(c, status)
+}
