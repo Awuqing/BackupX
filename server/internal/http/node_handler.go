@@ -262,14 +262,16 @@ func (h *NodeHandler) CreateInstallToken(c *gin.Context) {
 		fmt.Sprintf("生成 %s/%s install token TTL=%ds", input.Mode, input.Arch, input.TTLSeconds))
 
 	masterURL := resolveMasterURL(c, h.externalURL)
+	// 使用 /api/install/... 而非 /install/... —— 让反向代理的 /api/ 转发规则
+	// 自动接管，避免 SPA fallback 把请求当成前端路由返回 index.html（issue #46）。
 	body := gin.H{
 		"installToken": out.Token,
 		"expiresAt":    out.ExpiresAt,
-		"url":          masterURL + "/install/" + out.Token,
+		"url":          masterURL + "/api/install/" + out.Token,
 		"composeUrl":   "",
 	}
 	if input.Mode == "docker" {
-		body["composeUrl"] = masterURL + "/install/" + out.Token + "/compose.yml"
+		body["composeUrl"] = masterURL + "/api/install/" + out.Token + "/compose.yml"
 	}
 	response.Success(c, body)
 }

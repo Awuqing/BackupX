@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -194,6 +195,73 @@ func TestOneClickInstallFlow(t *testing.T) {
 	router.ServeHTTP(scriptRec2, scriptReq2)
 	if scriptRec2.Code != http.StatusGone {
 		t.Fatalf("second consume should be 410, got %d: %s", scriptRec2.Code, scriptRec2.Body.String())
+	}
+}
+
+// TestInstallScriptAliasUnderAPI 验证 /api/install/:token 别名路径可用，
+// 这是 Issue #46 的根本修复：让 install 端点自动命中反向代理的 /api/ 转发规则，
+// 避免 nginx SPA fallback 把请求当前端路由返回 index.html。
+func TestInstallScriptAliasUnderAPI(t *testing.T) {
+	router, token := setupInstallFlowRouter(t)
+
+	// 1. 创建一个节点，生成 install token
+	batchBody, _ := json.Marshal(map[string][]string{"names": {"alias-node"}})
+	batchReq := httptest.NewRequest(http.MethodPost, "/api/nodes/batch", bytes.NewReader(batchBody))
+	batchReq.Header.Set("Content-Type", "application/json")
+	batchReq.Header.Set("Authorization", "Bearer "+token)
+	batchRec := httptest.NewRecorder()
+	router.ServeHTTP(batchRec, batchReq)
+	if batchRec.Code != 200 {
+		t.Fatalf("batch create failed: %d %s", batchRec.Code, batchRec.Body.String())
+	}
+	var batchResp struct {
+		Data []struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(batchRec.Body.Bytes(), &batchResp)
+	if len(batchResp.Data) == 0 {
+		t.Fatalf("batch create returned no nodes: %s", batchRec.Body.String())
+	}
+	nodeID := batchResp.Data[0].ID
+
+	genBody, _ := json.Marshal(map[string]any{
+		"mode": "systemd", "arch": "auto", "agentVersion": "v1.7.0", "downloadSrc": "github", "ttlSeconds": 600,
+	})
+	genReq := httptest.NewRequest(http.MethodPost,
+		"/api/nodes/"+strconv.FormatUint(uint64(nodeID), 10)+"/install-tokens", bytes.NewReader(genBody))
+	genReq.Header.Set("Content-Type", "application/json")
+	genReq.Header.Set("Authorization", "Bearer "+token)
+	genRec := httptest.NewRecorder()
+	router.ServeHTTP(genRec, genReq)
+	if genRec.Code != 200 {
+		t.Fatalf("gen install token failed: %d %s", genRec.Code, genRec.Body.String())
+	}
+	var genResp struct {
+		Data struct {
+			InstallToken string `json:"installToken"`
+			URL          string `json:"url"`
+		} `json:"data"`
+	}
+	_ = json.Unmarshal(genRec.Body.Bytes(), &genResp)
+
+	// 2. 新生成的 url 应指向 /api/install/... —— 让反向代理的 /api/ 转发规则自动接管
+	if !strings.Contains(genResp.Data.URL, "/api/install/") {
+		t.Errorf("new install URL should use /api/install/ prefix, got %s", genResp.Data.URL)
+	}
+
+	// 3. /api/install/:token 必须可消费（与 /install/:token 等价）
+	aliasReq := httptest.NewRequest(http.MethodGet, "/api/install/"+genResp.Data.InstallToken, nil)
+	aliasRec := httptest.NewRecorder()
+	router.ServeHTTP(aliasRec, aliasReq)
+	if aliasRec.Code != 200 {
+		t.Fatalf("/api/install alias failed: %d %s", aliasRec.Code, aliasRec.Body.String())
+	}
+	if !strings.Contains(aliasRec.Body.String(), "systemctl enable --now backupx-agent") {
+		t.Errorf("alias should return rendered script, got:\n%s", aliasRec.Body.String())
+	}
+	if ct := aliasRec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("alias Content-Type should be text/plain*, got %q", ct)
 	}
 }
 
