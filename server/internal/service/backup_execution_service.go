@@ -17,6 +17,7 @@ import (
 	"backupx/server/internal/apperror"
 	"backupx/server/internal/backup"
 	backupretention "backupx/server/internal/backup/retention"
+	"backupx/server/internal/metrics"
 	"backupx/server/internal/model"
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage"
@@ -92,8 +93,14 @@ type BackupExecutionService struct {
 	// nodeSemaphores 节点级并发限制（按 NodeID 映射）。
 	// 没命中的 NodeID 走全局 semaphore，节点配置 MaxConcurrent>0 时按该节点独立排队。
 	nodeSemaphores sync.Map
-	retries        int    // rclone 底层重试次数
-	bandwidthLimit string // rclone 带宽限制
+	retries        int           // rclone 底层重试次数
+	bandwidthLimit string        // rclone 带宽限制（全局默认，节点配置可覆盖）
+	metrics        *metrics.Metrics
+}
+
+// SetMetrics 注入 Prometheus 采集器。nil 时所有埋点退化为 no-op。
+func (s *BackupExecutionService) SetMetrics(m *metrics.Metrics) {
+	s.metrics = m
 }
 
 // ReplicationTrigger 抽象备份成功后的副本派发（实现者：ReplicationService）。
@@ -407,6 +414,22 @@ func (s *BackupExecutionService) shouldNotify(ctx context.Context, task *model.B
 	return true
 }
 
+// effectiveBandwidth 返回当前上下文应用的带宽限速字符串。
+// 优先级：Node.BandwidthLimit（非空） > 全局 s.bandwidthLimit。
+func (s *BackupExecutionService) effectiveBandwidth(ctx context.Context, nodeID uint) string {
+	if nodeID == 0 || s.nodeRepo == nil {
+		return s.bandwidthLimit
+	}
+	node, err := s.nodeRepo.FindByID(ctx, nodeID)
+	if err != nil || node == nil {
+		return s.bandwidthLimit
+	}
+	if strings.TrimSpace(node.BandwidthLimit) != "" {
+		return node.BandwidthLimit
+	}
+	return s.bandwidthLimit
+}
+
 // acquireNodeSemaphore 返回节点级并发通道。懒初始化：第一次为某节点排队时创建。
 // 如果节点未配置 MaxConcurrent 或 nodeRepo 未注入，返回 nil（调用方走全局 semaphore）。
 // 节点容量仅在首次创建时采用，后续变更需重启服务才生效（避免运行时 resize 通道的复杂度）。
@@ -456,6 +479,10 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	s.semaphore <- struct{}{}
 	defer func() { <-s.semaphore }()
 
+	// Prometheus: running gauge + 完成时 observe 耗时/字节/状态
+	s.metrics.IncTaskRunning()
+	defer s.metrics.DecTaskRunning()
+
 	logger := backup.NewExecutionLogger(recordID, s.logHub)
 	status := "failed"
 	errMessage := ""
@@ -468,6 +495,8 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 		if finalizeErr := s.finalizeRecord(ctx, task, recordID, startedAt, status, errMessage, logger.String(), fileName, fileSize, checksum, storagePath); finalizeErr != nil {
 			logger.Errorf("写回备份记录失败：%v", finalizeErr)
 		}
+		// 采集任务执行结果到 Prometheus（耗时 + 产出字节 + 状态计数）
+		s.metrics.ObserveTaskRun(task.Type, status, time.Since(startedAt).Seconds(), fileSize)
 		// 写入多目标上传结果
 		if len(uploadResults) > 0 {
 			if resultsJSON, marshalErr := json.Marshal(uploadResults); marshalErr == nil {
@@ -559,7 +588,8 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 			if findErr == nil && target != nil {
 				targetName = target.Name
 			}
-			provider, resolveErr := s.resolveProvider(ctx, targetID)
+			// 节点级带宽覆盖：若 task 绑定节点并配置了 BandwidthLimit，覆盖全局限速
+			provider, resolveErr := s.resolveProviderForNode(ctx, targetID, task.NodeID)
 			if resolveErr != nil {
 				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: resolveErr.Error()}
 				logger.Warnf("存储目标 %s 创建客户端失败：%v", targetName, resolveErr)
@@ -742,10 +772,17 @@ func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model
 }
 
 func (s *BackupExecutionService) resolveProvider(ctx context.Context, targetID uint) (storage.StorageProvider, error) {
-	// 注入 rclone 传输配置（重试、带宽限制）
+	return s.resolveProviderForNode(ctx, targetID, 0)
+}
+
+// resolveProviderForNode 根据节点的 BandwidthLimit 覆盖全局默认。
+// nodeID=0 或节点未配置时退化为全局默认。
+// 仅在 Master 本地执行生效；Agent 会收到自身 Node 配置，并在独立 runtime 中应用。
+func (s *BackupExecutionService) resolveProviderForNode(ctx context.Context, targetID uint, nodeID uint) (storage.StorageProvider, error) {
+	// 注入 rclone 传输配置（重试、节点级带宽覆盖全局）
 	ctx = rclone.ConfiguredContext(ctx, rclone.TransferConfig{
 		LowLevelRetries: s.retries,
-		BandwidthLimit:  s.bandwidthLimit,
+		BandwidthLimit:  s.effectiveBandwidth(ctx, nodeID),
 	})
 	target, err := s.targets.FindByID(ctx, targetID)
 	if err != nil {

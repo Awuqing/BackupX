@@ -10,6 +10,7 @@ import (
 
 	"backupx/server/internal/apperror"
 	"backupx/server/internal/backup"
+	"backupx/server/internal/metrics"
 	"backupx/server/internal/model"
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage"
@@ -42,6 +43,12 @@ type VerificationService struct {
 	semaphore       chan struct{}
 	async           func(func())
 	now             func() time.Time
+	metrics         *metrics.Metrics
+}
+
+// SetMetrics 注入 Prometheus 采集器。
+func (s *VerificationService) SetMetrics(m *metrics.Metrics) {
+	s.metrics = m
 }
 
 // VerificationNotifier 给用户推送验证完成/失败通知。
@@ -413,6 +420,7 @@ func (s *VerificationService) finalize(ctx context.Context, verID uint, status, 
 	}
 	record.DurationSeconds = int(completedAt.Sub(record.StartedAt).Seconds())
 	record.CompletedAt = &completedAt
+	s.metrics.ObserveVerify(status)
 	return s.verifications.Update(ctx, record)
 }
 

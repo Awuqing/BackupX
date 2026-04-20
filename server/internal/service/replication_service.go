@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"backupx/server/internal/apperror"
+	"backupx/server/internal/metrics"
 	"backupx/server/internal/model"
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage"
@@ -37,6 +38,12 @@ type ReplicationService struct {
 	semaphore       chan struct{}
 	async           func(func())
 	now             func() time.Time
+	metrics         *metrics.Metrics
+}
+
+// SetMetrics 注入 Prometheus 采集器。
+func (s *ReplicationService) SetMetrics(m *metrics.Metrics) {
+	s.metrics = m
 }
 
 func NewReplicationService(
@@ -193,6 +200,7 @@ func (s *ReplicationService) executeReplication(ctx context.Context, repID uint)
 		rep.DurationSeconds = int(completedAt.Sub(rep.StartedAt).Seconds())
 		rep.CompletedAt = &completedAt
 		_ = s.replications.Update(ctx, rep)
+		s.metrics.ObserveReplication(status)
 		if status == model.ReplicationStatusFailed {
 			s.dispatchFailed(ctx, rep, errMessage)
 		}

@@ -11,6 +11,7 @@ import (
 
 	"backupx/server/internal/apperror"
 	"backupx/server/internal/backup"
+	"backupx/server/internal/metrics"
 	"backupx/server/internal/model"
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage"
@@ -41,6 +42,12 @@ type RestoreService struct {
 	semaphore       chan struct{}
 	async           func(func())
 	now             func() time.Time
+	metrics         *metrics.Metrics
+}
+
+// SetMetrics 注入 Prometheus 采集器。
+func (s *RestoreService) SetMetrics(m *metrics.Metrics) {
+	s.metrics = m
 }
 
 // NewRestoreService 构造恢复服务。maxConcurrent 控制本地并发恢复数。
@@ -432,6 +439,7 @@ func (s *RestoreService) finalizeWithLog(ctx context.Context, restoreID uint, st
 	}
 	record.DurationSeconds = int(completedAt.Sub(record.StartedAt).Seconds())
 	record.CompletedAt = &completedAt
+	s.metrics.ObserveRestore(status)
 	return s.restores.Update(ctx, record)
 }
 

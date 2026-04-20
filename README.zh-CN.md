@@ -46,6 +46,9 @@
 | **多节点集群** | Master-Agent 模式，基于 HTTP 长轮询跨多台服务器管理备份。Agent 本地执行任务并直接上传到存储，无需反向连通性 |
 | **安全** | JWT + bcrypt + AES-256-GCM 加密配置 + 可选备份文件加密 + 完整审计日志 |
 | **通知** | 邮件 / Webhook / Telegram，备份成功或失败时自动推送 |
+| **可观测性** | Prometheus `/metrics` 端点 + `/health` + `/ready` 探针 + SLA 违约监控 |
+| **审计外输** | HMAC-SHA256 签名 Webhook，对接 SIEM / WORM 存储满足 SOC2 / GDPR 合规 |
+| **流控** | 节点级带宽限速 + 节点级并发控制，大小节点分别配置，避免小内存 Agent 被挤爆 |
 | **部署** | 单二进制 + 内嵌 SQLite，Docker 一键启动，零外部依赖 |
 
 ## 快速开始
