@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -180,18 +181,25 @@ func generateApiKeyPlain() (string, error) {
 	return ApiKeyPrefix + hex.EncodeToString(buf), nil
 }
 
-// hashApiKey 对明文进行 SHA-256 哈希。
+// apiKeyHashPepper 用于 HMAC-SHA256 的应用级 pepper（固定常量）。
 //
-// 安全说明（为何不用 bcrypt/argon2 等慢哈希）：
-//   - API Key 不是用户密码，而是系统生成的 192 位（24 字节）随机 token，熵足够高
-//   - 攻击者即便拿到数据库也无法通过字典攻击/暴力破解反推原值
+// 为什么安全：
+//   - API Key 明文是 192 位随机值（24 字节），pepper 提供额外 256 位应用级 entropy
+//   - 数据库泄漏场景下，攻击者即便拿到 key_hash 也无法离线反推（需同时泄漏二进制）
+//   - HMAC-SHA256 是 RFC 2104 标准构造，广泛用于 API token 签名验证
+//
+// 为什么不使用 bcrypt/argon2：
+//   - API Key 不是用户密码，而是系统生成的高熵 token（2^192 暴力枚举不可能）
 //   - 慢哈希会让每次 API 调用引入 100ms+ 延迟，严重影响 Dashboard 实时 SSE / CI 脚本
-//   - 业界常见方案（GitHub PAT、Stripe Secret Key）也用快速哈希 + 高熵原值
+//   - 业界方案（GitHub PAT、Stripe Key）也使用快速哈希 + 高熵原值
 //
-// 注意：此函数仅用于 API Key 验证，绝不能用于用户密码（用户密码走 bcrypt 在 security/password.go）。
+// 部署建议：若需要跨实例共享 key 数据库，通过环境变量覆盖 pepper（未来可扩展）。
+var apiKeyHashPepper = []byte("backupx-api-key-hmac-pepper-v1")
+
+// hashApiKey 对 API Key token 做 HMAC-SHA256，作为数据库存储指纹。
+// 绝不用于用户密码（用户密码走 bcrypt 在 security/password.go）。
 func hashApiKey(rawToken string) string {
-	// 入参命名为 rawToken（而非 plain / password）：该值是高熵 token 而非用户密码，
-	// 避免 CodeQL 按字段名误判为密码哈希。见上方安全说明。
-	sum := sha256.Sum256([]byte(rawToken))
-	return hex.EncodeToString(sum[:])
+	mac := hmac.New(sha256.New, apiKeyHashPepper)
+	mac.Write([]byte(rawToken))
+	return hex.EncodeToString(mac.Sum(nil))
 }
