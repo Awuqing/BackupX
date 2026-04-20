@@ -22,17 +22,19 @@ import (
 
 // NodeSummary is the API response for node listings.
 type NodeSummary struct {
-	ID           uint      `json:"id"`
-	Name         string    `json:"name"`
-	Hostname     string    `json:"hostname"`
-	IPAddress    string    `json:"ipAddress"`
-	Status       string    `json:"status"`
-	IsLocal      bool      `json:"isLocal"`
-	OS           string    `json:"os"`
-	Arch         string    `json:"arch"`
-	AgentVersion string    `json:"agentVersion"`
-	LastSeen     time.Time `json:"lastSeen"`
-	CreatedAt    time.Time `json:"createdAt"`
+	ID             uint      `json:"id"`
+	Name           string    `json:"name"`
+	Hostname       string    `json:"hostname"`
+	IPAddress      string    `json:"ipAddress"`
+	Status         string    `json:"status"`
+	IsLocal        bool      `json:"isLocal"`
+	OS             string    `json:"os"`
+	Arch           string    `json:"arch"`
+	AgentVersion   string    `json:"agentVersion"`
+	LastSeen       time.Time `json:"lastSeen"`
+	MaxConcurrent  int       `json:"maxConcurrent"`
+	BandwidthLimit string    `json:"bandwidthLimit"`
+	CreatedAt      time.Time `json:"createdAt"`
 }
 
 // NodeCreateInput is the input for creating a new remote node.
@@ -42,7 +44,9 @@ type NodeCreateInput struct {
 
 // NodeUpdateInput 是编辑节点的输入。
 type NodeUpdateInput struct {
-	Name string `json:"name" binding:"required"`
+	Name           string `json:"name" binding:"required"`
+	MaxConcurrent  int    `json:"maxConcurrent"`
+	BandwidthLimit string `json:"bandwidthLimit" binding:"max=32"`
 }
 
 // NodeService manages the cluster nodes.
@@ -116,17 +120,19 @@ func (s *NodeService) List(ctx context.Context) ([]NodeSummary, error) {
 	result := make([]NodeSummary, len(nodes))
 	for i, n := range nodes {
 		result[i] = NodeSummary{
-			ID:           n.ID,
-			Name:         n.Name,
-			Hostname:     n.Hostname,
-			IPAddress:    n.IPAddress,
-			Status:       n.Status,
-			IsLocal:      n.IsLocal,
-			OS:           n.OS,
-			Arch:         n.Arch,
-			AgentVersion: n.AgentVer,
-			LastSeen:     n.LastSeen,
-			CreatedAt:    n.CreatedAt,
+			ID:             n.ID,
+			Name:           n.Name,
+			Hostname:       n.Hostname,
+			IPAddress:      n.IPAddress,
+			Status:         n.Status,
+			IsLocal:        n.IsLocal,
+			OS:             n.OS,
+			Arch:           n.Arch,
+			AgentVersion:   n.AgentVer,
+			LastSeen:       n.LastSeen,
+			MaxConcurrent:  n.MaxConcurrent,
+			BandwidthLimit: n.BandwidthLimit,
+			CreatedAt:      n.CreatedAt,
 		}
 	}
 	return result, nil
@@ -141,17 +147,19 @@ func (s *NodeService) Get(ctx context.Context, id uint) (*NodeSummary, error) {
 		return nil, apperror.New(http.StatusNotFound, "NODE_NOT_FOUND", "节点不存在", nil)
 	}
 	return &NodeSummary{
-		ID:           node.ID,
-		Name:         node.Name,
-		Hostname:     node.Hostname,
-		IPAddress:    node.IPAddress,
-		Status:       node.Status,
-		IsLocal:      node.IsLocal,
-		OS:           node.OS,
-		Arch:         node.Arch,
-		AgentVersion: node.AgentVer,
-		LastSeen:     node.LastSeen,
-		CreatedAt:    node.CreatedAt,
+		ID:             node.ID,
+		Name:           node.Name,
+		Hostname:       node.Hostname,
+		IPAddress:      node.IPAddress,
+		Status:         node.Status,
+		IsLocal:        node.IsLocal,
+		OS:             node.OS,
+		Arch:           node.Arch,
+		AgentVersion:   node.AgentVer,
+		LastSeen:       node.LastSeen,
+		MaxConcurrent:  node.MaxConcurrent,
+		BandwidthLimit: node.BandwidthLimit,
+		CreatedAt:      node.CreatedAt,
 	}, nil
 }
 
@@ -307,6 +315,11 @@ func (s *NodeService) Update(ctx context.Context, id uint, input NodeUpdateInput
 		return nil, apperror.New(http.StatusNotFound, "NODE_NOT_FOUND", "节点不存在", nil)
 	}
 	node.Name = strings.TrimSpace(input.Name)
+	if input.MaxConcurrent < 0 {
+		return nil, apperror.BadRequest("NODE_INVALID", "并发上限不能为负数", nil)
+	}
+	node.MaxConcurrent = input.MaxConcurrent
+	node.BandwidthLimit = strings.TrimSpace(input.BandwidthLimit)
 	if err := s.repo.Update(ctx, node); err != nil {
 		return nil, err
 	}

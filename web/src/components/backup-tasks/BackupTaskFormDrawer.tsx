@@ -5,6 +5,7 @@ import { CronInput } from '../CronInput'
 import type { StorageTargetDetail, StorageTargetPayload, StorageTargetSummary } from '../../types/storage-targets'
 import type { StorageConnectionTestResult } from '../../types/storage-targets'
 import type { BackupTaskDetail, BackupTaskPayload, BackupTaskType } from '../../types/backup-tasks'
+import type { NodeSummary } from '../../types/nodes'
 import { DatabasePicker } from '../common/DatabasePicker'
 import { DirectoryPicker } from '../common/DirectoryPicker'
 import { StorageTargetFormDrawer } from '../storage-targets/StorageTargetFormDrawer'
@@ -28,6 +29,9 @@ interface BackupTaskFormDrawerProps {
   initialValue: BackupTaskDetail | null
   storageTargets: StorageTargetSummary[]
   localNodeId?: number
+  nodes?: NodeSummary[]
+  /** 系统内全部任务，用于上游依赖多选 */
+  allTasks?: { id: number; name: string }[]
   onCancel: () => void
   onSubmit: (value: BackupTaskPayload, taskId?: number) => Promise<void>
   onCreateStorageTarget?: (value: StorageTargetPayload) => Promise<StorageTargetDetail>
@@ -61,10 +65,18 @@ function createEmptyDraft(storageTargets?: StorageTargetSummary[]): BackupTaskPa
     encrypt: false,
     maxBackups: 10,
     extraConfig: undefined,
+    verifyEnabled: false,
+    verifyCronExpr: '',
+    verifyMode: 'quick',
+    slaHoursRpo: 0,
+    alertOnConsecutiveFails: 1,
+    replicationTargetIds: [],
+    maintenanceWindows: '',
+    dependsOnTaskIds: [],
   }
 }
 
-export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTargets, localNodeId, onCancel, onSubmit, onCreateStorageTarget, onTestStorageTarget, onGoogleDriveAuth, onStorageTargetCreated }: BackupTaskFormDrawerProps) {
+export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTargets, localNodeId, nodes, allTasks, onCancel, onSubmit, onCreateStorageTarget, onTestStorageTarget, onGoogleDriveAuth, onStorageTargetCreated }: BackupTaskFormDrawerProps) {
   const [draft, setDraft] = useState<BackupTaskPayload>(createEmptyDraft())
   const [excludePatternsText, setExcludePatternsText] = useState('')
   const [currentStep, setCurrentStep] = useState(0)
@@ -115,12 +127,20 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       storageTargetId: editTargetIds[0] ?? 0,
       storageTargetIds: editTargetIds,
       nodeId: (initialValue as any).nodeId ?? 0,
-      tags: (initialValue as any).tags ?? '',
+      tags: initialValue.tags ?? '',
       retentionDays: initialValue.retentionDays,
       compression: initialValue.compression,
       encrypt: initialValue.encrypt,
       maxBackups: initialValue.maxBackups,
       extraConfig: initialValue.extraConfig,
+      verifyEnabled: initialValue.verifyEnabled ?? false,
+      verifyCronExpr: initialValue.verifyCronExpr ?? '',
+      verifyMode: (initialValue.verifyMode ?? 'quick') as 'quick' | 'deep',
+      slaHoursRpo: initialValue.slaHoursRpo ?? 0,
+      alertOnConsecutiveFails: initialValue.alertOnConsecutiveFails ?? 1,
+      replicationTargetIds: initialValue.replicationTargetIds ?? [],
+      maintenanceWindows: initialValue.maintenanceWindows ?? '',
+      dependsOnTaskIds: initialValue.dependsOnTaskIds ?? [],
     })
     setExcludePatternsText(initialValue.excludePatterns.join('\n'))
     setCurrentStep(0)
@@ -141,6 +161,21 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
     },
     [storageTargets],
   )
+
+  // 执行节点选项：本地节点显示 "本机 (local)"，远程节点带状态后缀
+  const nodeOptions = useMemo(() => {
+    const list = nodes ?? []
+    return [
+      { label: '本机 (Master)', value: 0 },
+      ...list
+        .filter((item) => !item.isLocal)
+        .map((item) => ({
+          label: `${item.name}${item.status === 'online' ? '' : '（离线）'}`,
+          value: item.id,
+          disabled: item.status !== 'online',
+        })),
+    ]
+  }, [nodes])
 
   function updateDraft(patch: Partial<BackupTaskPayload>) {
     setDraft((current) => ({ ...current, ...patch }))
@@ -258,6 +293,17 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
           <Select value={draft.type} options={backupTaskTypeOptions as unknown as { label: string; value: string }[]} onChange={(value) => updateTaskType(value as BackupTaskType)} />
         </div>
         <div>
+          <Typography.Text>执行节点</Typography.Text>
+          <Select
+            value={draft.nodeId ?? 0}
+            options={nodeOptions}
+            onChange={(value) => updateDraft({ nodeId: Number(value ?? 0) })}
+          />
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+            任务在所选节点上执行备份与恢复；源路径/数据库以该节点视角解析。远程节点需先在"节点管理"中安装 Agent。
+          </Typography.Paragraph>
+        </div>
+        <div>
           <Typography.Text>Cron 表达式</Typography.Text>
           <CronInput value={draft.cronExpr} onChange={(value) => updateDraft({ cronExpr: value })} />
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
@@ -312,7 +358,7 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
                         value={p}
                         placeholder={`源路径 ${index + 1}，例如：/var/www/html`}
                         mode="directory"
-                        nodeId={localNodeId}
+                        nodeId={draft.nodeId && draft.nodeId > 0 ? draft.nodeId : localNodeId}
                         onChange={(value) => updateSourcePath(index, value)}
                       />
                     </Grid.Col>
@@ -351,7 +397,7 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
               value={draft.dbPath}
               placeholder="例如：/data/app.db"
               mode="file"
-              nodeId={localNodeId}
+              nodeId={draft.nodeId && draft.nodeId > 0 ? draft.nodeId : localNodeId}
               onChange={(value) => updateDraft({ dbPath: value })}
             />
           </div>
@@ -384,6 +430,7 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
                   dbPort={draft.dbPort}
                   dbUser={draft.dbUser}
                   dbPassword={draft.dbPassword}
+                  nodeId={draft.nodeId}
                   value={draft.dbName}
                   onChange={(value) => updateDraft({ dbName: value })}
                 />
@@ -523,10 +570,130 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
           <Typography.Text>最大保留份数</Typography.Text>
           <InputNumber style={{ width: '100%' }} value={draft.maxBackups} min={0} onChange={(value) => updateDraft({ maxBackups: Number(value ?? 0) })} />
         </div>
+        <div>
+          <Typography.Text>标签（逗号分隔，用于分组与筛选）</Typography.Text>
+          <Input
+            value={draft.tags}
+            placeholder="例如：prod,mysql,critical"
+            onChange={(value) => updateDraft({ tags: value })}
+          />
+        </div>
         <Space align="center" size="medium">
           <Typography.Text>备份后加密</Typography.Text>
           <Switch checked={draft.encrypt} onChange={(checked) => updateDraft({ encrypt: checked })} />
         </Space>
+
+        <Divider style={{ margin: '8px 0' }} orientation="left">
+          <Typography.Text type="secondary">SLA 与告警（企业合规）</Typography.Text>
+        </Divider>
+        <div>
+          <Typography.Text>RPO 目标（小时，0=不监控）</Typography.Text>
+          <InputNumber
+            style={{ width: '100%' }}
+            value={draft.slaHoursRpo}
+            min={0}
+            onChange={(value) => updateDraft({ slaHoursRpo: Number(value ?? 0) })}
+          />
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+            距最近一次成功备份超过此小时数视为 SLA 违约，Dashboard 会高亮。
+          </Typography.Paragraph>
+        </div>
+        <div>
+          <Typography.Text>连续失败几次再告警</Typography.Text>
+          <InputNumber
+            style={{ width: '100%' }}
+            value={draft.alertOnConsecutiveFails}
+            min={1}
+            max={20}
+            onChange={(value) => updateDraft({ alertOnConsecutiveFails: Number(value ?? 1) })}
+          />
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+            避免偶发失败的告警噪音。设为 1 表示每次失败都告警。
+          </Typography.Paragraph>
+        </div>
+
+        <Divider style={{ margin: '8px 0' }} orientation="left">
+          <Typography.Text type="secondary">维护窗口（避开业务高峰）</Typography.Text>
+        </Divider>
+        <div>
+          <Typography.Text>允许执行的时段</Typography.Text>
+          <Input
+            value={draft.maintenanceWindows}
+            placeholder="例如：time=22:00-06:00  或  days=sat|sun,time=00:00-23:59"
+            onChange={(v) => updateDraft({ maintenanceWindows: v })}
+          />
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+            留空 = 无限制。非窗口时间调度会自动跳过，手动执行会被拒绝。多段用 <Typography.Text code>;</Typography.Text> 分隔。
+          </Typography.Paragraph>
+        </div>
+
+        <Divider style={{ margin: '8px 0' }} orientation="left">
+          <Typography.Text type="secondary">任务依赖（工作流）</Typography.Text>
+        </Divider>
+        <div>
+          <Typography.Text>上游任务（完成后触发本任务）</Typography.Text>
+          <Select
+            mode="multiple"
+            style={{ width: '100%' }}
+            value={draft.dependsOnTaskIds}
+            placeholder="选择上游任务（留空 = 独立任务）"
+            options={(allTasks ?? [])
+              .filter((t) => t.id !== initialValue?.id)
+              .map((t) => ({ label: t.name, value: t.id }))}
+            onChange={(values: number[]) => updateDraft({ dependsOnTaskIds: values })}
+            allowClear
+          />
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+            上游任务全部成功后自动触发本任务。例如："DB 备份" → "归档打包"。系统会自动检测循环依赖。
+          </Typography.Paragraph>
+        </div>
+
+        <Divider style={{ margin: '8px 0' }} orientation="left">
+          <Typography.Text type="secondary">备份复制（3-2-1 规则）</Typography.Text>
+        </Divider>
+        <div>
+          <Typography.Text>副本目标存储（与主存储不同）</Typography.Text>
+          <Select
+            mode="multiple"
+            style={{ width: '100%' }}
+            value={draft.replicationTargetIds}
+            placeholder="选择副本目标（不选 = 不启用复制）"
+            options={storageTargetOptions.filter((opt) => !(draft.storageTargetIds ?? []).includes(opt.value as number))}
+            onChange={(values: number[]) => updateDraft({ replicationTargetIds: values })}
+          />
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+            备份成功后自动镜像到副本存储。满足 3-2-1 规则：至少 2 份副本、至少 1 份异地。建议选不同 provider 的目标。
+          </Typography.Paragraph>
+        </div>
+
+        <Divider style={{ margin: '8px 0' }} orientation="left">
+          <Typography.Text type="secondary">验证演练（可恢复性保证）</Typography.Text>
+        </Divider>
+        <Space align="center" size="medium">
+          <Typography.Text>启用定时验证</Typography.Text>
+          <Switch checked={draft.verifyEnabled} onChange={(checked) => updateDraft({ verifyEnabled: checked })} />
+        </Space>
+        {draft.verifyEnabled && (
+          <>
+            <div>
+              <Typography.Text>验证 Cron 表达式</Typography.Text>
+              <CronInput value={draft.verifyCronExpr} onChange={(value) => updateDraft({ verifyCronExpr: value })} />
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+                定期从最新成功备份自动校验可恢复性，满足企业合规（SOC2/ISO27001）。
+              </Typography.Paragraph>
+            </div>
+            <div>
+              <Typography.Text>验证模式</Typography.Text>
+              <Select
+                value={draft.verifyMode}
+                options={[
+                  { label: 'Quick（快速格式与完整性校验）', value: 'quick' },
+                ]}
+                onChange={(value) => updateDraft({ verifyMode: value as 'quick' | 'deep' })}
+              />
+            </div>
+          </>
+        )}
       </Space>
     )
   }

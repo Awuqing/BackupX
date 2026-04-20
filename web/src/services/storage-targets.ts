@@ -67,11 +67,19 @@ export async function completeGoogleDriveAuth(queryString: string) {
   return unwrap(response.data)
 }
 
+export interface StorageDiskUsage {
+  total?: number
+  used?: number
+  free?: number
+  objects?: number
+}
+
 export interface StorageTargetUsage {
   targetId: number
   targetName: string
   recordCount: number
   totalSize: number
+  diskUsage?: StorageDiskUsage
 }
 
 export async function toggleStorageTargetStar(id: number) {

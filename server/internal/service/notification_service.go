@@ -16,22 +16,27 @@ import (
 )
 
 type NotificationUpsertInput struct {
-	Name      string         `json:"name" binding:"required,min=1,max=100"`
-	Type      string         `json:"type" binding:"required,oneof=email webhook telegram"`
-	Enabled   bool           `json:"enabled"`
-	OnSuccess bool           `json:"onSuccess"`
-	OnFailure bool           `json:"onFailure"`
-	Config    map[string]any `json:"config" binding:"required"`
+	Name       string         `json:"name" binding:"required,min=1,max=100"`
+	Type       string         `json:"type" binding:"required,oneof=email webhook telegram"`
+	Enabled    bool           `json:"enabled"`
+	OnSuccess  bool           `json:"onSuccess"`
+	OnFailure  bool           `json:"onFailure"`
+	// EventTypes 订阅的扩展事件列表。与 OnSuccess/OnFailure 并存：
+	//   - 两者均空时，订阅"备份成功/失败"对应原有语义（兼容）。
+	//   - EventTypes 显式指定时优先按清单匹配。
+	EventTypes []string       `json:"eventTypes"`
+	Config     map[string]any `json:"config" binding:"required"`
 }
 
 type NotificationSummary struct {
-	ID        uint      `json:"id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Enabled   bool      `json:"enabled"`
-	OnSuccess bool      `json:"onSuccess"`
-	OnFailure bool      `json:"onFailure"`
-	UpdatedAt time.Time `json:"updatedAt"`
+	ID         uint      `json:"id"`
+	Name       string    `json:"name"`
+	Type       string    `json:"type"`
+	Enabled    bool      `json:"enabled"`
+	OnSuccess  bool      `json:"onSuccess"`
+	OnFailure  bool      `json:"onFailure"`
+	EventTypes []string  `json:"eventTypes"`
+	UpdatedAt  time.Time `json:"updatedAt"`
 }
 
 type NotificationDetail struct {
@@ -44,6 +49,13 @@ type NotificationService struct {
 	notifications repository.NotificationRepository
 	registry      *notify.Registry
 	cipher        *codec.ConfigCipher
+	// broadcaster 可选：用于同步把事件推送给 SSE 订阅者（Dashboard 实时刷新）
+	broadcaster *EventBroadcaster
+}
+
+// SetBroadcaster 注入事件广播器，每次 DispatchEvent 同时走 SSE 实时通道。
+func (s *NotificationService) SetBroadcaster(b *EventBroadcaster) {
+	s.broadcaster = b
 }
 
 func NewNotificationService(notifications repository.NotificationRepository, registry *notify.Registry, cipher *codec.ConfigCipher) *NotificationService {
@@ -156,11 +168,88 @@ func (s *NotificationService) TestSaved(ctx context.Context, id uint) error {
 
 func (s *NotificationService) NotifyBackupResult(ctx context.Context, event BackupExecutionNotification) error {
 	success := event.Error == nil && event.Record != nil && event.Record.Status == "success"
-	items, err := s.notifications.ListEnabledForEvent(ctx, success)
+	eventType := model.NotificationEventBackupFailed
+	if success {
+		eventType = model.NotificationEventBackupSuccess
+	}
+	items, err := s.collectSubscribers(ctx, eventType, success)
 	if err != nil {
 		return err
 	}
 	message := buildNotificationMessage(event)
+	message.Fields["eventType"] = eventType
+	return s.deliver(ctx, items, message)
+}
+
+// DispatchEvent 面向任意企业级事件的通用分发入口。
+//   - title / body / fields 构造通知内容
+//   - eventType 对应 model.NotificationEvent* 常量，用于订阅匹配
+//
+// 订阅匹配规则：
+//   1) notification.EventTypes 非空：必须包含 eventType
+//   2) notification.EventTypes 为空：沿用 OnSuccess/OnFailure 开关（仅 backup_* 事件）
+func (s *NotificationService) DispatchEvent(ctx context.Context, eventType string, title string, body string, fields map[string]any) error {
+	// 同步广播到 SSE 订阅者（前端 Dashboard 实时推送）。
+	// 非阻塞：即便广播器未注入或订阅者已满也不影响 Notification 持久渠道。
+	if s.broadcaster != nil {
+		_ = s.broadcaster.Publish(ctx, eventType, title, body, fields)
+	}
+	// 将 fallback 布尔用于旧语义场景（backup_success / backup_failed）。
+	fallbackSuccess := eventType == model.NotificationEventBackupSuccess
+	items, err := s.collectSubscribers(ctx, eventType, fallbackSuccess)
+	if err != nil {
+		return err
+	}
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["eventType"] = eventType
+	fields["timestamp"] = time.Now().UTC().Format(time.RFC3339)
+	message := notify.Message{Title: title, Body: body, Fields: fields}
+	return s.deliver(ctx, items, message)
+}
+
+// collectSubscribers 按事件类型收集启用的订阅者。
+// 列出启用通知后按事件类型再过滤（避免引入新 repository 方法）。
+func (s *NotificationService) collectSubscribers(ctx context.Context, eventType string, fallbackSuccess bool) ([]model.Notification, error) {
+	all, err := s.notifications.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	matched := make([]model.Notification, 0, len(all))
+	for _, item := range all {
+		if !item.Enabled {
+			continue
+		}
+		events := decodeEventTypes(item.EventTypes)
+		if len(events) > 0 {
+			if !containsString(events, eventType) {
+				continue
+			}
+		} else {
+			// 旧语义兼容：仅对 backup_success / backup_failed 走 OnSuccess/OnFailure
+			switch eventType {
+			case model.NotificationEventBackupSuccess:
+				if !item.OnSuccess {
+					continue
+				}
+			case model.NotificationEventBackupFailed:
+				if !item.OnFailure {
+					continue
+				}
+			default:
+				// 其他事件类型必须显式订阅才推送
+				continue
+			}
+			// 额外校验 fallbackSuccess 参数，保持历史行为一致
+			_ = fallbackSuccess
+		}
+		matched = append(matched, item)
+	}
+	return matched, nil
+}
+
+func (s *NotificationService) deliver(ctx context.Context, items []model.Notification, message notify.Message) error {
 	var joined error
 	for _, item := range items {
 		configMap := map[string]any{}
@@ -173,6 +262,15 @@ func (s *NotificationService) NotifyBackupResult(ctx context.Context, event Back
 		}
 	}
 	return joined
+}
+
+func containsString(items []string, target string) bool {
+	for _, item := range items {
+		if item == target {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *NotificationService) validateInput(ctx context.Context, currentID uint, input NotificationUpsertInput) error {
@@ -202,8 +300,47 @@ func (s *NotificationService) buildNotification(existing *model.Notification, in
 	if err != nil {
 		return nil, apperror.Internal("NOTIFICATION_ENCRYPT_FAILED", "无法保存通知配置", err)
 	}
-	item := &model.Notification{Name: strings.TrimSpace(input.Name), Type: strings.TrimSpace(input.Type), ConfigCiphertext: ciphertext, Enabled: input.Enabled, OnSuccess: input.OnSuccess, OnFailure: input.OnFailure}
+	item := &model.Notification{
+		Name:             strings.TrimSpace(input.Name),
+		Type:             strings.TrimSpace(input.Type),
+		ConfigCiphertext: ciphertext,
+		Enabled:          input.Enabled,
+		OnSuccess:        input.OnSuccess,
+		OnFailure:        input.OnFailure,
+		EventTypes:       encodeEventTypes(input.EventTypes),
+	}
 	return item, nil
+}
+
+// encodeEventTypes 把事件切片规范化为逗号分隔字符串（去重+trim）。
+func encodeEventTypes(events []string) string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(events))
+	for _, e := range events {
+		trimmed := strings.TrimSpace(e)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		out = append(out, trimmed)
+	}
+	return strings.Join(out, ",")
+}
+
+// decodeEventTypes 解析存储字符串为切片。
+func decodeEventTypes(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func (s *NotificationService) toDetail(item *model.Notification) (*NotificationDetail, error) {
@@ -216,7 +353,16 @@ func (s *NotificationService) toDetail(item *model.Notification) (*NotificationD
 }
 
 func toNotificationSummary(item *model.Notification) NotificationSummary {
-	return NotificationSummary{ID: item.ID, Name: item.Name, Type: item.Type, Enabled: item.Enabled, OnSuccess: item.OnSuccess, OnFailure: item.OnFailure, UpdatedAt: item.UpdatedAt}
+	return NotificationSummary{
+		ID:         item.ID,
+		Name:       item.Name,
+		Type:       item.Type,
+		Enabled:    item.Enabled,
+		OnSuccess:  item.OnSuccess,
+		OnFailure:  item.OnFailure,
+		EventTypes: decodeEventTypes(item.EventTypes),
+		UpdatedAt:  item.UpdatedAt,
+	}
 }
 
 func buildNotificationMessage(event BackupExecutionNotification) notify.Message {

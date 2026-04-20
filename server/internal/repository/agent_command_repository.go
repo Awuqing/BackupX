@@ -18,7 +18,14 @@ type AgentCommandRepository interface {
 	ClaimPending(ctx context.Context, nodeID uint) (*model.AgentCommand, error)
 	Update(ctx context.Context, cmd *model.AgentCommand) error
 	// MarkStaleTimeout 把 dispatched 状态但超时未完成的命令标记为 timeout。
+	// 返回被标记的行数。不返回具体命令（供背景监控简单调用）。
 	MarkStaleTimeout(ctx context.Context, threshold time.Time) (int64, error)
+	// ListStaleDispatched 列出 dispatched 但已超时、尚未被标记的命令。
+	// 调用方需要把它们逐一标记 timeout 并联动关联记录状态。
+	ListStaleDispatched(ctx context.Context, threshold time.Time) ([]model.AgentCommand, error)
+	// ListPendingByNode 列出某节点下的所有 pending/dispatched 命令。
+	// 用于删除节点或节点离线时的清理。
+	ListPendingByNode(ctx context.Context, nodeID uint) ([]model.AgentCommand, error)
 }
 
 type GormAgentCommandRepository struct {
@@ -98,4 +105,31 @@ func (r *GormAgentCommandRepository) MarkStaleTimeout(ctx context.Context, thres
 		return 0, result.Error
 	}
 	return result.RowsAffected, nil
+}
+
+// ListStaleDispatched 列出 dispatched 但 dispatched_at 早于 threshold 的命令。
+func (r *GormAgentCommandRepository) ListStaleDispatched(ctx context.Context, threshold time.Time) ([]model.AgentCommand, error) {
+	var items []model.AgentCommand
+	if err := r.db.WithContext(ctx).
+		Where("status = ? AND dispatched_at < ?", model.AgentCommandStatusDispatched, threshold).
+		Order("id asc").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+// ListPendingByNode 列出某节点下所有待执行（pending 或 dispatched）命令。
+func (r *GormAgentCommandRepository) ListPendingByNode(ctx context.Context, nodeID uint) ([]model.AgentCommand, error) {
+	var items []model.AgentCommand
+	if err := r.db.WithContext(ctx).
+		Where("node_id = ? AND status IN ?", nodeID, []string{
+			model.AgentCommandStatusPending,
+			model.AgentCommandStatusDispatched,
+		}).
+		Order("id asc").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	return items, nil
 }

@@ -20,6 +20,19 @@ const (
 	// Payload: {"path": "/var/log"}
 	// Result:  {"entries": [{"name":"...", "path":"...", "isDir":true, "size":0}]}
 	AgentCommandTypeListDir = "list_dir"
+	// AgentCommandTypeRestoreRecord 在 Agent 节点上恢复指定备份记录
+	// Payload: {"restoreRecordId": 789}
+	// Agent 拉 /api/agent/restores/:id/spec 获取完整规格后执行恢复
+	AgentCommandTypeRestoreRecord = "restore_record"
+	// AgentCommandTypeDiscoverDB 在 Agent 节点上发现数据库列表
+	// Payload: {"type": "mysql", "host": "...", "port": 3306, "user": "...", "password": "..."}
+	// Result:  {"databases": ["db1", "db2"]}
+	AgentCommandTypeDiscoverDB = "discover_db"
+	// AgentCommandTypeDeleteStorageObject 在 Agent 节点上删除指定存储对象
+	// Payload: {"targetType": "local_disk", "targetConfig": {...}, "storagePath": "tasks/1/x.tar.gz"}
+	// 用于跨节点 local_disk 场景：Master 删记录时请求 Agent 清理其本地备份文件。
+	// Agent 需具备对应存储 provider 的执行能力。best-effort：失败仅影响 Agent 侧文件残留。
+	AgentCommandTypeDeleteStorageObject = "delete_storage_object"
 )
 
 // AgentCommand 代表 Master 发给某个 Agent 节点的待执行命令。

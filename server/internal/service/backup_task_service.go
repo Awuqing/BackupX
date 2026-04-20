@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"backupx/server/internal/apperror"
+	"backupx/server/internal/backup"
 	"backupx/server/internal/model"
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage"
@@ -33,12 +35,27 @@ type BackupTaskUpsertInput struct {
 	DBPath           string   `json:"dbPath" binding:"max=500"`
 	StorageTargetID  uint     `json:"storageTargetId"`                       // deprecated: 向后兼容
 	StorageTargetIDs []uint   `json:"storageTargetIds"`                      // 新增：多存储目标
+	NodeID           uint     `json:"nodeId"`                                // 执行节点（0 = 本机 Master）
+	Tags             string   `json:"tags" binding:"max=500"`                // 逗号分隔标签
 	RetentionDays    int      `json:"retentionDays"`
 	Compression      string   `json:"compression" binding:"omitempty,oneof=gzip none"`
 	Encrypt          bool     `json:"encrypt"`
 	MaxBackups       int      `json:"maxBackups"`
 	// ExtraConfig 类型特有扩展配置（如 SAP HANA 的 backupLevel/backupChannels）
 	ExtraConfig map[string]any `json:"extraConfig"`
+	// 验证（恢复演练）配置
+	VerifyEnabled  bool   `json:"verifyEnabled"`
+	VerifyCronExpr string `json:"verifyCronExpr" binding:"max=64"`
+	VerifyMode     string `json:"verifyMode" binding:"omitempty,oneof=quick deep"`
+	// SLA 配置
+	SLAHoursRPO             int `json:"slaHoursRpo"`
+	AlertOnConsecutiveFails int `json:"alertOnConsecutiveFails"`
+	// 备份复制目标存储 ID 列表（3-2-1 规则）
+	ReplicationTargetIDs []uint `json:"replicationTargetIds"`
+	// 维护窗口（CSV，详见 backup/window.go）
+	MaintenanceWindows string `json:"maintenanceWindows" binding:"max=500"`
+	// 依赖的上游任务 ID（上游成功后自动触发本任务）
+	DependsOnTaskIDs []uint `json:"dependsOnTaskIds"`
 }
 
 type BackupTaskToggleInput struct {
@@ -55,12 +72,25 @@ type BackupTaskSummary struct {
 	StorageTargetName  string     `json:"storageTargetName"`            // deprecated: 取第一个
 	StorageTargetIDs   []uint     `json:"storageTargetIds"`
 	StorageTargetNames []string   `json:"storageTargetNames"`
+	NodeID             uint       `json:"nodeId"`
+	NodeName           string     `json:"nodeName,omitempty"`
+	Tags               string     `json:"tags"`
 	RetentionDays      int        `json:"retentionDays"`
 	Compression        string     `json:"compression"`
 	Encrypt            bool       `json:"encrypt"`
 	MaxBackups         int        `json:"maxBackups"`
 	LastRunAt          *time.Time `json:"lastRunAt,omitempty"`
 	LastStatus         string     `json:"lastStatus"`
+	// 验证与 SLA 元信息
+	VerifyEnabled           bool   `json:"verifyEnabled"`
+	VerifyCronExpr          string `json:"verifyCronExpr"`
+	VerifyMode              string `json:"verifyMode"`
+	SLAHoursRPO             int    `json:"slaHoursRpo"`
+	AlertOnConsecutiveFails int    `json:"alertOnConsecutiveFails"`
+	// 备份复制目标（3-2-1）
+	ReplicationTargetIDs []uint `json:"replicationTargetIds"`
+	MaintenanceWindows   string `json:"maintenanceWindows"`
+	DependsOnTaskIDs     []uint `json:"dependsOnTaskIds"`
 	UpdatedAt          time.Time  `json:"updatedAt"`
 }
 
@@ -88,6 +118,7 @@ type BackupTaskService struct {
 	tasks           repository.BackupTaskRepository
 	targets         repository.StorageTargetRepository
 	records         repository.BackupRecordRepository
+	nodes           repository.NodeRepository
 	storageRegistry *storage.Registry
 	cipher          *codec.ConfigCipher
 	scheduler       BackupTaskScheduler
@@ -107,6 +138,11 @@ func (s *BackupTaskService) SetRecordsAndStorage(records repository.BackupRecord
 	s.storageRegistry = registry
 }
 
+// SetNodeRepository 注入节点仓库用于校验任务绑定的 NodeID 合法。
+func (s *BackupTaskService) SetNodeRepository(nodes repository.NodeRepository) {
+	s.nodes = nodes
+}
+
 func (s *BackupTaskService) SetScheduler(scheduler BackupTaskScheduler) {
 	s.scheduler = scheduler
 }
@@ -121,6 +157,129 @@ func (s *BackupTaskService) List(ctx context.Context) ([]BackupTaskSummary, erro
 		result = append(result, toBackupTaskSummary(&item))
 	}
 	return result, nil
+}
+
+// ListTags 返回全系统所有任务使用过的唯一标签。
+func (s *BackupTaskService) ListTags(ctx context.Context) ([]string, error) {
+	tags, err := s.tasks.DistinctTags(ctx)
+	if err != nil {
+		return nil, apperror.Internal("BACKUP_TASK_TAG_LIST_FAILED", "无法获取任务标签", err)
+	}
+	return tags, nil
+}
+
+// BatchResult 单条批量操作结果。best-effort：失败不中断其他。
+type BatchResult struct {
+	ID      uint   `json:"id"`
+	Name    string `json:"name,omitempty"`
+	Success bool   `json:"success"`
+	Error   string `json:"error,omitempty"`
+}
+
+// BatchToggle 批量启停任务。
+func (s *BackupTaskService) BatchToggle(ctx context.Context, ids []uint, enabled bool) []BatchResult {
+	results := make([]BatchResult, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		summary, err := s.Toggle(ctx, id, enabled)
+		item := BatchResult{ID: id, Success: err == nil}
+		if err != nil {
+			item.Error = appErrorMessage(err)
+		} else if summary != nil {
+			item.Name = summary.Name
+		}
+		results = append(results, item)
+	}
+	return results
+}
+
+// BatchDeleteTasks 批量删除任务。
+func (s *BackupTaskService) BatchDeleteTasks(ctx context.Context, ids []uint) []BatchResult {
+	results := make([]BatchResult, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		result, err := s.Delete(ctx, id)
+		item := BatchResult{ID: id, Success: err == nil}
+		if err != nil {
+			item.Error = appErrorMessage(err)
+		} else if result != nil {
+			item.Name = result.TaskName
+		}
+		results = append(results, item)
+	}
+	return results
+}
+
+// hasCyclicDependency DFS 查找是否存在从 candidate 上游链回到 taskID 的路径。
+// 保守实现：遍历 depth 超过 32 视为潜在循环并返回 true。
+func (s *BackupTaskService) hasCyclicDependency(ctx context.Context, taskID uint, candidates []uint) bool {
+	visited := map[uint]bool{}
+	var dfs func(id uint, depth int) bool
+	dfs = func(id uint, depth int) bool {
+		if depth > 32 {
+			return true
+		}
+		if id == taskID {
+			return true
+		}
+		if visited[id] {
+			return false
+		}
+		visited[id] = true
+		upstream, err := s.tasks.FindByID(ctx, id)
+		if err != nil || upstream == nil {
+			return false
+		}
+		for _, up := range parseUintCSV(upstream.DependsOnTaskIDs) {
+			if dfs(up, depth+1) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, c := range candidates {
+		if dfs(c, 0) {
+			return true
+		}
+	}
+	return false
+}
+
+// TriggerDependents 上游任务成功后找出所有 depends_on 中含有 upstreamID 的下游任务。
+// 供 BackupExecutionService 调用，避免后者直接触达 backup_task_repository。
+func (s *BackupTaskService) TriggerDependents(ctx context.Context, upstreamID uint) ([]uint, error) {
+	items, err := s.tasks.List(ctx, repository.BackupTaskListOptions{})
+	if err != nil {
+		return nil, err
+	}
+	var triggers []uint
+	for _, item := range items {
+		if !item.Enabled {
+			continue
+		}
+		for _, dep := range parseUintCSV(item.DependsOnTaskIDs) {
+			if dep == upstreamID {
+				triggers = append(triggers, item.ID)
+				break
+			}
+		}
+	}
+	return triggers, nil
+}
+
+// appErrorMessage 提取 apperror 的可读消息，回退到 error.Error()。
+func appErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	if appErr, ok := err.(*apperror.AppError); ok {
+		return appErr.Message
+	}
+	return err.Error()
 }
 
 func (s *BackupTaskService) Get(ctx context.Context, id uint) (*BackupTaskDetail, error) {
@@ -326,6 +485,15 @@ func (s *BackupTaskService) validateInput(ctx context.Context, existing *model.B
 			return apperror.BadRequest("BACKUP_STORAGE_TARGET_INVALID", fmt.Sprintf("关联的存储目标 %d 不存在", tid), nil)
 		}
 	}
+	if input.NodeID > 0 && s.nodes != nil {
+		node, err := s.nodes.FindByID(ctx, input.NodeID)
+		if err != nil {
+			return apperror.Internal("BACKUP_TASK_NODE_LOOKUP_FAILED", "无法校验执行节点", err)
+		}
+		if node == nil {
+			return apperror.BadRequest("BACKUP_TASK_INVALID", "所选执行节点不存在", nil)
+		}
+	}
 	if input.RetentionDays < 0 {
 		return apperror.BadRequest("BACKUP_TASK_INVALID", "保留天数不能小于 0", nil)
 	}
@@ -337,6 +505,44 @@ func (s *BackupTaskService) validateInput(ctx context.Context, existing *model.B
 	}
 	if strings.TrimSpace(input.CronExpr) != "" && len(strings.Fields(strings.TrimSpace(input.CronExpr))) < 5 {
 		return apperror.BadRequest("BACKUP_TASK_INVALID", "Cron 表达式格式不正确", nil)
+	}
+	if input.VerifyEnabled {
+		if strings.TrimSpace(input.VerifyCronExpr) == "" {
+			return apperror.BadRequest("BACKUP_TASK_INVALID", "启用验证演练时必须填写验证 Cron 表达式", nil)
+		}
+		if len(strings.Fields(strings.TrimSpace(input.VerifyCronExpr))) < 5 {
+			return apperror.BadRequest("BACKUP_TASK_INVALID", "验证 Cron 表达式格式不正确", nil)
+		}
+	}
+	if strings.TrimSpace(input.MaintenanceWindows) != "" {
+		if err := backup.ValidateMaintenanceWindows(input.MaintenanceWindows); err != nil {
+			return apperror.BadRequest("BACKUP_TASK_INVALID", err.Error(), err)
+		}
+	}
+	// 依赖检查：每个上游任务必须存在 + 不能依赖自己 + 无循环
+	if len(input.DependsOnTaskIDs) > 0 {
+		currentID := uint(0)
+		if existing != nil {
+			currentID = existing.ID
+		}
+		for _, dep := range input.DependsOnTaskIDs {
+			if dep == 0 {
+				continue
+			}
+			if dep == currentID {
+				return apperror.BadRequest("BACKUP_TASK_INVALID", "不能把任务自己设为上游依赖", nil)
+			}
+			upstream, err := s.tasks.FindByID(ctx, dep)
+			if err != nil {
+				return apperror.Internal("BACKUP_TASK_DEP_LOOKUP_FAILED", "无法校验上游任务", err)
+			}
+			if upstream == nil {
+				return apperror.BadRequest("BACKUP_TASK_INVALID", fmt.Sprintf("上游任务 %d 不存在", dep), nil)
+			}
+		}
+		if currentID > 0 && s.hasCyclicDependency(ctx, currentID, input.DependsOnTaskIDs) {
+			return apperror.BadRequest("BACKUP_TASK_INVALID", "依赖关系会形成循环", nil)
+		}
 	}
 	passwordRequired := existing == nil || existing.DBPasswordCiphertext == ""
 	return validateTaskTypeSpecificFields(input, passwordRequired)
@@ -441,11 +647,21 @@ func (s *BackupTaskService) buildTask(existing *model.BackupTask, input BackupTa
 		ExtraConfig:          extraConfigJSON,
 		StorageTargetID:      primaryTargetID,
 		StorageTargets:       storageTargets,
+		NodeID:               input.NodeID,
+		Tags:                 strings.TrimSpace(input.Tags),
 		RetentionDays:        input.RetentionDays,
 		Compression:          compression,
 		Encrypt:              input.Encrypt,
 		MaxBackups:           maxBackups,
 		LastStatus:           "idle",
+		VerifyEnabled:        input.VerifyEnabled,
+		VerifyCronExpr:       strings.TrimSpace(input.VerifyCronExpr),
+		VerifyMode:           normalizeVerifyMode(input.VerifyMode),
+		SLAHoursRPO:          maxInt(0, input.SLAHoursRPO),
+		AlertOnConsecutiveFails: alertThreshold(input.AlertOnConsecutiveFails),
+		ReplicationTargetIDs: encodeUintCSV(input.ReplicationTargetIDs),
+		MaintenanceWindows:   strings.TrimSpace(input.MaintenanceWindows),
+		DependsOnTaskIDs:     encodeUintCSV(input.DependsOnTaskIDs),
 	}
 	if existing != nil {
 		item.LastRunAt = existing.LastRunAt
@@ -520,14 +736,67 @@ func toBackupTaskSummary(item *model.BackupTask) BackupTaskSummary {
 		StorageTargetName:  primaryName,
 		StorageTargetIDs:   targetIDs,
 		StorageTargetNames: targetNames,
+		NodeID:             item.NodeID,
+		NodeName:           item.Node.Name,
+		Tags:               item.Tags,
 		RetentionDays:      item.RetentionDays,
 		Compression:        item.Compression,
 		Encrypt:            item.Encrypt,
 		MaxBackups:         item.MaxBackups,
 		LastRunAt:          item.LastRunAt,
 		LastStatus:         item.LastStatus,
+		VerifyEnabled:           item.VerifyEnabled,
+		VerifyCronExpr:          item.VerifyCronExpr,
+		VerifyMode:              item.VerifyMode,
+		SLAHoursRPO:             item.SLAHoursRPO,
+		AlertOnConsecutiveFails: item.AlertOnConsecutiveFails,
+		ReplicationTargetIDs:    parseUintCSV(item.ReplicationTargetIDs),
+		MaintenanceWindows:      item.MaintenanceWindows,
+		DependsOnTaskIDs:        parseUintCSV(item.DependsOnTaskIDs),
 		UpdatedAt:          item.UpdatedAt,
 	}
+}
+
+// encodeUintCSV 把 uint 切片编码为 CSV 字符串（去重保序）。
+func encodeUintCSV(ids []uint) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	seen := map[uint]bool{}
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if id == 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		parts = append(parts, strconv.FormatUint(uint64(id), 10))
+	}
+	return strings.Join(parts, ",")
+}
+
+// normalizeVerifyMode 规范化验证模式，未知值默认 quick。
+func normalizeVerifyMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "deep":
+		return model.VerificationModeDeep
+	default:
+		return model.VerificationModeQuick
+	}
+}
+
+// alertThreshold 连续失败告警阈值下限为 1。
+func alertThreshold(value int) int {
+	if value <= 0 {
+		return 1
+	}
+	return value
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
 
 func encodeExcludePatterns(value []string) (string, error) {

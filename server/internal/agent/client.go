@@ -158,6 +158,52 @@ func (c *MasterClient) UpdateRecord(ctx context.Context, recordID uint, update R
 	return c.do(ctx, http.MethodPost, path, update, nil)
 }
 
+// RestoreSpec 与 service.AgentRestoreSpec 对齐
+type RestoreSpec struct {
+	RestoreRecordID uint                `json:"restoreRecordId"`
+	BackupRecordID  uint                `json:"backupRecordId"`
+	TaskID          uint                `json:"taskId"`
+	TaskName        string              `json:"taskName"`
+	Type            string              `json:"type"`
+	SourcePath      string              `json:"sourcePath,omitempty"`
+	SourcePaths     []string            `json:"sourcePaths,omitempty"`
+	DBHost          string              `json:"dbHost,omitempty"`
+	DBPort          int                 `json:"dbPort,omitempty"`
+	DBUser          string              `json:"dbUser,omitempty"`
+	DBPassword      string              `json:"dbPassword,omitempty"`
+	DBName          string              `json:"dbName,omitempty"`
+	DBPath          string              `json:"dbPath,omitempty"`
+	ExtraConfig     string              `json:"extraConfig,omitempty"`
+	Compression     string              `json:"compression"`
+	Encrypt         bool                `json:"encrypt"`
+	Storage         StorageTargetConfig `json:"storage"`
+	StoragePath     string              `json:"storagePath"`
+	FileName        string              `json:"fileName"`
+}
+
+// RestoreUpdate 与 service.AgentRestoreUpdate 对齐
+type RestoreUpdate struct {
+	Status       string `json:"status,omitempty"`
+	ErrorMessage string `json:"errorMessage,omitempty"`
+	LogAppend    string `json:"logAppend,omitempty"`
+}
+
+// GetRestoreSpec 拉取恢复规格
+func (c *MasterClient) GetRestoreSpec(ctx context.Context, restoreRecordID uint) (*RestoreSpec, error) {
+	var spec RestoreSpec
+	path := fmt.Sprintf("/api/agent/restores/%d/spec", restoreRecordID)
+	if err := c.do(ctx, http.MethodGet, path, nil, &spec); err != nil {
+		return nil, err
+	}
+	return &spec, nil
+}
+
+// UpdateRestore 上报恢复记录的状态/日志
+func (c *MasterClient) UpdateRestore(ctx context.Context, restoreRecordID uint, update RestoreUpdate) error {
+	path := fmt.Sprintf("/api/agent/restores/%d", restoreRecordID)
+	return c.do(ctx, http.MethodPost, path, update, nil)
+}
+
 // do 是通用 HTTP 调用。所有 Agent API 都统一走 JSON + X-Agent-Token。
 func (c *MasterClient) do(ctx context.Context, method, path string, body any, out any) error {
 	var reqBody io.Reader

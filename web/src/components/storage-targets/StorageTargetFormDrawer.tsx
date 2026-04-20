@@ -1,4 +1,4 @@
-import { Alert, Button, Collapse, Divider, Drawer, Input, Select, Space, Switch, Typography } from '@arco-design/web-react'
+import { Alert, Button, Collapse, Divider, Drawer, Input, InputNumber, Select, Space, Switch, Typography } from '@arco-design/web-react'
 import { useEffect, useMemo, useState } from 'react'
 import { getStorageTargetFieldConfigs, getStorageTargetTypeLabel, isBuiltinType, buildAllTypeOptions } from './field-config'
 import type { StorageConnectionTestResult, StorageTargetDetail, StorageTargetPayload, StorageTargetType } from '../../types/storage-targets'
@@ -16,7 +16,7 @@ interface StorageTargetFormDrawerProps {
 }
 
 function createEmptyDraft(type: StorageTargetType = 'local_disk'): StorageTargetPayload {
-  return { name: '', type, description: '', enabled: true, config: {} }
+  return { name: '', type, description: '', enabled: true, config: {}, quotaBytes: 0 }
 }
 
 export function StorageTargetFormDrawer({
@@ -51,6 +51,7 @@ export function StorageTargetFormDrawer({
       description: initialValue.description,
       enabled: initialValue.enabled,
       config: { ...initialValue.config },
+      quotaBytes: initialValue.quotaBytes ?? 0,
     })
     setError('')
     setTestResult(null)
@@ -223,6 +224,21 @@ export function StorageTargetFormDrawer({
         <div>
           <Typography.Text>描述</Typography.Text>
           <Input.TextArea value={draft.description} placeholder="可选描述" onChange={(v) => setDraft((c) => ({ ...c, description: v }))} />
+        </div>
+        <div>
+          <Typography.Text>容量配额（GB，0 = 不限制）</Typography.Text>
+          <InputNumber
+            style={{ width: '100%' }}
+            min={0}
+            value={Math.round((draft.quotaBytes ?? 0) / (1024 * 1024 * 1024))}
+            onChange={(v) => {
+              const gb = Number(v ?? 0)
+              setDraft((c) => ({ ...c, quotaBytes: gb > 0 ? gb * 1024 * 1024 * 1024 : 0 }))
+            }}
+          />
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+            软配额：累计备份字节超出后拒绝新上传。与 85% 容量预警互补，防止失控。
+          </Typography.Paragraph>
         </div>
 
         <Space align="center" size="medium">

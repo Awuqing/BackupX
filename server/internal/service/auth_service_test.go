@@ -51,6 +51,34 @@ func (r *fakeUserRepository) Update(_ context.Context, user *model.User) error {
 	return nil
 }
 
+func (r *fakeUserRepository) CountByRole(_ context.Context, role string) (int64, error) {
+	var n int64
+	for _, u := range r.users {
+		if u.Role == role && !u.Disabled {
+			n++
+		}
+	}
+	return n, nil
+}
+
+func (r *fakeUserRepository) List(_ context.Context) ([]model.User, error) {
+	result := make([]model.User, 0, len(r.users))
+	for _, u := range r.users {
+		result = append(result, *u)
+	}
+	return result, nil
+}
+
+func (r *fakeUserRepository) Delete(_ context.Context, id uint) error {
+	for i, u := range r.users {
+		if u.ID == id {
+			r.users = append(r.users[:i], r.users[i+1:]...)
+			return nil
+		}
+	}
+	return nil
+}
+
 type fakeSystemConfigRepository struct{}
 
 func (r *fakeSystemConfigRepository) GetByKey(context.Context, string) (*model.SystemConfig, error) {

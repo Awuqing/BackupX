@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"backupx/server/internal/backup"
 )
 
 // Agent 是 Agent 进程的主控制器。
@@ -131,6 +133,12 @@ func (a *Agent) pollAndHandleOnce(ctx context.Context) {
 		a.handleRunTask(ctx, cmd)
 	case "list_dir":
 		a.handleListDir(ctx, cmd)
+	case "restore_record":
+		a.handleRestoreRecord(ctx, cmd)
+	case "discover_db":
+		a.handleDiscoverDB(ctx, cmd)
+	case "delete_storage_object":
+		a.handleDeleteStorageObject(ctx, cmd)
 	default:
 		msg := fmt.Sprintf("unknown command type: %s", cmd.Type)
 		log.Printf("[agent] %s", msg)
@@ -156,6 +164,83 @@ func (a *Agent) handleRunTask(ctx context.Context, cmd *CommandPayload) {
 		"taskId":   payload.TaskID,
 		"recordId": payload.RecordID,
 	})
+}
+
+// handleRestoreRecord 处理 restore_record 命令
+func (a *Agent) handleRestoreRecord(ctx context.Context, cmd *CommandPayload) {
+	var payload struct {
+		RestoreRecordID uint `json:"restoreRecordId"`
+	}
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
+		_ = a.client.SubmitCommandResult(ctx, cmd.ID, false, "invalid payload: "+err.Error(), nil)
+		return
+	}
+	if payload.RestoreRecordID == 0 {
+		_ = a.client.SubmitCommandResult(ctx, cmd.ID, false, "restoreRecordId is required", nil)
+		return
+	}
+	if err := a.executor.ExecuteRestore(ctx, payload.RestoreRecordID); err != nil {
+		_ = a.client.SubmitCommandResult(ctx, cmd.ID, false, err.Error(), nil)
+		return
+	}
+	_ = a.client.SubmitCommandResult(ctx, cmd.ID, true, "", map[string]any{
+		"restoreRecordId": payload.RestoreRecordID,
+	})
+}
+
+// handleDeleteStorageObject 处理 delete_storage_object 命令：在 Agent 侧删除指定存储对象。
+// 用于跨节点 local_disk 场景下的远程备份文件清理。
+func (a *Agent) handleDeleteStorageObject(ctx context.Context, cmd *CommandPayload) {
+	var payload struct {
+		TargetType   string         `json:"targetType"`
+		TargetConfig map[string]any `json:"targetConfig"`
+		StoragePath  string         `json:"storagePath"`
+	}
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
+		_ = a.client.SubmitCommandResult(ctx, cmd.ID, false, "invalid payload: "+err.Error(), nil)
+		return
+	}
+	if strings.TrimSpace(payload.StoragePath) == "" {
+		_ = a.client.SubmitCommandResult(ctx, cmd.ID, false, "storagePath is required", nil)
+		return
+	}
+	provider, err := a.executor.storageRegistry.Create(ctx, payload.TargetType, payload.TargetConfig)
+	if err != nil {
+		_ = a.client.SubmitCommandResult(ctx, cmd.ID, false, "create provider: "+err.Error(), nil)
+		return
+	}
+	if err := provider.Delete(ctx, payload.StoragePath); err != nil {
+		_ = a.client.SubmitCommandResult(ctx, cmd.ID, false, "delete object: "+err.Error(), nil)
+		return
+	}
+	_ = a.client.SubmitCommandResult(ctx, cmd.ID, true, "", map[string]any{"deleted": true})
+}
+
+// handleDiscoverDB 处理 discover_db 命令：在 Agent 本机执行 mysql/psql 列出数据库。
+func (a *Agent) handleDiscoverDB(ctx context.Context, cmd *CommandPayload) {
+	var payload struct {
+		Type     string `json:"type"`
+		Host     string `json:"host"`
+		Port     int    `json:"port"`
+		User     string `json:"user"`
+		Password string `json:"password"`
+	}
+	if err := json.Unmarshal(cmd.Payload, &payload); err != nil {
+		_ = a.client.SubmitCommandResult(ctx, cmd.ID, false, "invalid payload: "+err.Error(), nil)
+		return
+	}
+	databases, err := backup.DiscoverDatabases(ctx, backup.NewOSCommandExecutor(), backup.DiscoverRequest{
+		Type:     payload.Type,
+		Host:     payload.Host,
+		Port:     payload.Port,
+		User:     payload.User,
+		Password: payload.Password,
+	})
+	if err != nil {
+		_ = a.client.SubmitCommandResult(ctx, cmd.ID, false, err.Error(), nil)
+		return
+	}
+	_ = a.client.SubmitCommandResult(ctx, cmd.ID, true, "", map[string]any{"databases": databases})
 }
 
 // handleListDir 处理 list_dir 命令（阶段四实现）

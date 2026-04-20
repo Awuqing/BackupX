@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"backupx/server/internal/apperror"
@@ -25,6 +26,8 @@ type StorageTargetUpsertInput struct {
 	Description string         `json:"description" binding:"max=255"`
 	Enabled     bool           `json:"enabled"`
 	Config      map[string]any `json:"config" binding:"required"`
+	// QuotaBytes 软限额（字节），0 = 不限制。
+	QuotaBytes int64 `json:"quotaBytes"`
 }
 
 type StorageTargetTestInput struct {
@@ -58,6 +61,7 @@ type StorageTargetSummary struct {
 	LastTestedAt    *time.Time `json:"lastTestedAt"`
 	LastTestStatus  string     `json:"lastTestStatus"`
 	LastTestMessage string     `json:"lastTestMessage"`
+	QuotaBytes      int64      `json:"quotaBytes"`
 	UpdatedAt       time.Time  `json:"updatedAt"`
 }
 
@@ -258,6 +262,179 @@ func (s *StorageTargetService) TestConnection(ctx context.Context, input Storage
 	return nil
 }
 
+// StartHealthMonitor 启动后台存储目标健康扫描。
+// 周期性对启用的存储目标跑 TestConnection（非阻塞），并在"从成功转失败"时派发 storage_unhealthy 事件。
+// interval 建议 5m；dispatcher 为 nil 时仅更新 LastTestStatus 不告警。
+func (s *StorageTargetService) StartHealthMonitor(ctx context.Context, dispatcher EventDispatcher, interval time.Duration) {
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	ticker := time.NewTicker(interval)
+	// notified 跟踪已告警的目标，避免每轮重复
+	notified := map[uint]bool{}
+	capacityNotified := map[uint]bool{}
+	var mu sync.Mutex
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.runHealthCheckOnce(ctx, dispatcher, &mu, notified)
+				s.runCapacityCheckOnce(ctx, dispatcher, &mu, capacityNotified)
+			}
+		}
+	}()
+}
+
+// StorageCapacityWarningThreshold 存储使用率告警阈值（85%）。
+// 超过此值视为容量预警，派发 storage_capacity_warning 事件。
+// 做成常量而非配置：企业运维场景下 85% 是业界通用预警线，无需用户调整。
+const StorageCapacityWarningThreshold = 0.85
+
+// runCapacityCheckOnce 扫描所有支持 StorageAbout 接口的启用存储目标，
+// 使用率超过阈值时派发 storage_capacity_warning 事件（避免重复派发）。
+// 降到阈值以下（例如清理/扩容后）自动清除记忆。
+func (s *StorageTargetService) runCapacityCheckOnce(ctx context.Context, dispatcher EventDispatcher, mu *sync.Mutex, notified map[uint]bool) {
+	if dispatcher == nil {
+		return
+	}
+	targets, err := s.targets.List(ctx)
+	if err != nil {
+		return
+	}
+	for i := range targets {
+		target := targets[i]
+		if !target.Enabled {
+			continue
+		}
+		configMap := map[string]any{}
+		if err := s.cipher.DecryptJSON(target.ConfigCiphertext, &configMap); err != nil {
+			continue
+		}
+		provider, err := s.registry.Create(ctx, storage.ParseProviderType(target.Type), configMap)
+		if err != nil {
+			continue
+		}
+		about, ok := provider.(storage.StorageAbout)
+		if !ok {
+			continue // 该后端不支持容量查询（如 S3 / FTP 等），跳过
+		}
+		info, err := about.About(ctx)
+		if err != nil || info == nil || info.Total == nil || info.Used == nil || *info.Total == 0 {
+			continue
+		}
+		usage := float64(*info.Used) / float64(*info.Total)
+		mu.Lock()
+		alreadyNotified := notified[target.ID]
+		if usage >= StorageCapacityWarningThreshold {
+			if !alreadyNotified {
+				notified[target.ID] = true
+				mu.Unlock()
+				s.dispatchCapacityWarning(ctx, dispatcher, &target, info, usage)
+				continue
+			}
+		} else {
+			delete(notified, target.ID) // 容量回落后允许下次再告警
+		}
+		mu.Unlock()
+	}
+}
+
+func (s *StorageTargetService) dispatchCapacityWarning(ctx context.Context, dispatcher EventDispatcher, target *model.StorageTarget, info *storage.StorageUsageInfo, usage float64) {
+	title := "BackupX 存储容量预警"
+	usedGB := float64(*info.Used) / (1 << 30)
+	totalGB := float64(*info.Total) / (1 << 30)
+	body := fmt.Sprintf("存储目标：%s (类型: %s)\n使用率：%.1f%%\n已用：%.2f GB / 总量：%.2f GB\n建议清理旧备份或扩容。",
+		target.Name, target.Type, usage*100, usedGB, totalGB)
+	fields := map[string]any{
+		"storageTargetId":   target.ID,
+		"storageTargetName": target.Name,
+		"storageType":       target.Type,
+		"usageRate":         usage,
+		"usedBytes":         *info.Used,
+		"totalBytes":        *info.Total,
+	}
+	_ = dispatcher.DispatchEvent(ctx, model.NotificationEventStorageCapacity, title, body, fields)
+}
+
+// runHealthCheckOnce 对所有启用目标执行一次连接测试并按需派发事件。
+// "健康→故障"边沿触发告警；"故障→健康"边沿清除 notified 记忆，允许下次故障再次告警。
+func (s *StorageTargetService) runHealthCheckOnce(ctx context.Context, dispatcher EventDispatcher, mu *sync.Mutex, notified map[uint]bool) {
+	targets, err := s.targets.List(ctx)
+	if err != nil {
+		return
+	}
+	for i := range targets {
+		target := targets[i]
+		if !target.Enabled {
+			continue
+		}
+		previousStatus := target.LastTestStatus
+		configMap := map[string]any{}
+		if err := s.cipher.DecryptJSON(target.ConfigCiphertext, &configMap); err != nil {
+			continue
+		}
+		provider, err := s.registry.Create(ctx, storage.ParseProviderType(target.Type), configMap)
+		now := time.Now().UTC()
+		if err != nil {
+			s.applyHealthResult(ctx, &target, now, false, err.Error())
+			s.notifyUnhealthyTransition(ctx, dispatcher, mu, notified, &target, previousStatus, err.Error())
+			continue
+		}
+		testErr := provider.TestConnection(ctx)
+		if testErr != nil {
+			s.applyHealthResult(ctx, &target, now, false, testErr.Error())
+			s.notifyUnhealthyTransition(ctx, dispatcher, mu, notified, &target, previousStatus, testErr.Error())
+			continue
+		}
+		s.applyHealthResult(ctx, &target, now, true, "连接成功")
+		// 恢复健康：清除告警记忆
+		mu.Lock()
+		delete(notified, target.ID)
+		mu.Unlock()
+	}
+}
+
+func (s *StorageTargetService) applyHealthResult(ctx context.Context, target *model.StorageTarget, at time.Time, healthy bool, message string) {
+	target.LastTestedAt = &at
+	if healthy {
+		target.LastTestStatus = "success"
+	} else {
+		target.LastTestStatus = "failed"
+	}
+	target.LastTestMessage = sanitizeMessage(message)
+	_ = s.targets.Update(ctx, target)
+}
+
+func (s *StorageTargetService) notifyUnhealthyTransition(ctx context.Context, dispatcher EventDispatcher, mu *sync.Mutex, notified map[uint]bool, target *model.StorageTarget, previousStatus string, message string) {
+	if dispatcher == nil {
+		return
+	}
+	mu.Lock()
+	already := notified[target.ID]
+	if !already {
+		notified[target.ID] = true
+	}
+	mu.Unlock()
+	// 仅在上次状态是 success / unknown 且本次是 failed 时首次告警；
+	// 已告警过的持续故障不重复发送（等 resetInterval 或恢复后重新触发）。
+	if already {
+		return
+	}
+	_ = previousStatus // 保留参数便于未来扩展：区分"从未测试"与"从 success 掉线"
+	title := "BackupX 存储目标连接失败"
+	body := fmt.Sprintf("存储目标：%s (类型: %s)\n错误：%s", target.Name, target.Type, message)
+	fields := map[string]any{
+		"storageTargetId":   target.ID,
+		"storageTargetName": target.Name,
+		"storageType":       target.Type,
+		"error":             message,
+	}
+	_ = dispatcher.DispatchEvent(ctx, model.NotificationEventStorageUnhealthy, title, body, fields)
+}
+
 func (s *StorageTargetService) StartGoogleDriveOAuth(ctx context.Context, input GoogleDriveAuthStartInput, origin string) (*GoogleDriveAuthStartResult, error) {
 	origin = normalizeOrigin(origin)
 	if origin == "" {
@@ -394,6 +571,10 @@ func (s *StorageTargetService) buildStorageTarget(ctx context.Context, existing 
 	if err != nil {
 		return nil, apperror.Internal("STORAGE_TARGET_ENCRYPT_FAILED", "无法保存存储目标配置", err)
 	}
+	quota := input.QuotaBytes
+	if quota < 0 {
+		quota = 0
+	}
 	item := &model.StorageTarget{
 		Name:             strings.TrimSpace(input.Name),
 		Type:             input.Type,
@@ -402,6 +583,7 @@ func (s *StorageTargetService) buildStorageTarget(ctx context.Context, existing 
 		ConfigCiphertext: ciphertext,
 		ConfigVersion:    1,
 		LastTestStatus:   "unknown",
+		QuotaBytes:       quota,
 	}
 	if existing != nil {
 		item.LastTestedAt = existing.LastTestedAt
@@ -515,6 +697,7 @@ func toStorageTargetSummary(item *model.StorageTarget) StorageTargetSummary {
 		LastTestedAt:    item.LastTestedAt,
 		LastTestStatus:  item.LastTestStatus,
 		LastTestMessage: item.LastTestMessage,
+		QuotaBytes:      item.QuotaBytes,
 		UpdatedAt:       item.UpdatedAt,
 	}
 }

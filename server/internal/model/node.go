@@ -23,8 +23,14 @@ type Node struct {
 	LastSeen             time.Time  `gorm:"column:last_seen" json:"lastSeen"`
 	PrevToken            string     `gorm:"size:128;index" json:"-"`
 	PrevTokenExpires     *time.Time `gorm:"column:prev_token_expires" json:"-"`
-	CreatedAt            time.Time  `json:"createdAt"`
-	UpdatedAt            time.Time  `json:"updatedAt"`
+	// MaxConcurrent 该节点允许的最大并发任务数（0=不限制，沿用全局 cfg.Backup.MaxConcurrent）。
+	// 用于大集群中限制单节点资源占用：例如小内存 Agent 节点可配 1，避免多个大备份同时跑挤爆。
+	MaxConcurrent int `gorm:"column:max_concurrent;not null;default:0" json:"maxConcurrent"`
+	// BandwidthLimit 该节点上传带宽上限（rclone 可识别格式：10M / 1G / 0=不限）。
+	// 对集群感知的上传场景有效（Master 本地与 Agent 运行时均会应用）。
+	BandwidthLimit string `gorm:"column:bandwidth_limit;size:32" json:"bandwidthLimit"`
+	CreatedAt      time.Time `json:"createdAt"`
+	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
 func (Node) TableName() string {

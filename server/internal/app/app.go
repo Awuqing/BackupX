@@ -80,6 +80,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	storageTargetService.SetBackupRecordRepository(backupRecordRepo)
 	backupTaskService := service.NewBackupTaskService(backupTaskRepo, storageTargetRepo, configCipher)
 	backupTaskService.SetRecordsAndStorage(backupRecordRepo, storageRegistry)
+	// nodeRepo 在下方 Cluster 节点管理区块才实例化，这里延后注入
 	backupRunnerRegistry := backup.NewRegistry(backup.NewFileRunner(), backup.NewSQLiteRunner(), backup.NewMySQLRunner(nil), backup.NewPostgreSQLRunner(nil), backup.NewSAPHANARunner(nil))
 	logHub := backup.NewLogHub()
 	retentionService := backupretention.NewService(backupRecordRepo)
@@ -97,6 +98,9 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	backupTaskService.SetScheduler(schedulerService)
 	// 审计日志注入延迟到 auditService 创建后（见下方）
 	backupRecordService := service.NewBackupRecordService(backupRecordRepo, backupExecutionService, logHub)
+	// 恢复服务：使用独立 LogHub 避免恢复记录与备份记录 ID 命名空间冲突
+	restoreRecordRepo := repository.NewRestoreRecordRepository(db)
+	restoreLogHub := backup.NewLogHub()
 	dashboardService := service.NewDashboardService(backupTaskRepo, backupRecordRepo, storageTargetRepo)
 	settingsService := service.NewSettingsService(systemConfigRepo)
 
@@ -106,11 +110,13 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	authService.SetAuditService(auditService)
 	schedulerService.SetAuditRecorder(auditService)
 
-	// Database discovery
+	// Database discovery（集群依赖在 agentService 创建后注入）
 	databaseDiscoveryService := service.NewDatabaseDiscoveryService(backup.NewOSCommandExecutor())
 
 	// Cluster: Node management
 	nodeRepo := repository.NewNodeRepository(db)
+	backupTaskService.SetNodeRepository(nodeRepo)
+	schedulerService.SetNodeRepository(nodeRepo)
 	nodeService := service.NewNodeService(nodeRepo, version)
 	nodeService.SetTaskRepository(backupTaskRepo)
 	if err := nodeService.EnsureLocalNode(ctx); err != nil {
@@ -122,6 +128,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	// Agent 协议服务：命令队列 + 任务下发 + 记录上报
 	agentCmdRepo := repository.NewAgentCommandRepository(db)
 	agentService := service.NewAgentService(nodeRepo, backupTaskRepo, backupRecordRepo, storageTargetRepo, agentCmdRepo, configCipher)
+	agentService.SetRestoreRepository(restoreRecordRepo)
 	agentService.StartCommandTimeoutMonitor(ctx, 30*time.Second, 10*time.Minute)
 
 	// 一键部署：install token service + 后台 GC
@@ -133,6 +140,91 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	backupExecutionService.SetClusterDependencies(nodeRepo, agentService)
 	// 启用远程目录浏览：NodeService 通过 AgentService 做同步 RPC
 	nodeService.SetAgentRPC(agentService)
+	// 启用远程数据库发现：远程节点任务配置时 DatabasePicker 拿到的是节点视角的 DB 列表
+	databaseDiscoveryService.SetClusterDependencies(nodeRepo, agentService)
+
+	// 恢复服务：集群感知（本地/远程路由），依赖 agentService 入队
+	restoreService := service.NewRestoreService(
+		restoreRecordRepo,
+		backupRecordRepo,
+		backupTaskRepo,
+		storageTargetRepo,
+		nodeRepo,
+		storageRegistry,
+		backupRunnerRegistry,
+		restoreLogHub,
+		configCipher,
+		agentService,
+		cfg.Backup.TempDir,
+		cfg.Backup.MaxConcurrent,
+	)
+
+	// 验证服务：定期校验备份可恢复性（企业合规刚需）
+	verificationRecordRepo := repository.NewVerificationRecordRepository(db)
+	verifyLogHub := backup.NewLogHub()
+	verificationService := service.NewVerificationService(
+		verificationRecordRepo,
+		backupRecordRepo,
+		backupTaskRepo,
+		storageTargetRepo,
+		nodeRepo,
+		storageRegistry,
+		verifyLogHub,
+		configCipher,
+		cfg.Backup.TempDir,
+		cfg.Backup.MaxConcurrent,
+	)
+	// 验证失败通知：通过 NotificationService 的事件总线派发 verify_failed
+	verificationService.SetNotifier(service.NewVerificationEventNotifier(notificationService))
+	// 恢复完成/失败事件派发（restore_success / restore_failed）
+	restoreService.SetEventDispatcher(notificationService)
+	// 调度器接入验证演练 cron
+	schedulerService.SetVerifyRunner(verificationService)
+
+	// 用户管理与 API Key 服务（企业级 RBAC）
+	userService := service.NewUserService(userRepo)
+	apiKeyRepo := repository.NewApiKeyRepository(db)
+	apiKeyService := service.NewApiKeyService(apiKeyRepo)
+
+	// SLA 后台扫描：每 15 分钟扫描违约任务，同任务 6 小时内不重复派发
+	dashboardService.StartSLAMonitor(ctx, notificationService, 15*time.Minute, 6*time.Hour)
+	// 存储目标健康扫描：每 5 分钟测试启用目标，掉线即告警
+	storageTargetService.StartHealthMonitor(ctx, notificationService, 5*time.Minute)
+
+	// 备份复制服务（3-2-1 规则核心）
+	replicationRecordRepo := repository.NewReplicationRecordRepository(db)
+	replicationService := service.NewReplicationService(
+		replicationRecordRepo, backupRecordRepo, storageTargetRepo,
+		nodeRepo, storageRegistry, configCipher,
+		cfg.Backup.TempDir, cfg.Backup.MaxConcurrent,
+	)
+	replicationService.SetEventDispatcher(notificationService)
+	backupExecutionService.SetReplicationTrigger(replicationService)
+	// 备份成功后触发下游依赖任务（任务依赖链工作流）
+	backupExecutionService.SetDependentsResolver(backupTaskService)
+
+	// 任务模板（批量创建）
+	taskTemplateRepo := repository.NewTaskTemplateRepository(db)
+	taskTemplateService := service.NewTaskTemplateService(taskTemplateRepo, backupTaskService)
+
+	// 任务配置导入/导出（JSON，集群迁移 & 灾备）
+	taskExportService := service.NewTaskExportService(backupTaskService, backupTaskRepo, storageTargetRepo, nodeRepo)
+
+	// 全局搜索（跨任务/存储/节点/最近记录）
+	searchService := service.NewSearchService(backupTaskRepo, backupRecordRepo, storageTargetRepo, nodeRepo)
+
+	// 实时事件广播器（SSE 推送给前端 Dashboard）
+	// 注入 notification 后，每次 DispatchEvent 同时 broadcast 到所有 SSE 订阅者
+	eventBroadcaster := service.NewEventBroadcaster()
+	notificationService.SetBroadcaster(eventBroadcaster)
+
+	// 集群版本监控：每 30 分钟扫描，节点 24 小时内只告警一次
+	clusterVersionMonitor := service.NewClusterVersionMonitor(nodeRepo, version)
+	clusterVersionMonitor.SetEventDispatcher(notificationService)
+	clusterVersionMonitor.Start(ctx, 30*time.Minute, 24*time.Hour)
+
+	// Dashboard 集群概览依赖注入
+	dashboardService.SetClusterDependencies(nodeRepo, version)
 
 	router := aphttp.NewRouter(aphttp.RouterDependencies{
 		Context:                ctx,
@@ -145,6 +237,15 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 		BackupTaskService:      backupTaskService,
 		BackupExecutionService: backupExecutionService,
 		BackupRecordService:    backupRecordService,
+		RestoreService:         restoreService,
+		VerificationService:    verificationService,
+		ReplicationService:     replicationService,
+		TaskTemplateService:    taskTemplateService,
+		TaskExportService:      taskExportService,
+		SearchService:          searchService,
+		EventBroadcaster:       eventBroadcaster,
+		UserService:            userService,
+		ApiKeyService:          apiKeyService,
 		NotificationService:    notificationService,
 		DashboardService:       dashboardService,
 		SettingsService:        settingsService,
@@ -157,6 +258,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 		SystemConfigRepo:         systemConfigRepo,
 		InstallTokenService:      installTokenService,
 		MasterExternalURL:        "", // 如需覆盖 URL，可扩展 cfg.Server 增字段；目前留空依赖 X-Forwarded-* / Request.Host
+		DB:                       db,
 	})
 
 	httpServer := &stdhttp.Server{

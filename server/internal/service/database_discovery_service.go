@@ -1,14 +1,16 @@
 package service
 
 import (
-	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
 
 	"backupx/server/internal/apperror"
 	"backupx/server/internal/backup"
+	"backupx/server/internal/model"
+	"backupx/server/internal/repository"
 )
 
 type DatabaseDiscoverInput struct {
@@ -17,6 +19,9 @@ type DatabaseDiscoverInput struct {
 	Port     int    `json:"port" binding:"required,min=1"`
 	User     string `json:"user" binding:"required"`
 	Password string `json:"password" binding:"required"`
+	// NodeID 执行发现的节点。0 或本机 → Master 本地执行；
+	// 远程节点 → 通过 Agent RPC 下发 discover_db 命令，目标主机在该节点视角解析。
+	NodeID uint `json:"nodeId"`
 }
 
 type DatabaseDiscoverResult struct {
@@ -25,117 +30,103 @@ type DatabaseDiscoverResult struct {
 
 type DatabaseDiscoveryService struct {
 	executor backup.CommandExecutor
+	nodeRepo repository.NodeRepository
+	agentRPC DatabaseDiscoveryAgentRPC
+}
+
+// DatabaseDiscoveryAgentRPC 封装 AgentService 的同步 RPC 能力以避免循环依赖。
+type DatabaseDiscoveryAgentRPC interface {
+	EnqueueCommand(ctx context.Context, nodeID uint, cmdType string, payload any) (uint, error)
+	WaitForCommandResult(ctx context.Context, cmdID uint, timeout time.Duration) (*model.AgentCommand, error)
 }
 
 func NewDatabaseDiscoveryService(executor backup.CommandExecutor) *DatabaseDiscoveryService {
 	return &DatabaseDiscoveryService{executor: executor}
 }
 
+// SetClusterDependencies 注入集群依赖，启用远程节点发现。
+// 可选注入：未注入时仅支持在 Master 本地发现。
+func (s *DatabaseDiscoveryService) SetClusterDependencies(nodeRepo repository.NodeRepository, rpc DatabaseDiscoveryAgentRPC) {
+	s.nodeRepo = nodeRepo
+	s.agentRPC = rpc
+}
+
 func (s *DatabaseDiscoveryService) Discover(ctx context.Context, input DatabaseDiscoverInput) (*DatabaseDiscoverResult, error) {
-	switch strings.TrimSpace(strings.ToLower(input.Type)) {
-	case "mysql":
-		return s.discoverMySQL(ctx, input)
-	case "postgresql":
-		return s.discoverPostgreSQL(ctx, input)
-	default:
+	dbType := strings.TrimSpace(strings.ToLower(input.Type))
+	if dbType != "mysql" && dbType != "postgresql" {
 		return nil, apperror.BadRequest("DATABASE_DISCOVER_INVALID_TYPE", "不支持的数据库类型", nil)
 	}
-}
-
-func (s *DatabaseDiscoveryService) discoverMySQL(ctx context.Context, input DatabaseDiscoverInput) (*DatabaseDiscoverResult, error) {
-	mysqlPath, err := s.executor.LookPath("mysql")
+	// 远程节点路由
+	if s.shouldRouteToAgent(ctx, input.NodeID) {
+		return s.discoverViaAgent(ctx, input)
+	}
+	// 本地执行
+	databases, err := backup.DiscoverDatabases(ctx, s.executor, backup.DiscoverRequest{
+		Type:     dbType,
+		Host:     input.Host,
+		Port:     input.Port,
+		User:     input.User,
+		Password: input.Password,
+	})
 	if err != nil {
-		return nil, apperror.BadRequest("DATABASE_DISCOVER_MYSQL_NOT_FOUND", "系统未安装 mysql 客户端", err)
+		// 统一映射为 BadRequest，便于前端显示
+		return nil, apperror.BadRequest("DATABASE_DISCOVER_FAILED", sanitizeMessage(err.Error()), err)
 	}
-
-	timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	var stdout, stderr bytes.Buffer
-	args := []string{
-		fmt.Sprintf("--host=%s", input.Host),
-		fmt.Sprintf("--port=%d", input.Port),
-		fmt.Sprintf("--user=%s", input.User),
-		"-e", "SHOW DATABASES",
-		"--skip-column-names",
-	}
-	env := []string{fmt.Sprintf("MYSQL_PWD=%s", input.Password)}
-
-	if err := s.executor.Run(timeout, mysqlPath, args, backup.CommandOptions{
-		Stdout: &stdout,
-		Stderr: &stderr,
-		Env:    env,
-	}); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg == "" {
-			errMsg = err.Error()
-		}
-		return nil, apperror.BadRequest("DATABASE_DISCOVER_MYSQL_FAILED", fmt.Sprintf("连接 MySQL 失败：%s", sanitizeMessage(errMsg)), err)
-	}
-
-	systemDBs := map[string]bool{
-		"information_schema": true,
-		"performance_schema": true,
-		"mysql":              true,
-		"sys":                true,
-	}
-
-	var databases []string
-	for _, line := range strings.Split(stdout.String(), "\n") {
-		db := strings.TrimSpace(line)
-		if db == "" || systemDBs[db] {
-			continue
-		}
-		databases = append(databases, db)
-	}
-
 	return &DatabaseDiscoverResult{Databases: databases}, nil
 }
 
-func (s *DatabaseDiscoveryService) discoverPostgreSQL(ctx context.Context, input DatabaseDiscoverInput) (*DatabaseDiscoverResult, error) {
-	psqlPath, err := s.executor.LookPath("psql")
+// shouldRouteToAgent 判断是否应路由到远程 Agent 执行发现。
+// NodeID=0、未注入集群依赖、或节点为本机时返回 false。
+func (s *DatabaseDiscoveryService) shouldRouteToAgent(ctx context.Context, nodeID uint) bool {
+	if nodeID == 0 || s.nodeRepo == nil || s.agentRPC == nil {
+		return false
+	}
+	node, err := s.nodeRepo.FindByID(ctx, nodeID)
+	if err != nil || node == nil || node.IsLocal {
+		return false
+	}
+	return true
+}
+
+// discoverViaAgent 下发 discover_db 命令到 Agent 并同步等待结果。
+// Agent 必须在线；命令 15s 内未返回视为超时。
+func (s *DatabaseDiscoveryService) discoverViaAgent(ctx context.Context, input DatabaseDiscoverInput) (*DatabaseDiscoverResult, error) {
+	node, err := s.nodeRepo.FindByID(ctx, input.NodeID)
 	if err != nil {
-		return nil, apperror.BadRequest("DATABASE_DISCOVER_PSQL_NOT_FOUND", "系统未安装 psql 客户端", err)
+		return nil, apperror.Internal("DATABASE_DISCOVER_NODE_LOOKUP_FAILED", "无法读取节点", err)
 	}
-
-	timeout, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	var stdout, stderr bytes.Buffer
-	args := []string{
-		"-h", input.Host,
-		"-p", fmt.Sprintf("%d", input.Port),
-		"-U", input.User,
-		"-d", "postgres",
-		"-t", "-A",
-		"-c", "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname",
+	if node == nil {
+		return nil, apperror.BadRequest("DATABASE_DISCOVER_NODE_NOT_FOUND", "指定的节点不存在", nil)
 	}
-	env := []string{fmt.Sprintf("PGPASSWORD=%s", input.Password)}
-
-	if err := s.executor.Run(timeout, psqlPath, args, backup.CommandOptions{
-		Stdout: &stdout,
-		Stderr: &stderr,
-		Env:    env,
-	}); err != nil {
-		errMsg := strings.TrimSpace(stderr.String())
-		if errMsg == "" {
-			errMsg = err.Error()
+	if node.Status != model.NodeStatusOnline {
+		return nil, apperror.BadRequest("NODE_OFFLINE", fmt.Sprintf("节点 %s 当前离线，无法执行数据库发现", node.Name), nil)
+	}
+	cmdID, err := s.agentRPC.EnqueueCommand(ctx, node.ID, model.AgentCommandTypeDiscoverDB, map[string]any{
+		"type":     strings.ToLower(input.Type),
+		"host":     input.Host,
+		"port":     input.Port,
+		"user":     input.User,
+		"password": input.Password,
+	})
+	if err != nil {
+		return nil, apperror.Internal("AGENT_COMMAND_ENQUEUE_FAILED", "无法下发数据库发现命令", err)
+	}
+	cmd, err := s.agentRPC.WaitForCommandResult(ctx, cmdID, 15*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if cmd.Status != model.AgentCommandStatusSucceeded {
+		msg := strings.TrimSpace(cmd.ErrorMessage)
+		if msg == "" {
+			msg = fmt.Sprintf("命令状态: %s", cmd.Status)
 		}
-		return nil, apperror.BadRequest("DATABASE_DISCOVER_PSQL_FAILED", fmt.Sprintf("连接 PostgreSQL 失败：%s", sanitizeMessage(errMsg)), err)
+		return nil, apperror.BadRequest("DATABASE_DISCOVER_FAILED", sanitizeMessage(msg), nil)
 	}
-
-	skipDBs := map[string]bool{
-		"postgres": true,
+	var result struct {
+		Databases []string `json:"databases"`
 	}
-
-	var databases []string
-	for _, line := range strings.Split(stdout.String(), "\n") {
-		db := strings.TrimSpace(line)
-		if db == "" || skipDBs[db] || strings.HasPrefix(db, "template") {
-			continue
-		}
-		databases = append(databases, db)
+	if err := json.Unmarshal([]byte(cmd.Result), &result); err != nil {
+		return nil, apperror.Internal("AGENT_RESULT_INVALID", "Agent 返回结果格式错误", err)
 	}
-
-	return &DatabaseDiscoverResult{Databases: databases}, nil
+	return &DatabaseDiscoverResult{Databases: result.Databases}, nil
 }

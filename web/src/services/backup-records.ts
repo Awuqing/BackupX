@@ -77,8 +77,10 @@ export async function downloadBackupRecord(id: number) {
   }
 }
 
+// @deprecated 请使用 services/restore-records.ts 的 startRestoreFromBackup。
+// 保留此导出避免破坏外部集成；返回类型已更新为异步恢复记录详情。
 export async function restoreBackupRecord(id: number) {
-  const response = await http.post<ApiEnvelope<{ restored: boolean }>>(`/backup/records/${id}/restore`)
+  const response = await http.post<ApiEnvelope<unknown>>(`/backup/records/${id}/restore`)
   return unwrapApiEnvelope(response.data)
 }
 

@@ -21,6 +21,14 @@ export interface BackupTaskSummary {
   maxBackups: number
   lastRunAt?: string
   lastStatus: BackupTaskStatus
+  verifyEnabled: boolean
+  verifyCronExpr: string
+  verifyMode: 'quick' | 'deep'
+  slaHoursRpo: number
+  alertOnConsecutiveFails: number
+  replicationTargetIds: number[]
+  maintenanceWindows: string
+  dependsOnTaskIds: number[]
   updatedAt: string
 }
 
@@ -63,6 +71,14 @@ export interface BackupTaskPayload {
   maxBackups: number
   /** 类型特有的扩展配置（如 SAP HANA 的 backupLevel/backupChannels 等） */
   extraConfig?: Record<string, unknown>
+  verifyEnabled: boolean
+  verifyCronExpr: string
+  verifyMode: 'quick' | 'deep'
+  slaHoursRpo: number
+  alertOnConsecutiveFails: number
+  replicationTargetIds: number[]
+  maintenanceWindows: string
+  dependsOnTaskIds: number[]
 }
 
 export interface BackupTaskTogglePayload {

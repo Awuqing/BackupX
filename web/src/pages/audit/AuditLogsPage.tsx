@@ -1,7 +1,7 @@
-import { PageHeader, Select, Space, Table, Tag, Typography } from '@arco-design/web-react'
+import { Button, DatePicker, Input, Message, PageHeader, Select, Space, Table, Tag, Typography } from '@arco-design/web-react'
 import type { ColumnProps } from '@arco-design/web-react/es/Table'
 import { useCallback, useEffect, useState } from 'react'
-import { listAuditLogs } from '../../services/audit'
+import { exportAuditLogs, listAuditLogs } from '../../services/audit'
 import type { AuditLog } from '../../types/audit'
 import { formatDateTime } from '../../utils/format'
 import { resolveErrorMessage } from '../../utils/error'
@@ -90,13 +90,21 @@ export function AuditLogsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [category, setCategory] = useState('')
+  const [username, setUsername] = useState('')
+  const [keyword, setKeyword] = useState('')
+  const [dateRange, setDateRange] = useState<string[] | null>(null)
   const [page, setPage] = useState(1)
+  const [exporting, setExporting] = useState(false)
 
-  const fetchData = useCallback(async (cat: string, currentPage: number) => {
+  const fetchData = useCallback(async (currentPage: number) => {
     setLoading(true)
     try {
       const result = await listAuditLogs({
-        category: cat || undefined,
+        category: category || undefined,
+        username: username.trim() || undefined,
+        keyword: keyword.trim() || undefined,
+        dateFrom: dateRange?.[0] ? new Date(dateRange[0]).toISOString() : undefined,
+        dateTo: dateRange?.[1] ? new Date(dateRange[1]).toISOString() : undefined,
         limit: PAGE_SIZE,
         offset: (currentPage - 1) * PAGE_SIZE,
       })
@@ -108,14 +116,35 @@ export function AuditLogsPage() {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [category, username, keyword, dateRange])
 
   useEffect(() => {
-    void fetchData(category, page)
-  }, [category, page, fetchData])
+    void fetchData(page)
+  }, [page, fetchData])
 
-  function handleCategoryChange(value: string) {
-    setCategory(value)
+  async function handleExport() {
+    setExporting(true)
+    try {
+      await exportAuditLogs({
+        category: category || undefined,
+        username: username.trim() || undefined,
+        keyword: keyword.trim() || undefined,
+        dateFrom: dateRange?.[0] ? new Date(dateRange[0]).toISOString() : undefined,
+        dateTo: dateRange?.[1] ? new Date(dateRange[1]).toISOString() : undefined,
+      })
+      Message.success('CSV 已开始下载')
+    } catch (e) {
+      Message.error(resolveErrorMessage(e, '导出失败'))
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  function handleReset() {
+    setCategory('')
+    setUsername('')
+    setKeyword('')
+    setDateRange(null)
     setPage(1)
   }
 
@@ -124,17 +153,39 @@ export function AuditLogsPage() {
       <PageHeader
         style={{ paddingBottom: 0 }}
         title="审计日志"
-        subTitle="记录系统中所有关键操作，保障数据操作链可溯源"
+        subTitle="记录系统中所有关键操作，保障数据操作链可溯源。支持高级筛选与 CSV 导出（最多 10000 行）。"
       />
       {error ? <Typography.Text type="error">{error}</Typography.Text> : null}
-      <Space>
+      <Space wrap>
         <Select
           style={{ width: 160 }}
           value={category}
           options={categoryOptions}
-          onChange={handleCategoryChange}
-          placeholder="筛选分类"
+          onChange={(v) => { setCategory(v); setPage(1) }}
+          placeholder="分类"
         />
+        <Input
+          style={{ width: 160 }}
+          value={username}
+          placeholder="用户名"
+          onChange={setUsername}
+          onPressEnter={() => { setPage(1); void fetchData(1) }}
+        />
+        <Input
+          style={{ width: 240 }}
+          value={keyword}
+          placeholder="关键词（详情/目标名）"
+          onChange={setKeyword}
+          onPressEnter={() => { setPage(1); void fetchData(1) }}
+        />
+        <DatePicker.RangePicker
+          showTime
+          value={dateRange ?? undefined}
+          onChange={(v) => { setDateRange(v as string[] | null); setPage(1) }}
+        />
+        <Button type="primary" onClick={() => { setPage(1); void fetchData(1) }}>查询</Button>
+        <Button onClick={handleReset}>重置</Button>
+        <Button type="outline" loading={exporting} onClick={() => void handleExport()}>导出 CSV</Button>
       </Space>
       <Table
         columns={columns}

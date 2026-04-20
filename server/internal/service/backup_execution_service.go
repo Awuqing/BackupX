@@ -81,14 +81,40 @@ type BackupExecutionService struct {
 	logHub          *backup.LogHub
 	retention       *backupretention.Service
 	cipher          *codec.ConfigCipher
-	notifier        BackupResultNotifier
-	agentDispatcher AgentDispatcher
+	notifier           BackupResultNotifier
+	agentDispatcher    AgentDispatcher
+	replicationHook    ReplicationTrigger
+	dependentsResolver DependentsResolver
 	async           func(func())
 	now             func() time.Time
 	tempDir         string
 	semaphore       chan struct{}
-	retries         int    // rclone 底层重试次数
-	bandwidthLimit  string // rclone 带宽限制
+	// nodeSemaphores 节点级并发限制（按 NodeID 映射）。
+	// 没命中的 NodeID 走全局 semaphore，节点配置 MaxConcurrent>0 时按该节点独立排队。
+	nodeSemaphores sync.Map
+	retries        int    // rclone 底层重试次数
+	bandwidthLimit string // rclone 带宽限制
+}
+
+// ReplicationTrigger 抽象备份成功后的副本派发（实现者：ReplicationService）。
+type ReplicationTrigger interface {
+	TriggerAutoReplication(ctx context.Context, task *model.BackupTask, record *model.BackupRecord)
+}
+
+// SetReplicationTrigger 注入备份复制触发器。可选注入：未注入时不自动复制。
+func (s *BackupExecutionService) SetReplicationTrigger(trigger ReplicationTrigger) {
+	s.replicationHook = trigger
+}
+
+// DependentsResolver 根据 upstream 任务 ID 返回应触发的下游任务 ID。
+// 由 BackupTaskService 实现。抽象接口避免执行服务直接查仓储。
+type DependentsResolver interface {
+	TriggerDependents(ctx context.Context, upstreamID uint) ([]uint, error)
+}
+
+// SetDependentsResolver 注入下游依赖解析器。
+func (s *BackupExecutionService) SetDependentsResolver(r DependentsResolver) {
+	s.dependentsResolver = r
 }
 
 // AgentDispatcher 抽象把任务下发给 Agent 的能力，由 AgentService 实现。
@@ -157,7 +183,18 @@ func (s *BackupExecutionService) RunTaskByIDSync(ctx context.Context, id uint) (
 }
 
 func (s *BackupExecutionService) DownloadRecord(ctx context.Context, recordID uint) (*DownloadedArtifact, error) {
-	record, provider, err := s.loadRecordProvider(ctx, recordID)
+	record, err := s.records.FindByID(ctx, recordID)
+	if err != nil {
+		return nil, apperror.Internal("BACKUP_RECORD_GET_FAILED", "无法获取备份记录详情", err)
+	}
+	if record == nil {
+		return nil, apperror.New(404, "BACKUP_RECORD_NOT_FOUND", "备份记录不存在", fmt.Errorf("backup record %d not found", recordID))
+	}
+	// 集群场景保护：local_disk 类型的存储文件只在执行节点本地可见，Master 不能跨节点访问
+	if err := s.validateClusterAccessible(ctx, record); err != nil {
+		return nil, err
+	}
+	provider, err := s.resolveProvider(ctx, record.StorageTargetID)
 	if err != nil {
 		return nil, err
 	}
@@ -219,17 +256,57 @@ func (s *BackupExecutionService) RestoreRecord(ctx context.Context, recordID uin
 }
 
 func (s *BackupExecutionService) DeleteRecord(ctx context.Context, recordID uint) error {
-	record, provider, err := s.loadRecordProvider(ctx, recordID)
+	record, err := s.records.FindByID(ctx, recordID)
 	if err != nil {
+		return apperror.Internal("BACKUP_RECORD_GET_FAILED", "无法获取备份记录详情", err)
+	}
+	if record == nil {
+		return apperror.New(404, "BACKUP_RECORD_NOT_FOUND", "备份记录不存在", fmt.Errorf("backup record %d not found", recordID))
+	}
+	// 集群场景保护：跨节点 local_disk 文件 Master 无法远程删除，拒绝操作以避免存储泄漏的错觉
+	if err := s.validateClusterAccessible(ctx, record); err != nil {
 		return err
 	}
 	if strings.TrimSpace(record.StoragePath) != "" {
+		provider, err := s.resolveProvider(ctx, record.StorageTargetID)
+		if err != nil {
+			return err
+		}
 		if err := provider.Delete(ctx, record.StoragePath); err != nil {
 			return apperror.Internal("BACKUP_RECORD_DELETE_FAILED", "无法删除备份文件", err)
 		}
 	}
 	if err := s.records.Delete(ctx, recordID); err != nil {
 		return apperror.Internal("BACKUP_RECORD_DELETE_FAILED", "无法删除备份记录", err)
+	}
+	return nil
+}
+
+// validateClusterAccessible 在跨节点 + local_disk 场景下拒绝 Master 端直接访问。
+// 场景说明：远程 Agent 把备份写到其本机磁盘（local_disk basePath）时，Master 的
+// provider 指向的是 Master 本机的同名路径，访问会静默取错文件或 404。明确拒绝
+// 让用户知情，避免假成功。
+func (s *BackupExecutionService) validateClusterAccessible(ctx context.Context, record *model.BackupRecord) error {
+	if record == nil || record.NodeID == 0 {
+		return nil
+	}
+	// 检查是否为远程节点
+	if s.nodeRepo == nil {
+		return nil
+	}
+	node, err := s.nodeRepo.FindByID(ctx, record.NodeID)
+	if err != nil || node == nil || node.IsLocal {
+		return nil
+	}
+	// 检查存储类型是否为 local_disk（跨节点不可达）
+	target, err := s.targets.FindByID(ctx, record.StorageTargetID)
+	if err != nil || target == nil {
+		return nil
+	}
+	if strings.EqualFold(target.Type, "local_disk") {
+		return apperror.BadRequest("BACKUP_RECORD_CROSS_NODE_LOCAL_DISK",
+			fmt.Sprintf("该备份位于节点 %s 的本地磁盘（local_disk），Master 无法跨节点访问。请登录该节点或改用云存储后再操作。", node.Name),
+			nil)
 	}
 	return nil
 }
@@ -242,13 +319,22 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 	if task == nil {
 		return nil, apperror.New(404, "BACKUP_TASK_NOT_FOUND", "备份任务不存在", fmt.Errorf("backup task %d not found", id))
 	}
+	// 维护窗口校验：手动执行同样尊重窗口，避免业务高峰期误触发。
+	if strings.TrimSpace(task.MaintenanceWindows) != "" {
+		windows := backup.ParseMaintenanceWindows(task.MaintenanceWindows)
+		if len(windows) > 0 && !backup.IsWithinWindow(s.now(), windows) {
+			return nil, apperror.BadRequest("BACKUP_TASK_OUTSIDE_WINDOW",
+				fmt.Sprintf("当前时间不在任务「%s」的维护窗口内（%s），已拒绝执行。", task.Name, task.MaintenanceWindows),
+				nil)
+		}
+	}
 	startedAt := s.now()
 	// 取第一个存储目标 ID 做兼容
 	primaryTargetID := task.StorageTargetID
 	if tids := collectTargetIDs(task); len(tids) > 0 {
 		primaryTargetID = tids[0]
 	}
-	record := &model.BackupRecord{TaskID: task.ID, StorageTargetID: primaryTargetID, Status: "running", StartedAt: startedAt}
+	record := &model.BackupRecord{TaskID: task.ID, StorageTargetID: primaryTargetID, NodeID: task.NodeID, Status: "running", StartedAt: startedAt}
 	if err := s.records.Create(ctx, record); err != nil {
 		return nil, apperror.Internal("BACKUP_RECORD_CREATE_FAILED", "无法创建备份记录", err)
 	}
@@ -259,7 +345,14 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 	}
 	// 多节点路由：task.NodeID 指向远程节点时，把执行任务入队给 Agent；
 	// NodeID=0 或本机节点时由 Master 直接执行。
-	if s.isRemoteNode(ctx, task.NodeID) {
+	if remoteNode := s.resolveRemoteNode(ctx, task.NodeID); remoteNode != nil {
+		// 节点离线 → 立即把刚创建的 running 记录标记 failed，返回明确错误
+		if remoteNode.Status != model.NodeStatusOnline {
+			offlineMsg := fmt.Sprintf("节点 %s 当前离线，无法执行备份任务", remoteNode.Name)
+			_ = s.finalizeRecord(ctx, task, record.ID, startedAt, model.BackupRecordStatusFailed,
+				offlineMsg, "", "", 0, "", "")
+			return nil, apperror.BadRequest("NODE_OFFLINE", offlineMsg, nil)
+		}
 		if _, enqueueErr := s.agentDispatcher.EnqueueCommand(ctx, task.NodeID, model.AgentCommandTypeRunTask, map[string]any{
 			"taskId":   task.ID,
 			"recordId": record.ID,
@@ -282,20 +375,84 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 	return s.getRecordDetail(ctx, record.ID)
 }
 
+// shouldNotify 按任务的告警策略决定是否发送本次通知。
+// 成功结果：始终发送（方便用户确认备份状态）。
+// 失败结果：仅当"最近 N 条记录（含本次）均为 failed"时发送，N = AlertOnConsecutiveFails。
+// 该策略降低单次偶发失败的告警噪音，企业运维场景下更友好。
+func (s *BackupExecutionService) shouldNotify(ctx context.Context, task *model.BackupTask, status string) bool {
+	if task == nil {
+		return true
+	}
+	threshold := task.AlertOnConsecutiveFails
+	if threshold <= 1 {
+		return true
+	}
+	if status != model.BackupRecordStatusFailed {
+		return true
+	}
+	items, err := s.records.ListByTask(ctx, task.ID)
+	if err != nil || len(items) < threshold {
+		return true
+	}
+	// ListByTask 默认按 id desc 返回：取前 threshold 条
+	count := threshold
+	if len(items) < count {
+		count = len(items)
+	}
+	for i := 0; i < count; i++ {
+		if items[i].Status != model.BackupRecordStatusFailed {
+			return false
+		}
+	}
+	return true
+}
+
+// acquireNodeSemaphore 返回节点级并发通道。懒初始化：第一次为某节点排队时创建。
+// 如果节点未配置 MaxConcurrent 或 nodeRepo 未注入，返回 nil（调用方走全局 semaphore）。
+// 节点容量仅在首次创建时采用，后续变更需重启服务才生效（避免运行时 resize 通道的复杂度）。
+func (s *BackupExecutionService) acquireNodeSemaphore(ctx context.Context, nodeID uint) chan struct{} {
+	if nodeID == 0 || s.nodeRepo == nil {
+		return nil
+	}
+	if v, ok := s.nodeSemaphores.Load(nodeID); ok {
+		return v.(chan struct{})
+	}
+	node, err := s.nodeRepo.FindByID(ctx, nodeID)
+	if err != nil || node == nil || node.MaxConcurrent <= 0 {
+		return nil
+	}
+	created := make(chan struct{}, node.MaxConcurrent)
+	actual, _ := s.nodeSemaphores.LoadOrStore(nodeID, created)
+	return actual.(chan struct{})
+}
+
 // isRemoteNode 判断 NodeID 是否指向一个有效的远程（非本机）节点。
 // 当未注入集群依赖、nodeID 为 0、或节点为本机时，均返回 false（走本地执行）。
 func (s *BackupExecutionService) isRemoteNode(ctx context.Context, nodeID uint) bool {
+	return s.resolveRemoteNode(ctx, nodeID) != nil
+}
+
+// resolveRemoteNode 返回 NodeID 对应的远程节点指针，或 nil 表示本机执行。
+// 相比 isRemoteNode，它让调用方能读取节点状态（在线/离线）做进一步判断。
+func (s *BackupExecutionService) resolveRemoteNode(ctx context.Context, nodeID uint) *model.Node {
 	if s.nodeRepo == nil || s.agentDispatcher == nil || nodeID == 0 {
-		return false
+		return nil
 	}
 	node, err := s.nodeRepo.FindByID(ctx, nodeID)
-	if err != nil || node == nil {
-		return false
+	if err != nil || node == nil || node.IsLocal {
+		return nil
 	}
-	return !node.IsLocal
+	return node
 }
 
 func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time) {
+	// 节点级并发限流：当任务绑定节点且节点配置了 MaxConcurrent>0，
+	// 该节点上所有任务共享一个节点专属 semaphore，互相排队
+	nodeSem := s.acquireNodeSemaphore(ctx, task.NodeID)
+	if nodeSem != nil {
+		nodeSem <- struct{}{}
+		defer func() { <-nodeSem }()
+	}
 	s.semaphore <- struct{}{}
 	defer func() { <-s.semaphore }()
 
@@ -320,8 +477,12 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 				}
 			}
 		}
-		if err := s.notifier.NotifyBackupResult(ctx, BackupExecutionNotification{Task: task, Record: &model.BackupRecord{ID: recordID, TaskID: task.ID, Status: status, FileName: fileName, FileSize: fileSize, StoragePath: storagePath, ErrorMessage: errMessage, StartedAt: startedAt}, Error: buildOptionalError(errMessage)}); err != nil {
-			logger.Warnf("发送备份通知失败：%v", err)
+		if s.shouldNotify(ctx, task, status) {
+			if err := s.notifier.NotifyBackupResult(ctx, BackupExecutionNotification{Task: task, Record: &model.BackupRecord{ID: recordID, TaskID: task.ID, Status: status, FileName: fileName, FileSize: fileSize, StoragePath: storagePath, ErrorMessage: errMessage, StartedAt: startedAt}, Error: buildOptionalError(errMessage)}); err != nil {
+				logger.Warnf("发送备份通知失败：%v", err)
+			}
+		} else {
+			logger.Infof("连续失败次数未达通知阈值（%d），跳过本次告警", task.AlertOnConsecutiveFails)
 		}
 		s.logHub.Complete(recordID, status)
 	}
@@ -403,6 +564,24 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: resolveErr.Error()}
 				logger.Warnf("存储目标 %s 创建客户端失败：%v", targetName, resolveErr)
 				return
+			}
+			// 软限额校验：QuotaBytes > 0 时，已累计 + 本次 > 配额 → 拒绝上传
+			if target != nil && target.QuotaBytes > 0 {
+				currentUsed := int64(0)
+				if items, err := s.records.StorageUsage(ctx); err == nil {
+					for _, it := range items {
+						if it.StorageTargetID == targetID {
+							currentUsed = it.TotalSize
+							break
+						}
+					}
+				}
+				if currentUsed+fileSize > target.QuotaBytes {
+					quotaMsg := fmt.Sprintf("超出存储目标 %s 的配额（%d + %d > %d）", targetName, currentUsed, fileSize, target.QuotaBytes)
+					uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: quotaMsg}
+					logger.Warnf("%s", quotaMsg)
+					return
+				}
 			}
 			logger.Infof("开始上传备份到存储目标：%s", targetName)
 			// 上传级重试：最多 3 次，指数退避（10s, 30s, 90s）
@@ -489,6 +668,47 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 			logger.Warnf("部分存储目标上传失败：%s", strings.Join(failedMessages, "; "))
 		}
 		logger.Infof("备份执行完成")
+		// 自动派发复制（3-2-1）：任务配置 ReplicationTargetIDs 且本次有任意目标成功时生效
+		// 触发下游依赖任务（best-effort，失败仅 warn）
+		if s.dependentsResolver != nil {
+			go func(upstreamID uint, upstreamName string) {
+				dependents, err := s.dependentsResolver.TriggerDependents(context.Background(), upstreamID)
+				if err != nil {
+					return
+				}
+				for _, depID := range dependents {
+					_, runErr := s.RunTaskByID(context.Background(), depID)
+					if runErr != nil {
+						logger.Warnf("触发下游任务 #%d 失败（上游: %s）: %v", depID, upstreamName, runErr)
+					} else {
+						logger.Infof("已触发下游任务 #%d（上游: %s）", depID, upstreamName)
+					}
+				}
+			}(task.ID, task.Name)
+		}
+		if s.replicationHook != nil && strings.TrimSpace(task.ReplicationTargetIDs) != "" {
+			record := &model.BackupRecord{
+				ID:              recordID,
+				TaskID:          task.ID,
+				StorageTargetID: task.StorageTargetID,
+				NodeID:          task.NodeID,
+				Status:          "success",
+				FileName:        fileName,
+				FileSize:        fileSize,
+				Checksum:        checksum,
+				StoragePath:     storagePath,
+				StartedAt:       startedAt,
+			}
+			// 取第一个成功的上传作为源 target，避免从失败目标拉取
+			for _, r := range uploadResults {
+				if r.Status == "success" {
+					record.StorageTargetID = r.StorageTargetID
+					break
+				}
+			}
+			logger.Infof("触发自动复制（3-2-1 规则）：%s", task.ReplicationTargetIDs)
+			s.replicationHook.TriggerAutoReplication(context.Background(), task, record)
+		}
 	} else {
 		errMessage = strings.Join(failedMessages, "; ")
 		logger.Errorf("所有存储目标上传均失败")

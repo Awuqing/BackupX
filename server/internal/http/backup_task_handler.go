@@ -40,6 +40,16 @@ func (h *BackupTaskHandler) List(c *gin.Context) {
 	response.Success(c, items)
 }
 
+// ListTags 返回系统内所有任务用过的唯一标签列表，供前端标签选择器的建议词。
+func (h *BackupTaskHandler) ListTags(c *gin.Context) {
+	tags, err := h.service.ListTags(c.Request.Context())
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Success(c, tags)
+}
+
 func (h *BackupTaskHandler) Get(c *gin.Context) {
 	id, ok := parseUintParam(c, "id")
 	if !ok {
@@ -104,6 +114,55 @@ func (h *BackupTaskHandler) Delete(c *gin.Context) {
 	recordAudit(c, h.auditService, "backup_task", "delete", "backup_task", fmt.Sprintf("%d", id), result.TaskName,
 		fmt.Sprintf("删除备份任务「%s」(ID: %d)，关联记录 %d 条，已清理远端文件 %d 个", result.TaskName, id, result.RecordCount, result.CleanedFiles))
 	response.Success(c, gin.H{"deleted": true})
+}
+
+// BatchToggle / BatchDelete 批量操作。
+// Body: {"ids": [1,2,3], "enabled": true}  (enabled 仅 toggle 用)
+func (h *BackupTaskHandler) BatchToggle(c *gin.Context) {
+	var input struct {
+		IDs     []uint `json:"ids" binding:"required,min=1"`
+		Enabled bool   `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.Error(c, apperror.BadRequest("BACKUP_TASK_BATCH_INVALID", "批量操作参数不合法", err))
+		return
+	}
+	results := h.service.BatchToggle(c.Request.Context(), input.IDs, input.Enabled)
+	succ := 0
+	for _, r := range results {
+		if r.Success {
+			succ++
+		}
+	}
+	action := "batch_enable"
+	label := "启用"
+	if !input.Enabled {
+		action = "batch_disable"
+		label = "停用"
+	}
+	recordAudit(c, h.auditService, "backup_task", action, "backup_task", "", "",
+		fmt.Sprintf("批量%s %d/%d 个任务", label, succ, len(results)))
+	response.Success(c, results)
+}
+
+func (h *BackupTaskHandler) BatchDelete(c *gin.Context) {
+	var input struct {
+		IDs []uint `json:"ids" binding:"required,min=1"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.Error(c, apperror.BadRequest("BACKUP_TASK_BATCH_INVALID", "批量删除参数不合法", err))
+		return
+	}
+	results := h.service.BatchDeleteTasks(c.Request.Context(), input.IDs)
+	succ := 0
+	for _, r := range results {
+		if r.Success {
+			succ++
+		}
+	}
+	recordAudit(c, h.auditService, "backup_task", "batch_delete", "backup_task", "", "",
+		fmt.Sprintf("批量删除 %d/%d 个任务", succ, len(results)))
+	response.Success(c, results)
 }
 
 func (h *BackupTaskHandler) Toggle(c *gin.Context) {

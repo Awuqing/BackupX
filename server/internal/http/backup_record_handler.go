@@ -16,12 +16,13 @@ import (
 )
 
 type BackupRecordHandler struct {
-	service      *service.BackupRecordService
-	auditService *service.AuditService
+	service        *service.BackupRecordService
+	restoreService *service.RestoreService
+	auditService   *service.AuditService
 }
 
-func NewBackupRecordHandler(recordService *service.BackupRecordService, auditService *service.AuditService) *BackupRecordHandler {
-	return &BackupRecordHandler{service: recordService, auditService: auditService}
+func NewBackupRecordHandler(recordService *service.BackupRecordService, restoreService *service.RestoreService, auditService *service.AuditService) *BackupRecordHandler {
+	return &BackupRecordHandler{service: recordService, restoreService: restoreService, auditService: auditService}
 }
 
 func (h *BackupRecordHandler) List(c *gin.Context) {
@@ -121,18 +122,29 @@ func (h *BackupRecordHandler) Download(c *gin.Context) {
 	_, _ = io.Copy(c.Writer, result.Reader)
 }
 
+// Restore 启动一次异步恢复并返回 restoreRecordId；实际执行路由由 RestoreService
+// 根据 task.NodeID 决定（本地 Master or 远程 Agent）。
 func (h *BackupRecordHandler) Restore(c *gin.Context) {
 	id, ok := parseUintParam(c, "id")
 	if !ok {
 		return
 	}
-	if err := h.service.Restore(c.Request.Context(), id); err != nil {
+	if h.restoreService == nil {
+		response.Error(c, apperror.Internal("RESTORE_SERVICE_DISABLED", "恢复服务未启用", nil))
+		return
+	}
+	triggeredBy := ""
+	if subject, exists := c.Get(contextUserSubjectKey); exists {
+		triggeredBy = strings.TrimSpace(fmt.Sprintf("%v", subject))
+	}
+	detail, err := h.restoreService.Start(c.Request.Context(), id, triggeredBy)
+	if err != nil {
 		response.Error(c, err)
 		return
 	}
 	recordAudit(c, h.auditService, "backup_record", "restore", "backup_record", fmt.Sprintf("%d", id), "",
-		fmt.Sprintf("恢复备份记录 (ID: %d)", id))
-	response.Success(c, gin.H{"restored": true})
+		fmt.Sprintf("启动恢复 (备份记录 ID: %d, 恢复记录 ID: %d)", id, detail.ID))
+	response.Success(c, detail)
 }
 
 func (h *BackupRecordHandler) Delete(c *gin.Context) {

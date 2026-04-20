@@ -1,9 +1,17 @@
-import { Alert, Button, Descriptions, Drawer, Space, Spin, Tag, Typography } from '@arco-design/web-react'
+import { Alert, Button, Descriptions, Drawer, Message, Space, Spin, Tag, Typography } from '@arco-design/web-react'
 import { useEffect, useMemo, useState } from 'react'
-import { deleteBackupRecord, downloadBackupRecord, getBackupRecord, restoreBackupRecord, streamBackupRecordLogs } from '../../services/backup-records'
+import { useNavigate } from 'react-router-dom'
+import { deleteBackupRecord, downloadBackupRecord, getBackupRecord, streamBackupRecordLogs } from '../../services/backup-records'
+import { getBackupTask } from '../../services/backup-tasks'
+import { startRestoreFromBackup } from '../../services/restore-records'
+import { startVerifyByRecord } from '../../services/verification-records'
+import { useAuthStore } from '../../stores/auth'
+import { canWrite } from '../../utils/permissions'
 import type { BackupLogEvent, BackupRecordDetail, BackupRecordStatus, StorageUploadResultItem } from '../../types/backup-records'
+import type { BackupTaskDetail } from '../../types/backup-tasks'
 import { resolveErrorMessage } from '../../utils/error'
 import { formatBytes, formatDateTime, formatDuration } from '../../utils/format'
+import { RestoreConfirmModal } from '../restore-records/RestoreConfirmModal'
 
 interface BackupRecordLogDrawerProps {
   visible: boolean
@@ -31,12 +39,20 @@ function buildLogText(record: BackupRecordDetail | null, events: BackupLogEvent[
 }
 
 export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }: BackupRecordLogDrawerProps) {
+  const navigate = useNavigate()
+  const currentUser = useAuthStore((state) => state.user)
+  const writable = canWrite(currentUser)
   const [record, setRecord] = useState<BackupRecordDetail | null>(null)
   const [events, setEvents] = useState<BackupLogEvent[]>([])
   const [loading, setLoading] = useState(false)
   const [acting, setActing] = useState(false)
   const [error, setError] = useState('')
   const [streamError, setStreamError] = useState('')
+  const [restoreModalVisible, setRestoreModalVisible] = useState(false)
+  const [restoreTask, setRestoreTask] = useState<BackupTaskDetail | null>(null)
+  const [restoreLoading, setRestoreLoading] = useState(false)
+  const [restorePreparing, setRestorePreparing] = useState(false)
+  const [verifyLoading, setVerifyLoading] = useState(false)
 
   useEffect(() => {
     if (!visible || !recordId) {
@@ -141,19 +157,57 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
     }
   }
 
-  async function handleRestore() {
+  // handleOpenRestore 准备恢复所需的任务上下文并打开确认弹窗。
+  // 只有在用户明确二次确认后，才会真正触发异步恢复流程。
+  async function handleOpenRestore() {
+    if (!record) {
+      return
+    }
+    setRestorePreparing(true)
+    try {
+      const task = await getBackupTask(record.taskId)
+      setRestoreTask(task)
+      setRestoreModalVisible(true)
+    } catch (prepareError) {
+      Message.error(resolveErrorMessage(prepareError, '加载任务信息失败'))
+    } finally {
+      setRestorePreparing(false)
+    }
+  }
+
+  // handleVerify 基于当前备份记录启动一次快速验证，验证结果在"验证演练"页面查看。
+  async function handleVerify() {
+    if (!recordId) return
+    setVerifyLoading(true)
+    try {
+      const verify = await startVerifyByRecord(recordId, 'quick')
+      Message.success('验证已启动，正在打开结果')
+      navigate(`/verify/records?verifyId=${verify.id}`)
+      onCancel()
+    } catch (e) {
+      Message.error(resolveErrorMessage(e, '启动验证失败'))
+    } finally {
+      setVerifyLoading(false)
+    }
+  }
+
+  async function handleConfirmRestore() {
     if (!recordId) {
       return
     }
-    setActing(true)
+    setRestoreLoading(true)
     try {
-      await restoreBackupRecord(recordId)
-      setStreamError('恢复命令已提交')
+      const restore = await startRestoreFromBackup(recordId)
+      Message.success('恢复已启动，正在打开日志')
+      setRestoreModalVisible(false)
+      setRestoreTask(null)
       await onChanged?.()
+      navigate(`/restore/records?restoreId=${restore.id}`)
+      onCancel()
     } catch (restoreError) {
-      setStreamError(resolveErrorMessage(restoreError, '恢复备份失败'))
+      Message.error(resolveErrorMessage(restoreError, '启动恢复失败'))
     } finally {
-      setActing(false)
+      setRestoreLoading(false)
     }
   }
 
@@ -214,12 +268,30 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
             <Button loading={acting} onClick={handleDownload}>
               下载
             </Button>
-            <Button loading={acting} onClick={handleRestore}>
-              恢复
-            </Button>
-            <Button loading={acting} status="danger" onClick={handleDelete}>
-              删除
-            </Button>
+            {writable && (
+              <Button
+                type="primary"
+                loading={restorePreparing}
+                disabled={record.status !== 'success'}
+                onClick={() => void handleOpenRestore()}
+              >
+                恢复
+              </Button>
+            )}
+            {writable && (
+              <Button
+                loading={verifyLoading}
+                disabled={record.status !== 'success'}
+                onClick={() => void handleVerify()}
+              >
+                验证
+              </Button>
+            )}
+            {writable && (
+              <Button loading={acting} status="danger" onClick={handleDelete}>
+                删除
+              </Button>
+            )}
           </Space>
           {record.storageUploadResults && record.storageUploadResults.length > 1 && (
             <div>
@@ -240,6 +312,18 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
           </div>
         </Space>
       ) : null}
+      <RestoreConfirmModal
+        visible={restoreModalVisible}
+        loading={restoreLoading}
+        backupRecord={record}
+        task={restoreTask}
+        onCancel={() => {
+          if (restoreLoading) return
+          setRestoreModalVisible(false)
+          setRestoreTask(null)
+        }}
+        onConfirm={() => void handleConfirmRestore()}
+      />
     </Drawer>
   )
 }
