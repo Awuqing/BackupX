@@ -66,3 +66,21 @@ func (s *AuditService) List(ctx context.Context, category string, limit, offset 
 	}
 	return result, nil
 }
+
+// ListAdvanced 多字段筛选分页查询（合规审计常用）。
+func (s *AuditService) ListAdvanced(ctx context.Context, opts repository.AuditLogListOptions) (*repository.AuditLogListResult, error) {
+	result, err := s.repo.List(ctx, opts)
+	if err != nil {
+		return nil, apperror.Internal("AUDIT_LOG_LIST_FAILED", fmt.Sprintf("无法获取审计日志: %v", err), err)
+	}
+	return result, nil
+}
+
+// ExportAll 返回指定筛选条件下的全部审计日志（最多 10000 条），用于 CSV 导出。
+func (s *AuditService) ExportAll(ctx context.Context, opts repository.AuditLogListOptions) ([]model.AuditLog, error) {
+	items, err := s.repo.ListAll(ctx, opts)
+	if err != nil {
+		return nil, apperror.Internal("AUDIT_LOG_EXPORT_FAILED", fmt.Sprintf("无法导出审计日志: %v", err), err)
+	}
+	return items, nil
+}

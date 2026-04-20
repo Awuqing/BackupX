@@ -22,6 +22,7 @@ type AgentService struct {
 	recordRepo  repository.BackupRecordRepository
 	storageRepo repository.StorageTargetRepository
 	cmdRepo     repository.AgentCommandRepository
+	restoreRepo repository.RestoreRecordRepository
 	cipher      *codec.ConfigCipher
 }
 
@@ -41,6 +42,12 @@ func NewAgentService(
 		cmdRepo:     cmdRepo,
 		cipher:      cipher,
 	}
+}
+
+// SetRestoreRepository 注入恢复记录仓储，用于命令超时时联动 restore_record 状态。
+// 可选注入：未注入时恢复命令超时仅标记命令 timeout，记录需另行查验。
+func (s *AgentService) SetRestoreRepository(repo repository.RestoreRecordRepository) {
+	s.restoreRepo = repo
 }
 
 // AuthenticatedNode 通过 token 解析并返回节点。失败返回 401。
@@ -325,6 +332,8 @@ func (s *AgentService) WaitForCommandResult(ctx context.Context, cmdID uint, tim
 }
 
 // StartCommandTimeoutMonitor 启动后台定时任务，把超时命令标记为 timeout。
+// 对于 run_task / restore_record 命令，同时把关联的 BackupRecord / RestoreRecord
+// 标记为 failed，避免 Agent 离线/崩溃时记录永远卡在 running。
 func (s *AgentService) StartCommandTimeoutMonitor(ctx context.Context, interval time.Duration, timeout time.Duration) {
 	if interval <= 0 {
 		interval = 30 * time.Second
@@ -341,10 +350,74 @@ func (s *AgentService) StartCommandTimeoutMonitor(ctx context.Context, interval 
 				return
 			case <-ticker.C:
 				threshold := time.Now().UTC().Add(-timeout)
-				_, _ = s.cmdRepo.MarkStaleTimeout(ctx, threshold)
+				s.processStaleCommands(ctx, threshold)
 			}
 		}
 	}()
+}
+
+// processStaleCommands 扫描已超时的 dispatched 命令并联动关联记录。
+// 流程：先取超时候选 → 对每条联动 backup/restore 记录 → 把命令置为 timeout。
+// 单条失败不影响后续处理。
+func (s *AgentService) processStaleCommands(ctx context.Context, threshold time.Time) {
+	commands, err := s.cmdRepo.ListStaleDispatched(ctx, threshold)
+	if err != nil || len(commands) == 0 {
+		return
+	}
+	for i := range commands {
+		cmd := commands[i]
+		s.failLinkedRecord(ctx, &cmd)
+		now := time.Now().UTC()
+		cmd.Status = model.AgentCommandStatusTimeout
+		cmd.ErrorMessage = "agent did not report result before timeout"
+		cmd.CompletedAt = &now
+		_ = s.cmdRepo.Update(ctx, &cmd)
+	}
+}
+
+// failLinkedRecord 根据命令类型把关联记录标记为 failed。
+// 只对仍然处于 running 状态的记录生效，避免覆盖已完成的结果。
+func (s *AgentService) failLinkedRecord(ctx context.Context, cmd *model.AgentCommand) {
+	const failureMessage = "Agent 未在超时前回传状态（节点可能已离线或崩溃）"
+	switch cmd.Type {
+	case model.AgentCommandTypeRunTask:
+		var payload struct {
+			RecordID uint `json:"recordId"`
+		}
+		if err := json.Unmarshal([]byte(cmd.Payload), &payload); err != nil || payload.RecordID == 0 {
+			return
+		}
+		record, err := s.recordRepo.FindByID(ctx, payload.RecordID)
+		if err != nil || record == nil || record.Status != model.BackupRecordStatusRunning {
+			return
+		}
+		completedAt := time.Now().UTC()
+		record.Status = model.BackupRecordStatusFailed
+		record.ErrorMessage = failureMessage
+		record.CompletedAt = &completedAt
+		record.DurationSeconds = int(completedAt.Sub(record.StartedAt).Seconds())
+		_ = s.recordRepo.Update(ctx, record)
+	case model.AgentCommandTypeRestoreRecord:
+		if s.restoreRepo == nil {
+			return
+		}
+		var payload struct {
+			RestoreRecordID uint `json:"restoreRecordId"`
+		}
+		if err := json.Unmarshal([]byte(cmd.Payload), &payload); err != nil || payload.RestoreRecordID == 0 {
+			return
+		}
+		restore, err := s.restoreRepo.FindByID(ctx, payload.RestoreRecordID)
+		if err != nil || restore == nil || restore.Status != model.RestoreRecordStatusRunning {
+			return
+		}
+		completedAt := time.Now().UTC()
+		restore.Status = model.RestoreRecordStatusFailed
+		restore.ErrorMessage = failureMessage
+		restore.CompletedAt = &completedAt
+		restore.DurationSeconds = int(completedAt.Sub(restore.StartedAt).Seconds())
+		_ = s.restoreRepo.Update(ctx, restore)
+	}
 }
 
 // AgentSelfStatus 是 /api/v1/agent/self 端点返回给 Agent 的轻量状态摘要。

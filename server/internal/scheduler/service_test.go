@@ -26,6 +26,12 @@ func (r *fakeTaskRepository) FindByName(context.Context, string) (*model.BackupT
 func (r *fakeTaskRepository) ListSchedulable(context.Context) ([]model.BackupTask, error) {
 	return r.items, nil
 }
+func (r *fakeTaskRepository) ListVerifySchedulable(context.Context) ([]model.BackupTask, error) {
+	return nil, nil
+}
+func (r *fakeTaskRepository) DistinctTags(context.Context) ([]string, error) {
+	return nil, nil
+}
 func (r *fakeTaskRepository) Count(context.Context) (int64, error)        { return 0, nil }
 func (r *fakeTaskRepository) CountEnabled(context.Context) (int64, error) { return 0, nil }
 func (r *fakeTaskRepository) CountByStorageTargetID(context.Context, uint) (int64, error) {

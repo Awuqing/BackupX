@@ -8,11 +8,13 @@ interface DatabasePickerProps {
   dbPort: number
   dbUser: string
   dbPassword: string
+  /** 目标执行节点 ID。0 或 undefined 表示 Master 本地发现；远程节点通过 Agent 发现。 */
+  nodeId?: number
   value: string
   onChange: (value: string) => void
 }
 
-export function DatabasePicker({ dbType, dbHost, dbPort, dbUser, dbPassword, value, onChange }: DatabasePickerProps) {
+export function DatabasePicker({ dbType, dbHost, dbPort, dbUser, dbPassword, nodeId, value, onChange }: DatabasePickerProps) {
   const [databases, setDatabases] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [discovered, setDiscovered] = useState(false)
@@ -35,6 +37,7 @@ export function DatabasePicker({ dbType, dbHost, dbPort, dbUser, dbPassword, val
         port: dbPort,
         user: dbUser.trim(),
         password: dbPassword.trim(),
+        nodeId: nodeId && nodeId > 0 ? nodeId : undefined,
       })
       setDatabases(result)
       setDiscovered(true)

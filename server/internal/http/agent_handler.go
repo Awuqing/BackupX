@@ -14,12 +14,13 @@ import (
 // AgentHandler 实现 Agent 调用 Master 的 HTTP API。
 // 全部端点通过 X-Agent-Token 头做节点认证，不使用 JWT。
 type AgentHandler struct {
-	agentService *service.AgentService
-	nodeService  *service.NodeService
+	agentService   *service.AgentService
+	nodeService    *service.NodeService
+	restoreService *service.RestoreService
 }
 
-func NewAgentHandler(agentService *service.AgentService, nodeService *service.NodeService) *AgentHandler {
-	return &AgentHandler{agentService: agentService, nodeService: nodeService}
+func NewAgentHandler(agentService *service.AgentService, nodeService *service.NodeService, restoreService *service.RestoreService) *AgentHandler {
+	return &AgentHandler{agentService: agentService, nodeService: nodeService, restoreService: restoreService}
 }
 
 // extractToken 从请求头或 JSON body 中提取 Agent Token。
@@ -149,6 +150,58 @@ func (h *AgentHandler) UpdateRecord(c *gin.Context) {
 		return
 	}
 	if err := h.agentService.UpdateRecord(c.Request.Context(), node, uint(id), input); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Success(c, gin.H{"status": "ok"})
+}
+
+// GetRestoreSpec Agent 拉取恢复规格。
+func (h *AgentHandler) GetRestoreSpec(c *gin.Context) {
+	if h.restoreService == nil {
+		c.JSON(stdhttp.StatusServiceUnavailable, gin.H{"code": "RESTORE_SERVICE_DISABLED", "message": "restore service is not enabled"})
+		return
+	}
+	node, err := h.agentService.AuthenticatedNode(c.Request.Context(), extractToken(c))
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	spec, err := h.restoreService.GetAgentRestoreSpec(c.Request.Context(), node, uint(id))
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Success(c, spec)
+}
+
+// UpdateRestore Agent 上报恢复记录的状态/日志。
+func (h *AgentHandler) UpdateRestore(c *gin.Context) {
+	if h.restoreService == nil {
+		c.JSON(stdhttp.StatusServiceUnavailable, gin.H{"code": "RESTORE_SERVICE_DISABLED", "message": "restore service is not enabled"})
+		return
+	}
+	node, err := h.agentService.AuthenticatedNode(c.Request.Context(), extractToken(c))
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	id, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	var input service.AgentRestoreUpdate
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(stdhttp.StatusBadRequest, gin.H{"code": "INVALID_INPUT", "message": err.Error()})
+		return
+	}
+	if err := h.restoreService.UpdateAgentRestore(c.Request.Context(), node, uint(id), input); err != nil {
 		response.Error(c, err)
 		return
 	}

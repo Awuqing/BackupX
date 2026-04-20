@@ -238,6 +238,180 @@ func (l *recordLogger) WriteLine(message string) {
 	_ = l.client.UpdateRecord(l.ctx, l.recordID, RecordUpdate{LogAppend: message + "\n"})
 }
 
+// restoreLogger 把 runner 日志回传到 Master 恢复记录。
+type restoreLogger struct {
+	ctx      context.Context
+	client   *MasterClient
+	restoreID uint
+}
+
+func newRestoreLogger(ctx context.Context, client *MasterClient, restoreID uint) *restoreLogger {
+	return &restoreLogger{ctx: ctx, client: client, restoreID: restoreID}
+}
+
+func (l *restoreLogger) WriteLine(message string) {
+	_ = l.client.UpdateRestore(l.ctx, l.restoreID, RestoreUpdate{LogAppend: message + "\n"})
+}
+
+// DeleteStorageObject 在 Agent 本机上删除指定存储对象（供跨节点清理调用）。
+func (e *Executor) DeleteStorageObject(ctx context.Context, targetType string, targetConfig map[string]any, storagePath string) error {
+	provider, err := e.storageRegistry.Create(ctx, targetType, targetConfig)
+	if err != nil {
+		return fmt.Errorf("create provider: %w", err)
+	}
+	return provider.Delete(ctx, storagePath)
+}
+
+// ExecuteRestore 处理 restore_record 命令：拉规格 → 下载 → 解压 → 执行 runner.Restore → 上报结果。
+//
+// 与 ExecuteRunTask 对称，但方向相反：
+//   - 下载：通过 spec.Storage 创建 provider → Download(spec.StoragePath)
+//   - 解密：当前 Agent 不支持加密恢复（密钥未下发），spec.Encrypt=true 会直接失败
+//   - 执行：backup.Registry.Runner(spec.Type).Restore
+//   - 上报：通过 UpdateRestore（status/logAppend）
+func (e *Executor) ExecuteRestore(ctx context.Context, restoreRecordID uint) error {
+	spec, err := e.client.GetRestoreSpec(ctx, restoreRecordID)
+	if err != nil {
+		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("拉取恢复规格失败: %v", err))
+		return err
+	}
+	if spec.Encrypt {
+		msg := "Agent 不支持加密恢复（加密密钥仅在 Master 端持有）"
+		e.reportRestoreFailure(ctx, restoreRecordID, msg)
+		return fmt.Errorf("%s", msg)
+	}
+	e.appendRestoreLog(ctx, restoreRecordID, fmt.Sprintf("[agent] 开始恢复 %s (type=%s)\n", spec.TaskName, spec.Type))
+
+	if err := os.MkdirAll(e.tempDir, 0o755); err != nil {
+		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("创建临时目录失败: %v", err))
+		return err
+	}
+	tmpDir, err := os.MkdirTemp(e.tempDir, "restore-*")
+	if err != nil {
+		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("创建恢复临时目录失败: %v", err))
+		return err
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// 1) 创建 storage provider
+	var rawConfig map[string]any
+	if len(spec.Storage.Config) > 0 {
+		if err := jsonUnmarshalMap(spec.Storage.Config, &rawConfig); err != nil {
+			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解析存储配置失败: %v", err))
+			return err
+		}
+	}
+	provider, err := e.storageRegistry.Create(ctx, spec.Storage.Type, rawConfig)
+	if err != nil {
+		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("创建存储客户端失败: %v", err))
+		return err
+	}
+
+	// 2) 下载
+	fileName := spec.FileName
+	if strings.TrimSpace(fileName) == "" {
+		fileName = filepath.Base(spec.StoragePath)
+	}
+	artifactPath := filepath.Join(tmpDir, filepath.Base(fileName))
+	e.appendRestoreLog(ctx, restoreRecordID, fmt.Sprintf("[agent] 下载备份文件 %s\n", spec.StoragePath))
+	reader, err := provider.Download(ctx, spec.StoragePath)
+	if err != nil {
+		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("下载备份失败: %v", err))
+		return err
+	}
+	if err := writeReaderToLocal(artifactPath, reader); err != nil {
+		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("写入备份文件失败: %v", err))
+		return err
+	}
+
+	// 3) 解压（Agent 不支持加密，遇到 .enc 会直接失败）
+	preparedPath := artifactPath
+	if strings.HasSuffix(strings.ToLower(preparedPath), ".enc") {
+		msg := "检测到加密后缀，Agent 不支持加密恢复"
+		e.reportRestoreFailure(ctx, restoreRecordID, msg)
+		return fmt.Errorf("%s", msg)
+	}
+	if strings.HasSuffix(strings.ToLower(preparedPath), ".gz") {
+		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 解压 gzip 压缩\n")
+		decompressed, err := compress.GunzipFile(preparedPath)
+		if err != nil {
+			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解压失败: %v", err))
+			return err
+		}
+		preparedPath = decompressed
+	}
+
+	// 4) 运行 runner.Restore
+	taskSpec := buildRestoreBackupTaskSpec(spec, time.Now().UTC(), tmpDir)
+	runner, err := e.backupRegistry.Runner(taskSpec.Type)
+	if err != nil {
+		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("不支持的备份类型: %v", err))
+		return err
+	}
+	logger := newRestoreLogger(ctx, e.client, restoreRecordID)
+	if err := runner.Restore(ctx, taskSpec, preparedPath, logger); err != nil {
+		e.reportRestoreFailure(ctx, restoreRecordID, err.Error())
+		return err
+	}
+
+	// 5) 上报成功
+	return e.client.UpdateRestore(ctx, restoreRecordID, RestoreUpdate{
+		Status:    "success",
+		LogAppend: "[agent] 恢复执行完成\n",
+	})
+}
+
+func (e *Executor) appendRestoreLog(ctx context.Context, restoreID uint, line string) {
+	_ = e.client.UpdateRestore(ctx, restoreID, RestoreUpdate{LogAppend: line})
+}
+
+func (e *Executor) reportRestoreFailure(ctx context.Context, restoreID uint, msg string) {
+	_ = e.client.UpdateRestore(ctx, restoreID, RestoreUpdate{
+		Status:       "failed",
+		ErrorMessage: msg,
+		LogAppend:    fmt.Sprintf("[agent] 错误: %s\n", msg),
+	})
+}
+
+// buildRestoreBackupTaskSpec 把 RestoreSpec 转成 backup.TaskSpec。
+func buildRestoreBackupTaskSpec(spec *RestoreSpec, startedAt time.Time, tempDir string) backup.TaskSpec {
+	return backup.TaskSpec{
+		ID:              spec.TaskID,
+		Name:            spec.TaskName,
+		Type:            spec.Type,
+		SourcePath:      spec.SourcePath,
+		SourcePaths:     spec.SourcePaths,
+		ExcludePatterns: nil,
+		Database: backup.DatabaseSpec{
+			Host:     spec.DBHost,
+			Port:     spec.DBPort,
+			User:     spec.DBUser,
+			Password: spec.DBPassword,
+			Path:     spec.DBPath,
+			Names:    splitCommaOrNewline(spec.DBName),
+		},
+		Compression: spec.Compression,
+		Encrypt:     spec.Encrypt,
+		StartedAt:   startedAt,
+		TempDir:     tempDir,
+	}
+}
+
+// writeReaderToLocal 把 reader 写到本地文件（Agent 侧工具函数）。
+func writeReaderToLocal(targetPath string, reader io.ReadCloser) error {
+	defer reader.Close()
+	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+		return err
+	}
+	file, err := os.Create(targetPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = io.Copy(file, reader)
+	return err
+}
+
 // 辅助函数
 
 func computeFileSHA256(path string) (string, error) {

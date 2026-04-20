@@ -4,6 +4,12 @@ import {
   IconStorage,
   IconFile,
   IconHistory,
+  IconRefresh,
+  IconSafe,
+  IconCopy,
+  IconBook,
+  IconUser,
+  IconCommand,
   IconNotification,
   IconSettings,
   IconMenuFold,
@@ -20,6 +26,9 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { changePassword, type ChangePasswordPayload } from '../services/auth'
 import { useAuthStore } from '../stores/auth'
 import { resolveErrorMessage } from '../utils/error'
+import { isAdmin, roleLabel } from '../utils/permissions'
+import { GlobalSearch } from '../components/common/GlobalSearch'
+import { EventCenter } from '../components/common/EventCenter'
 
 const Header = Layout.Header
 const Sider = Layout.Sider
@@ -31,6 +40,15 @@ function resolveSelectedKey(pathname: string) {
   }
   if (pathname.startsWith('/backup/records')) {
     return '/backup/records'
+  }
+  if (pathname.startsWith('/restore/records')) {
+    return '/restore/records'
+  }
+  if (pathname.startsWith('/verify/records')) {
+    return '/verify/records'
+  }
+  if (pathname.startsWith('/replication/records')) {
+    return '/replication/records'
   }
   if (pathname.startsWith('/storage-targets')) {
     return '/storage-targets'
@@ -44,19 +62,41 @@ function resolveSelectedKey(pathname: string) {
   if (pathname.startsWith('/nodes')) {
     return '/nodes'
   }
+  if (pathname.startsWith('/task-templates')) {
+    return '/task-templates'
+  }
+  if (pathname.startsWith('/admin/users')) {
+    return '/admin/users'
+  }
+  if (pathname.startsWith('/admin/api-keys')) {
+    return '/admin/api-keys'
+  }
   if (pathname.startsWith('/settings') || pathname.startsWith('/system-info')) {
     return '/settings'
   }
   return pathname
 }
 
-const menuItems = [
+interface MenuItemConfig {
+  key: string
+  label: string
+  icon: React.ReactNode
+  adminOnly?: boolean
+}
+
+const menuItems: MenuItemConfig[] = [
   { key: '/dashboard', label: '仪表盘', icon: <IconDashboard /> },
   { key: '/backup/tasks', label: '备份任务', icon: <IconFile /> },
   { key: '/backup/records', label: '备份记录', icon: <IconHistory /> },
+  { key: '/restore/records', label: '恢复记录', icon: <IconRefresh /> },
+  { key: '/verify/records', label: '验证演练', icon: <IconSafe /> },
+  { key: '/replication/records', label: '备份复制', icon: <IconCopy /> },
+  { key: '/task-templates', label: '任务模板', icon: <IconBook /> },
   { key: '/storage-targets', label: '存储目标', icon: <IconStorage /> },
   { key: '/nodes', label: '节点管理', icon: <IconDesktop /> },
   { key: '/settings/notifications', label: '通知配置', icon: <IconNotification /> },
+  { key: '/admin/users', label: '用户管理', icon: <IconUser />, adminOnly: true },
+  { key: '/admin/api-keys', label: 'API Key', icon: <IconCommand />, adminOnly: true },
   { key: '/audit', label: '审计日志', icon: <IconList /> },
   { key: '/settings', label: '系统设置', icon: <IconSettings /> },
 ]
@@ -113,12 +153,14 @@ export function AppLayout() {
           {!collapsed && <Typography.Title heading={5} style={{ margin: 0, fontWeight: 700 }}>BackupX</Typography.Title>}
         </div>
         <Menu selectedKeys={[resolveSelectedKey(location.pathname)]} onClickMenuItem={(key) => navigate(key)}>
-          {menuItems.map((item) => (
-            <Menu.Item key={item.key}>
-              {item.icon}
-              {item.label}
-            </Menu.Item>
-          ))}
+          {menuItems
+            .filter((item) => !item.adminOnly || isAdmin(user))
+            .map((item) => (
+              <Menu.Item key={item.key}>
+                {item.icon}
+                {item.label}
+              </Menu.Item>
+            ))}
         </Menu>
         {!collapsed && (
           <div style={{ position: 'absolute', bottom: 16, left: 0, right: 0, textAlign: 'center' }}>
@@ -128,18 +170,23 @@ export function AppLayout() {
       </Sider>
       <Layout>
         <Header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', background: 'var(--color-bg-2)', borderBottom: '1px solid var(--color-border)' }}>
-          <Button
-            type="text"
-            icon={collapsed ? <IconMenuUnfold /> : <IconMenuFold />}
-            onClick={() => setCollapsed((value) => !value)}
-          />
           <Space>
+            <Button
+              type="text"
+              icon={collapsed ? <IconMenuUnfold /> : <IconMenuFold />}
+              onClick={() => setCollapsed((value) => !value)}
+            />
+            <GlobalSearch />
+          </Space>
+          <Space>
+            <EventCenter />
             <Dropdown droplist={userDroplist} position="br">
               <Button type="text" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Avatar size={28} style={{ backgroundColor: 'var(--color-primary-6)' }}>
                   {(user?.displayName ?? user?.username ?? '管')[0]}
                 </Avatar>
                 <span>{user?.displayName ?? user?.username ?? '管理员'}</span>
+                <span style={{ color: 'var(--color-text-3)', fontSize: 12 }}>[{roleLabel(user?.role)}]</span>
                 <IconDown />
               </Button>
             </Dropdown>

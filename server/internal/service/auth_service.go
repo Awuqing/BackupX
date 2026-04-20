@@ -136,6 +136,16 @@ func (s *AuthService) Login(ctx context.Context, input LoginInput, clientKey str
 		}
 		return nil, apperror.Unauthorized("AUTH_INVALID_CREDENTIALS", "用户名或密码错误", nil)
 	}
+	if user.Disabled {
+		if s.auditService != nil {
+			s.auditService.Record(AuditEntry{
+				UserID: user.ID, Username: user.Username,
+				Category: "auth", Action: "login_rejected",
+				Detail: "账号已被停用", ClientIP: clientKey,
+			})
+		}
+		return nil, apperror.Unauthorized("AUTH_USER_DISABLED", "账号已被管理员停用", nil)
+	}
 	if err := security.ComparePassword(user.PasswordHash, input.Password); err != nil {
 		if s.auditService != nil {
 			s.auditService.Record(AuditEntry{

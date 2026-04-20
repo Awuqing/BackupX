@@ -1,17 +1,20 @@
-import { Alert, Button, Card, Empty, Grid, Message, PageHeader, Space, Spin, Tag, Typography } from '@arco-design/web-react'
+import { Alert, Button, Card, Empty, Grid, Message, PageHeader, Progress, Space, Spin, Tag, Typography } from '@arco-design/web-react'
 import axios from 'axios'
 import { useCallback, useEffect, useState } from 'react'
 import {
   createStorageTarget,
   deleteStorageTarget,
   getStorageTarget,
+  getStorageTargetUsage,
   listStorageTargets,
   startGoogleDriveAuth,
   testSavedStorageTarget,
   testStorageTarget,
   toggleStorageTargetStar,
+  type StorageTargetUsage,
   updateStorageTarget,
 } from '../../services/storage-targets'
+import { formatBytes } from '../../utils/format'
 import type { StorageConnectionTestResult, StorageTargetDetail, StorageTargetPayload, StorageTargetSummary } from '../../types/storage-targets'
 import { getStorageTargetTypeLabel } from '../../components/storage-targets/field-config'
 import { StorageTargetFormDrawer } from '../../components/storage-targets/StorageTargetFormDrawer'
@@ -42,6 +45,7 @@ export function StorageTargetsPage() {
   const [drawerVisible, setDrawerVisible] = useState(false)
   const [editingTarget, setEditingTarget] = useState<StorageTargetDetail | null>(null)
   const [error, setError] = useState('')
+  const [usageMap, setUsageMap] = useState<Record<number, StorageTargetUsage>>({})
 
   const loadTargets = useCallback(async () => {
     setLoading(true)
@@ -49,6 +53,22 @@ export function StorageTargetsPage() {
       const result = await listStorageTargets()
       setTargets(result)
       setError('')
+      // 异步加载每个启用目标的使用量（容量 About）。失败不阻塞列表展示。
+      const usageEntries = await Promise.all(
+        result.filter((t) => t.enabled).map(async (t) => {
+          try {
+            const u = await getStorageTargetUsage(t.id)
+            return [t.id, u] as const
+          } catch {
+            return null
+          }
+        }),
+      )
+      const next: Record<number, StorageTargetUsage> = {}
+      for (const entry of usageEntries) {
+        if (entry) next[entry[0]] = entry[1]
+      }
+      setUsageMap(next)
     } catch (loadError) {
       setError(resolveErrorMessage(loadError))
     } finally {
@@ -218,6 +238,37 @@ export function StorageTargetsPage() {
                   {target.lastTestMessage ? (
                     <Typography.Paragraph type="secondary">最近测试：{target.lastTestMessage}</Typography.Paragraph>
                   ) : null}
+                  {(() => {
+                    const usage = usageMap[target.id]
+                    if (!usage) return null
+                    const disk = usage.diskUsage
+                    // 优先后端 About（远端真实容量），否则展示"已用量"（累计备份大小）
+                    if (disk && disk.total && disk.used !== undefined) {
+                      const rate = disk.total > 0 ? disk.used / disk.total : 0
+                      const percent = Math.round(rate * 100)
+                      const color = rate >= 0.85 ? '#F53F3F' : rate >= 0.7 ? '#FF7D00' : '#00B42A'
+                      return (
+                        <div>
+                          <Space size="mini" style={{ marginBottom: 4 }}>
+                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>使用率 {percent}%</Typography.Text>
+                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                              {formatBytes(disk.used)} / {formatBytes(disk.total)}
+                            </Typography.Text>
+                            {rate >= 0.85 && <Tag color="red" bordered size="small">容量预警</Tag>}
+                          </Space>
+                          <Progress percent={percent} color={color} size="small" showText={false} />
+                        </div>
+                      )
+                    }
+                    if (usage.totalSize > 0) {
+                      return (
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          已用备份：{formatBytes(usage.totalSize)}（{usage.recordCount} 个记录）
+                        </Typography.Text>
+                      )
+                    }
+                    return null
+                  })()}
                   <Typography.Text type="secondary">更新时间：{target.updatedAt}</Typography.Text>
 
                   <Space wrap size="mini">

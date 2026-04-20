@@ -14,6 +14,8 @@ export interface StorageTargetSummary {
   lastTestedAt?: string
   lastTestStatus: StorageTestStatus
   lastTestMessage?: string
+  /** 软配额（字节），0 = 不限制 */
+  quotaBytes?: number
 }
 
 export interface StorageTargetDetail extends StorageTargetSummary {
@@ -28,6 +30,8 @@ export interface StorageTargetPayload {
   description: string
   enabled: boolean
   config: Record<string, string | boolean>
+  /** 软配额（字节），0 = 不限制 */
+  quotaBytes?: number
 }
 
 export interface StorageConnectionTestResult {
