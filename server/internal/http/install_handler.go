@@ -36,6 +36,13 @@ func NewInstallHandler(gcCtx context.Context, tokenService *service.InstallToken
 }
 
 // Script 消费 install token 并返回 shell 脚本；Mode 由 token 存储决定（systemd/docker/foreground 均返回 shell）。
+//
+// 响应头策略（issue #46 教训）：
+//   - Content-Type 用 text/plain 而非 text/x-shellscript：避免 Cloudflare/反向代理把
+//     脚本内容按特殊类型识别并触发 minify/HTML rewrite，导致 `curl | sh` 收到非脚本内容
+//   - X-Content-Type-Options: nosniff：禁止浏览器/中间层按内容嗅探改写 MIME
+//   - Cache-Control: no-store：token 一次性消费，禁止任何缓存层留存旧脚本
+//   - Content-Disposition: inline; filename=...：部分代理会跳过带文件名的响应
 func (h *InstallHandler) Script(c *gin.Context) {
 	if !h.limiter.allow(c.ClientIP()) {
 		c.String(stdhttp.StatusTooManyRequests, "请求过于频繁，请稍后再试\n")
@@ -66,7 +73,10 @@ func (h *InstallHandler) Script(c *gin.Context) {
 		c.String(stdhttp.StatusInternalServerError, "render error\n")
 		return
 	}
-	c.Data(stdhttp.StatusOK, "text/x-shellscript; charset=utf-8", []byte(script))
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Cache-Control", "no-store")
+	c.Header("Content-Disposition", `inline; filename="backupx-agent-install.sh"`)
+	c.Data(stdhttp.StatusOK, "text/plain; charset=utf-8", []byte(script))
 }
 
 // Compose 消费 install token 并返回 docker-compose YAML，仅 Mode=docker 有效。

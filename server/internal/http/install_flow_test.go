@@ -171,6 +171,22 @@ func TestOneClickInstallFlow(t *testing.T) {
 	if !strings.Contains(scriptRec.Body.String(), "systemctl enable --now backupx-agent") {
 		t.Fatalf("script missing systemctl enable:\n%s", scriptRec.Body.String())
 	}
+	// Issue #46 防嗅探 headers：text/plain + nosniff + no-store + Content-Disposition
+	if ct := scriptRec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
+		t.Errorf("script Content-Type should be text/plain*, got %q", ct)
+	}
+	if nosniff := scriptRec.Header().Get("X-Content-Type-Options"); nosniff != "nosniff" {
+		t.Errorf("missing X-Content-Type-Options: nosniff (got %q)", nosniff)
+	}
+	if cc := scriptRec.Header().Get("Cache-Control"); !strings.Contains(cc, "no-store") {
+		t.Errorf("missing Cache-Control: no-store (got %q)", cc)
+	}
+	if cd := scriptRec.Header().Get("Content-Disposition"); !strings.Contains(cd, "backupx-agent-install.sh") {
+		t.Errorf("Content-Disposition should name the script file (got %q)", cd)
+	}
+	if !strings.Contains(scriptRec.Body.String(), "BACKUPX_AGENT_INSTALL_V1") {
+		t.Errorf("script missing magic marker BACKUPX_AGENT_INSTALL_V1")
+	}
 
 	// 4. 再次消费应 410
 	scriptReq2 := httptest.NewRequest(http.MethodGet, "/install/"+genResp.Data.InstallToken, nil)
