@@ -13,6 +13,7 @@ import (
 	"backupx/server/internal/database"
 	aphttp "backupx/server/internal/http"
 	"backupx/server/internal/logger"
+	"backupx/server/internal/metrics"
 	"backupx/server/internal/notify"
 	"backupx/server/internal/repository"
 	"backupx/server/internal/scheduler"
@@ -109,6 +110,8 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	auditService := service.NewAuditService(auditLogRepo)
 	authService.SetAuditService(auditService)
 	schedulerService.SetAuditRecorder(auditService)
+	// 审计日志外输：启动时用当前 settings 初始化 webhook，后续前端修改立即生效
+	settingsService.SetAuditWebhookConfigurer(ctx, auditService)
 
 	// Database discovery（集群依赖在 agentService 创建后注入）
 	databaseDiscoveryService := service.NewDatabaseDiscoveryService(backup.NewOSCommandExecutor())
@@ -226,6 +229,21 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	// Dashboard 集群概览依赖注入
 	dashboardService.SetClusterDependencies(nodeRepo, version)
 
+	// Prometheus 指标采集：Counter/Histogram 由业务服务实时写入；
+	// Gauge 类（存储用量、节点在线、SLA 违约）由 Collector 每 30s 异步刷新，
+	// 避免 /metrics 请求路径做慢 IO。
+	appMetrics := metrics.New(version)
+	backupExecutionService.SetMetrics(appMetrics)
+	restoreService.SetMetrics(appMetrics)
+	verificationService.SetMetrics(appMetrics)
+	replicationService.SetMetrics(appMetrics)
+	metricsCollector := metrics.NewCollector(
+		appMetrics,
+		metrics.NewRepoSource(storageTargetRepo, backupRecordRepo, nodeRepo, backupTaskRepo),
+		30*time.Second,
+	)
+	metricsCollector.Start(ctx)
+
 	router := aphttp.NewRouter(aphttp.RouterDependencies{
 		Context:                ctx,
 		Config:                 cfg,
@@ -259,6 +277,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 		InstallTokenService:      installTokenService,
 		MasterExternalURL:        "", // 如需覆盖 URL，可扩展 cfg.Server 增字段；目前留空依赖 X-Forwarded-* / Request.Host
 		DB:                       db,
+		Metrics:                  appMetrics,
 	})
 
 	httpServer := &stdhttp.Server{

@@ -46,6 +46,9 @@
 | **Multi-Node Cluster** | Master-Agent mode via HTTP long-polling — Agents run tasks locally, upload straight to storage, no reverse connectivity required |
 | **Security** | JWT + bcrypt + AES-256-GCM encrypted config + optional backup encryption + full audit log |
 | **Notifications** | Email / Webhook / Telegram on success or failure |
+| **Observability** | Prometheus `/metrics` endpoint + `/health` + `/ready` probes + SLA breach gauge |
+| **Audit Webhook** | HMAC-SHA256 signed forwarding to SIEM / WORM storage for compliance (SOC2 / GDPR) |
+| **Flow Control** | Per-node bandwidth cap + per-node concurrency limit — tune big/small nodes independently |
 | **Deployment** | Single binary + embedded SQLite, Docker one-click, zero external dependencies |
 
 ## Quick Start

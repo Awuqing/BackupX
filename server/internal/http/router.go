@@ -7,6 +7,7 @@ import (
 
 	"backupx/server/internal/apperror"
 	"backupx/server/internal/config"
+	"backupx/server/internal/metrics"
 	"backupx/server/internal/repository"
 	"backupx/server/internal/security"
 	"backupx/server/internal/service"
@@ -52,6 +53,8 @@ type RouterDependencies struct {
 	MasterExternalURL        string
 	// DB 注入给健康检查端点做 liveness/readiness 探测。
 	DB *gorm.DB
+	// Metrics 注入给 /metrics 端点；为 nil 时端点返回 503。
+	Metrics *metrics.Metrics
 }
 
 func NewRouter(deps RouterDependencies) *gin.Engine {
@@ -310,6 +313,12 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 	// 在 /api 下也暴露一份，方便反向代理按 path 前缀统一路由
 	engine.GET("/api/health", healthHandler.Live)
 	engine.GET("/api/ready", healthHandler.Ready)
+
+	// Prometheus /metrics 端点（公开、无认证；内网/反向代理授权即可）。
+	// 业内通行做法：/metrics 通常由 Prometheus pull 抓取，不走 API Key。
+	if deps.Metrics != nil {
+		engine.GET("/metrics", gin.WrapH(deps.Metrics.Handler()))
+	}
 
 	// 公开安装路由（不走 JWT 中间件）
 	if deps.InstallTokenService != nil {
