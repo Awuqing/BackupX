@@ -360,7 +360,7 @@ func parseUintCSV(value string) []uint {
 		if trimmed == "" {
 			continue
 		}
-		parsed, err := strconv.ParseUint(trimmed, 10, 64)
+		parsed, err := strconv.ParseUint(trimmed, 10, 32)
 		if err != nil {
 			continue
 		}

@@ -111,7 +111,7 @@ func (h *RestoreRecordHandler) StreamLogs(c *gin.Context) {
 func buildRestoreFilter(c *gin.Context) (service.RestoreRecordListInput, error) {
 	var filter service.RestoreRecordListInput
 	if taskIDValue := strings.TrimSpace(c.Query("taskId")); taskIDValue != "" {
-		parsed, err := strconv.ParseUint(taskIDValue, 10, 64)
+		parsed, err := strconv.ParseUint(taskIDValue, 10, 32)
 		if err != nil {
 			return filter, apperror.BadRequest("RESTORE_RECORD_FILTER_INVALID", "taskId 不合法", err)
 		}
@@ -119,7 +119,7 @@ func buildRestoreFilter(c *gin.Context) (service.RestoreRecordListInput, error) 
 		filter.TaskID = &v
 	}
 	if backupValue := strings.TrimSpace(c.Query("backupRecordId")); backupValue != "" {
-		parsed, err := strconv.ParseUint(backupValue, 10, 64)
+		parsed, err := strconv.ParseUint(backupValue, 10, 32)
 		if err != nil {
 			return filter, apperror.BadRequest("RESTORE_RECORD_FILTER_INVALID", "backupRecordId 不合法", err)
 		}
@@ -127,7 +127,7 @@ func buildRestoreFilter(c *gin.Context) (service.RestoreRecordListInput, error) 
 		filter.BackupRecordID = &v
 	}
 	if nodeValue := strings.TrimSpace(c.Query("nodeId")); nodeValue != "" {
-		parsed, err := strconv.ParseUint(nodeValue, 10, 64)
+		parsed, err := strconv.ParseUint(nodeValue, 10, 32)
 		if err != nil {
 			return filter, apperror.BadRequest("RESTORE_RECORD_FILTER_INVALID", "nodeId 不合法", err)
 		}

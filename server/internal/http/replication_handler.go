@@ -86,7 +86,7 @@ func (h *ReplicationHandler) Get(c *gin.Context) {
 func buildReplicationFilter(c *gin.Context) (service.ReplicationRecordListInput, error) {
 	var filter service.ReplicationRecordListInput
 	if v := strings.TrimSpace(c.Query("taskId")); v != "" {
-		parsed, err := strconv.ParseUint(v, 10, 64)
+		parsed, err := strconv.ParseUint(v, 10, 32)
 		if err != nil {
 			return filter, apperror.BadRequest("REPLICATION_FILTER_INVALID", "taskId 不合法", err)
 		}
@@ -94,7 +94,7 @@ func buildReplicationFilter(c *gin.Context) (service.ReplicationRecordListInput,
 		filter.TaskID = &id
 	}
 	if v := strings.TrimSpace(c.Query("backupRecordId")); v != "" {
-		parsed, err := strconv.ParseUint(v, 10, 64)
+		parsed, err := strconv.ParseUint(v, 10, 32)
 		if err != nil {
 			return filter, apperror.BadRequest("REPLICATION_FILTER_INVALID", "backupRecordId 不合法", err)
 		}
@@ -102,7 +102,7 @@ func buildReplicationFilter(c *gin.Context) (service.ReplicationRecordListInput,
 		filter.BackupRecordID = &id
 	}
 	if v := strings.TrimSpace(c.Query("destTargetId")); v != "" {
-		parsed, err := strconv.ParseUint(v, 10, 64)
+		parsed, err := strconv.ParseUint(v, 10, 32)
 		if err != nil {
 			return filter, apperror.BadRequest("REPLICATION_FILTER_INVALID", "destTargetId 不合法", err)
 		}

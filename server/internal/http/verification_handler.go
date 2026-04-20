@@ -164,7 +164,7 @@ func (h *VerificationHandler) StreamLogs(c *gin.Context) {
 func buildVerifyFilter(c *gin.Context) (service.VerificationRecordListInput, error) {
 	var filter service.VerificationRecordListInput
 	if value := strings.TrimSpace(c.Query("taskId")); value != "" {
-		parsed, err := strconv.ParseUint(value, 10, 64)
+		parsed, err := strconv.ParseUint(value, 10, 32)
 		if err != nil {
 			return filter, apperror.BadRequest("VERIFY_RECORD_FILTER_INVALID", "taskId 不合法", err)
 		}
@@ -172,7 +172,7 @@ func buildVerifyFilter(c *gin.Context) (service.VerificationRecordListInput, err
 		filter.TaskID = &v
 	}
 	if value := strings.TrimSpace(c.Query("backupRecordId")); value != "" {
-		parsed, err := strconv.ParseUint(value, 10, 64)
+		parsed, err := strconv.ParseUint(value, 10, 32)
 		if err != nil {
 			return filter, apperror.BadRequest("VERIFY_RECORD_FILTER_INVALID", "backupRecordId 不合法", err)
 		}

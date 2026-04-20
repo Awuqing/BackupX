@@ -32,7 +32,7 @@ func (h *TaskExportHandler) Export(c *gin.Context) {
 	var taskIDs []uint
 	if v := strings.TrimSpace(c.Query("ids")); v != "" {
 		for _, part := range strings.Split(v, ",") {
-			if id, err := strconv.ParseUint(strings.TrimSpace(part), 10, 64); err == nil {
+			if id, err := strconv.ParseUint(strings.TrimSpace(part), 10, 32); err == nil {
 				taskIDs = append(taskIDs, uint(id))
 			}
 		}
