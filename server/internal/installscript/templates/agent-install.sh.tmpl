@@ -1,7 +1,15 @@
 #!/bin/sh
 # BackupX Agent 一键安装脚本（由 Master 动态渲染）
+# Magic: BACKUPX_AGENT_INSTALL_V1  —— 若 `head -3 脚本` 看不到此行，说明反向代理/CDN 改写了响应
 # 模式: {{.Mode}} | 架构: {{.Arch}} | 版本: {{.AgentVersion}}
 set -eu
+
+# 自举到 bash（文件执行模式下生效；管道模式 $0 不是文件，exec 会静默失败，继续用 sh）。
+# 动机：部分 Debian/Ubuntu 用户通过 `curl | sudo sh` 触发时，dash 对本脚本报语法错误；
+# 若目标机装有 bash，优先切换到 bash 获得更一致的行为。
+if [ -z "${BASH_VERSION:-}" ] && command -v bash >/dev/null 2>&1 && [ -f "$0" ]; then
+    exec bash "$0" "$@"
+fi
 
 MASTER_URL="{{.MasterURL}}"
 AGENT_TOKEN="{{.AgentToken}}"

@@ -162,7 +162,7 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
         const rows: BatchCommandRow[] = tokens.map(({ c, tok }) => ({
           nodeId: c.id,
           nodeName: c.name,
-          command: `curl -fsSL ${tok.url} | sudo sh`,
+          command: `curl -fsSL ${tok.url} | sudo bash`,
           expiresAt: tok.expiresAt,
         }))
         if (mountedRef.current) setBatchRows(rows)

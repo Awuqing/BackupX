@@ -320,7 +320,13 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		engine.GET("/metrics", gin.WrapH(deps.Metrics.Handler()))
 	}
 
-	// 公开安装路由（不走 JWT 中间件）
+	// 公开安装路由（不走 JWT 中间件）。
+	// 同时注册到 / 和 /api 前缀下：
+	//   - /install/:token        保留历史 URL，兼容旧 nginx 部署
+	//   - /api/install/:token    新 URL，自动走反向代理的 /api/ 转发规则
+	//
+	// Issue #46：用户的 nginx 只转发 /api/，/install/* 被 SPA fallback 到 index.html，
+	// 返回 HTML 被 sh 解释成 "Syntax error"。使用 /api/install/ 可避开此问题。
 	if deps.InstallTokenService != nil {
 		gcCtx := deps.Context
 		if gcCtx == nil {
@@ -329,6 +335,8 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		installHandler := NewInstallHandler(gcCtx, deps.InstallTokenService, deps.AuditService, deps.MasterExternalURL)
 		engine.GET("/install/:token", installHandler.Script)
 		engine.GET("/install/:token/compose.yml", installHandler.Compose)
+		engine.GET("/api/install/:token", installHandler.Script)
+		engine.GET("/api/install/:token/compose.yml", installHandler.Compose)
 	}
 
 	engine.NoRoute(func(c *gin.Context) {
