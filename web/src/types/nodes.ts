@@ -9,6 +9,10 @@ export interface NodeSummary {
   arch: string
   agentVersion: string
   lastSeen: string
+  maxConcurrent?: number
+  bandwidthLimit?: string
+  /** CSV 节点标签；任务的 NodePoolTag 命中这里任一即会被调度到本节点 */
+  labels?: string
   createdAt: string
 }
 

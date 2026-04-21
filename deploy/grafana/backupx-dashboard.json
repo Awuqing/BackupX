@@ -1,0 +1,193 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "description": "BackupX v2.1+ 核心指标面板。对接 /metrics 端点，抓取周期建议 30s（与服务端 Gauge collector 同步）。",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "BackupX 文档",
+      "url": "https://awuqing.github.io/BackupX/",
+      "type": "link",
+      "targetBlank": true
+    }
+  ],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "正在运行的任务",
+      "gridPos": {"h": 4, "w": 4, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{"expr": "backupx_task_running", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "yellow", "value": 5}]}
+        }
+      },
+      "options": {"colorMode": "value", "graphMode": "area", "textMode": "auto"}
+    },
+    {
+      "type": "stat",
+      "title": "SLA 违约任务数",
+      "gridPos": {"h": 4, "w": 4, "x": 4, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{"expr": "backupx_sla_breach_tasks", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "在线节点",
+      "gridPos": {"h": 4, "w": 4, "x": 8, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{"expr": "sum(backupx_node_online)", "refId": "A"}],
+      "fieldConfig": {
+        "defaults": {"unit": "short", "color": {"mode": "thresholds"}, "thresholds": {"steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}
+      }
+    },
+    {
+      "type": "stat",
+      "title": "24h 任务成功率",
+      "gridPos": {"h": 4, "w": 6, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{
+        "expr": "sum(rate(backupx_task_run_total{status=\"success\"}[24h])) / sum(rate(backupx_task_run_total[24h])) * 100",
+        "refId": "A"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent", "decimals": 2,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "yellow", "value": 95}, {"color": "green", "value": 99}]}
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "应用版本",
+      "gridPos": {"h": 4, "w": 6, "x": 18, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{"expr": "backupx_app_info", "refId": "A", "format": "table", "instant": true}],
+      "options": {"textMode": "value_and_name", "reduceOptions": {"calcs": ["last"], "fields": "/^version$/"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "任务执行速率（按状态）",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{
+        "expr": "sum by (status) (rate(backupx_task_run_total[5m]))",
+        "refId": "A",
+        "legendFormat": "{{status}}"
+      }],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {"drawStyle": "line", "lineInterpolation": "smooth", "fillOpacity": 10, "stacking": {"mode": "normal"}}
+        },
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "success"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]},
+          {"matcher": {"id": "byName", "options": "failed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}
+        ]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "任务耗时 P50 / P95 / P99",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "histogram_quantile(0.50, sum(rate(backupx_task_run_duration_seconds_bucket[10m])) by (le, task_type))", "refId": "A", "legendFormat": "P50 {{task_type}}"},
+        {"expr": "histogram_quantile(0.95, sum(rate(backupx_task_run_duration_seconds_bucket[10m])) by (le, task_type))", "refId": "B", "legendFormat": "P95 {{task_type}}"},
+        {"expr": "histogram_quantile(0.99, sum(rate(backupx_task_run_duration_seconds_bucket[10m])) by (le, task_type))", "refId": "C", "legendFormat": "P99 {{task_type}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "type": "timeseries",
+      "title": "任务产出字节速率",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{"expr": "sum by (task_type) (rate(backupx_task_bytes_total[5m]))", "refId": "A", "legendFormat": "{{task_type}}"}],
+      "fieldConfig": {"defaults": {"unit": "Bps"}}
+    },
+    {
+      "type": "bargauge",
+      "title": "存储目标用量 TopN",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{"expr": "topk(10, backupx_storage_used_bytes)", "refId": "A", "legendFormat": "{{target_name}} ({{target_type}})"}],
+      "fieldConfig": {"defaults": {"unit": "bytes"}},
+      "options": {"orientation": "horizontal", "displayMode": "gradient"}
+    },
+    {
+      "type": "table",
+      "title": "节点在线状态",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [{"expr": "backupx_node_online", "refId": "A", "format": "table", "instant": true}],
+      "transformations": [
+        {"id": "organize", "options": {"excludeByName": {"Time": true, "__name__": true, "job": true, "instance": true}, "indexByName": {"node_name": 0, "role": 1, "Value": 2}, "renameByName": {"Value": "online"}}}
+      ],
+      "fieldConfig": {
+        "overrides": [{
+          "matcher": {"id": "byName", "options": "online"},
+          "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "离线", "color": "red"}, "1": {"text": "在线", "color": "green"}}}]}]
+        }]
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "验证 / 恢复 / 复制成功率",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "${DS_PROMETHEUS}"},
+      "targets": [
+        {"expr": "sum by (status) (rate(backupx_verify_run_total[15m]))", "refId": "A", "legendFormat": "verify {{status}}"},
+        {"expr": "sum by (status) (rate(backupx_restore_run_total[15m]))", "refId": "B", "legendFormat": "restore {{status}}"},
+        {"expr": "sum by (status) (rate(backupx_replication_run_total[15m]))", "refId": "C", "legendFormat": "replication {{status}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "ops"}}
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["backupx", "backup", "sre"],
+  "templating": {
+    "list": [
+      {
+        "current": {"selected": false, "text": "Prometheus", "value": "Prometheus"},
+        "label": "Datasource",
+        "name": "DS_PROMETHEUS",
+        "query": "prometheus",
+        "refresh": 1,
+        "regex": "",
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": {"from": "now-6h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "BackupX Overview",
+  "uid": "backupx-overview",
+  "version": 1,
+  "weekStart": ""
+}

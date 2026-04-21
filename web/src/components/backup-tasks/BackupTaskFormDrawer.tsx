@@ -59,6 +59,7 @@ function createEmptyDraft(storageTargets?: StorageTargetSummary[]): BackupTaskPa
     storageTargetId: defaultIds[0] ?? 0,
     storageTargetIds: defaultIds,
     nodeId: 0,
+    nodePoolTag: '',
     tags: '',
     retentionDays: 30,
     compression: 'gzip',
@@ -127,6 +128,7 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       storageTargetId: editTargetIds[0] ?? 0,
       storageTargetIds: editTargetIds,
       nodeId: (initialValue as any).nodeId ?? 0,
+      nodePoolTag: (initialValue as any).nodePoolTag ?? '',
       tags: initialValue.tags ?? '',
       retentionDays: initialValue.retentionDays,
       compression: initialValue.compression,
@@ -297,10 +299,26 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
           <Select
             value={draft.nodeId ?? 0}
             options={nodeOptions}
-            onChange={(value) => updateDraft({ nodeId: Number(value ?? 0) })}
+            onChange={(value) => {
+              const nodeId = Number(value ?? 0)
+              // 固定节点与节点池互斥：切到固定节点时清空 NodePoolTag
+              updateDraft(nodeId > 0 ? { nodeId, nodePoolTag: '' } : { nodeId })
+            }}
           />
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
             任务在所选节点上执行备份与恢复；源路径/数据库以该节点视角解析。远程节点需先在"节点管理"中安装 Agent。
+          </Typography.Paragraph>
+        </div>
+        <div>
+          <Typography.Text>节点池标签（可选）</Typography.Text>
+          <Input
+            placeholder="填写标签后从节点池动态调度（与固定节点互斥）"
+            value={draft.nodePoolTag ?? ''}
+            disabled={(draft.nodeId ?? 0) > 0}
+            onChange={(value) => updateDraft({ nodePoolTag: value })}
+          />
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+            执行节点选"本机 / 未指定"时可启用；从节点 Labels 命中此 tag 的在线节点中按当前运行任务数最少的挑选一台执行。
           </Typography.Paragraph>
         </div>
         <div>

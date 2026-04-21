@@ -14,6 +14,8 @@ export interface BackupTaskSummary {
   storageTargetNames: string[]
   nodeId: number
   nodeName?: string
+  /** 节点池标签（summary）：当任务绑定节点池而非固定节点时显示 */
+  nodePoolTag?: string
   tags: string
   retentionDays: number
   compression: BackupCompression
@@ -64,6 +66,8 @@ export interface BackupTaskPayload {
   storageTargetId: number
   storageTargetIds: number[]
   nodeId: number
+  /** 节点池标签（创建/更新）。与 nodeId 互斥：nodeId=0 且本字段非空时触发动态调度。 */
+  nodePoolTag?: string
   tags: string
   retentionDays: number
   compression: BackupCompression

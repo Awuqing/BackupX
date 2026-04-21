@@ -35,7 +35,9 @@ type BackupTaskUpsertInput struct {
 	DBPath           string   `json:"dbPath" binding:"max=500"`
 	StorageTargetID  uint     `json:"storageTargetId"`                       // deprecated: 向后兼容
 	StorageTargetIDs []uint   `json:"storageTargetIds"`                      // 新增：多存储目标
-	NodeID           uint     `json:"nodeId"`                                // 执行节点（0 = 本机 Master）
+	NodeID           uint     `json:"nodeId"`                                // 执行节点（0 = 本机 Master 或节点池）
+	// NodePoolTag 节点池标签。NodeID=0 且本字段非空时，调度器动态从 Labels 命中的在线节点中选负载最低者。
+	NodePoolTag      string   `json:"nodePoolTag" binding:"max=64"`
 	Tags             string   `json:"tags" binding:"max=500"`                // 逗号分隔标签
 	RetentionDays    int      `json:"retentionDays"`
 	Compression      string   `json:"compression" binding:"omitempty,oneof=gzip none"`
@@ -74,6 +76,7 @@ type BackupTaskSummary struct {
 	StorageTargetNames []string   `json:"storageTargetNames"`
 	NodeID             uint       `json:"nodeId"`
 	NodeName           string     `json:"nodeName,omitempty"`
+	NodePoolTag        string     `json:"nodePoolTag,omitempty"`
 	Tags               string     `json:"tags"`
 	RetentionDays      int        `json:"retentionDays"`
 	Compression        string     `json:"compression"`
@@ -494,6 +497,11 @@ func (s *BackupTaskService) validateInput(ctx context.Context, existing *model.B
 			return apperror.BadRequest("BACKUP_TASK_INVALID", "所选执行节点不存在", nil)
 		}
 	}
+	// 节点池与固定节点互斥：固定节点已确定执行位置，不再动态调度
+	if input.NodeID > 0 && strings.TrimSpace(input.NodePoolTag) != "" {
+		return apperror.BadRequest("BACKUP_TASK_INVALID",
+			"固定执行节点与节点池标签只能选其一", nil)
+	}
 	if input.RetentionDays < 0 {
 		return apperror.BadRequest("BACKUP_TASK_INVALID", "保留天数不能小于 0", nil)
 	}
@@ -648,6 +656,7 @@ func (s *BackupTaskService) buildTask(existing *model.BackupTask, input BackupTa
 		StorageTargetID:      primaryTargetID,
 		StorageTargets:       storageTargets,
 		NodeID:               input.NodeID,
+		NodePoolTag:          strings.TrimSpace(input.NodePoolTag),
 		Tags:                 strings.TrimSpace(input.Tags),
 		RetentionDays:        input.RetentionDays,
 		Compression:          compression,
@@ -738,6 +747,7 @@ func toBackupTaskSummary(item *model.BackupTask) BackupTaskSummary {
 		StorageTargetNames: targetNames,
 		NodeID:             item.NodeID,
 		NodeName:           item.Node.Name,
+		NodePoolTag:        item.NodePoolTag,
 		Tags:               item.Tags,
 		RetentionDays:      item.RetentionDays,
 		Compression:        item.Compression,

@@ -110,6 +110,11 @@ jobs:
           cp -r web/dist "${ARCHIVE_NAME}/web"
           cp server/config.example.yaml "${ARCHIVE_NAME}/"
           cp deploy/install.sh "${ARCHIVE_NAME}/" 2>/dev/null || true
+          # v2.2+: 随发布包提供 Grafana dashboard 与 nginx.conf 模板
+          if [ -d deploy/grafana ]; then
+            cp -r deploy/grafana "${ARCHIVE_NAME}/grafana"
+          fi
+          cp deploy/nginx.conf "${ARCHIVE_NAME}/nginx.conf" 2>/dev/null || true
           tar czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
 
       - name: Upload to GitHub Release

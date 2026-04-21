@@ -335,16 +335,29 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 				nil)
 		}
 	}
+	// 节点池动态选择：task.NodeID=0 且 NodePoolTag 非空时，从匹配的在线节点中挑一台。
+	// 选择策略：正在运行任务数最少者优先；并列时按 ID 升序稳定。
+	// 选中节点仅影响本次运行（task.NodeID 不持久化改动），保证任务在池内轮转。
+	resolvedNodeID := task.NodeID
+	if task.NodeID == 0 && strings.TrimSpace(task.NodePoolTag) != "" {
+		if pooled, perr := s.selectPoolNode(ctx, task.NodePoolTag); perr == nil && pooled != nil {
+			resolvedNodeID = pooled.ID
+		} else if perr != nil {
+			return nil, perr
+		}
+	}
 	startedAt := s.now()
 	// 取第一个存储目标 ID 做兼容
 	primaryTargetID := task.StorageTargetID
 	if tids := collectTargetIDs(task); len(tids) > 0 {
 		primaryTargetID = tids[0]
 	}
-	record := &model.BackupRecord{TaskID: task.ID, StorageTargetID: primaryTargetID, NodeID: task.NodeID, Status: "running", StartedAt: startedAt}
+	record := &model.BackupRecord{TaskID: task.ID, StorageTargetID: primaryTargetID, NodeID: resolvedNodeID, Status: "running", StartedAt: startedAt}
 	if err := s.records.Create(ctx, record); err != nil {
 		return nil, apperror.Internal("BACKUP_RECORD_CREATE_FAILED", "无法创建备份记录", err)
 	}
+	// 用池选出的节点 ID 复写 task 副本，使后续路由/执行沿用
+	task.NodeID = resolvedNodeID
 	task.LastRunAt = &startedAt
 	task.LastStatus = "running"
 	if err := s.tasks.Update(ctx, task); err != nil {
@@ -412,6 +425,64 @@ func (s *BackupExecutionService) shouldNotify(ctx context.Context, task *model.B
 		}
 	}
 	return true
+}
+
+// selectPoolNode 从所有 Labels 包含 poolTag 的在线节点中选择"当前运行中任务最少"的一台。
+// 返回 (nil, error) 表示硬错误（仓储访问失败）；(nil, nil) 表示没有匹配节点（退化走本机 Master）。
+// 本方法不修改任何持久化状态，仅做选择。
+func (s *BackupExecutionService) selectPoolNode(ctx context.Context, poolTag string) (*model.Node, error) {
+	if s.nodeRepo == nil {
+		// 没接入集群依赖时，降级为让调用方走本机 Master
+		return nil, nil
+	}
+	nodes, err := s.nodeRepo.List(ctx)
+	if err != nil {
+		return nil, apperror.Internal("NODE_LIST_FAILED", "无法枚举节点池", err)
+	}
+	candidates := make([]*model.Node, 0)
+	for i := range nodes {
+		n := &nodes[i]
+		if n.Status != model.NodeStatusOnline {
+			continue
+		}
+		if !n.HasLabel(poolTag) {
+			continue
+		}
+		candidates = append(candidates, n)
+	}
+	if len(candidates) == 0 {
+		return nil, apperror.BadRequest("NODE_POOL_EMPTY",
+			fmt.Sprintf("节点池 %q 下无在线节点，任务无法调度", poolTag), nil)
+	}
+	// 运行中记录数越少越优先。并列按 ID 升序（稳定、可预期）。
+	best := candidates[0]
+	bestLoad := s.countRunningOnNode(ctx, best.ID)
+	for _, n := range candidates[1:] {
+		load := s.countRunningOnNode(ctx, n.ID)
+		if load < bestLoad || (load == bestLoad && n.ID < best.ID) {
+			best = n
+			bestLoad = load
+		}
+	}
+	return best, nil
+}
+
+// countRunningOnNode 近似返回节点当前 running 记录数。失败按 0 处理（不影响功能，仅退化调度精度）。
+func (s *BackupExecutionService) countRunningOnNode(ctx context.Context, nodeID uint) int {
+	if s.records == nil {
+		return 0
+	}
+	items, err := s.records.List(ctx, repository.BackupRecordListOptions{Status: model.BackupRecordStatusRunning})
+	if err != nil {
+		return 0
+	}
+	count := 0
+	for i := range items {
+		if items[i].NodeID == nodeID {
+			count++
+		}
+	}
+	return count
 }
 
 // effectiveBandwidth 返回当前上下文应用的带宽限速字符串。

@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	NodeStatusOnline  = "online"
@@ -29,8 +32,42 @@ type Node struct {
 	// BandwidthLimit 该节点上传带宽上限（rclone 可识别格式：10M / 1G / 0=不限）。
 	// 对集群感知的上传场景有效（Master 本地与 Agent 运行时均会应用）。
 	BandwidthLimit string `gorm:"column:bandwidth_limit;size:32" json:"bandwidthLimit"`
-	CreatedAt      time.Time `json:"createdAt"`
-	UpdatedAt      time.Time `json:"updatedAt"`
+	// Labels 节点标签（CSV，如 "prod,db-host,high-mem"）。
+	// 用于任务调度的节点池选择：任务配置 NodePoolTag 时，调度器会从 Labels 包含该 tag 的
+	// 在线节点中自动挑选一台执行（按当前运行中任务数升序）。单节点可属多个池。
+	Labels    string    `gorm:"column:labels;size:500" json:"labels"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// LabelSet 把 CSV Labels 解析为 set，便于做成员判定。
+// 空白与空 token 自动忽略。
+func (n *Node) LabelSet() map[string]struct{} {
+	if n == nil {
+		return nil
+	}
+	out := make(map[string]struct{})
+	for _, raw := range strings.Split(n.Labels, ",") {
+		label := strings.TrimSpace(raw)
+		if label != "" {
+			out[label] = struct{}{}
+		}
+	}
+	return out
+}
+
+// HasLabel 判断节点是否属于指定池。nil/空 tag 返回 false。
+func (n *Node) HasLabel(tag string) bool {
+	tag = strings.TrimSpace(tag)
+	if n == nil || tag == "" {
+		return false
+	}
+	for _, raw := range strings.Split(n.Labels, ",") {
+		if strings.TrimSpace(raw) == tag {
+			return true
+		}
+	}
+	return false
 }
 
 func (Node) TableName() string {
