@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import {
   Table, Button, Space, Tag, Typography, PageHeader, Modal, Input, Message, Badge, Popconfirm, Card,
-  Empty, Dropdown, Menu,
+  Empty, Dropdown, Menu, Tooltip, InputNumber,
 } from '@arco-design/web-react'
 import {
   IconPlus, IconDelete, IconDesktop, IconCloudDownload, IconEdit, IconMore,
@@ -25,6 +25,9 @@ export default function NodesPage() {
   const [editVisible, setEditVisible] = useState(false)
   const [editNode, setEditNode] = useState<NodeSummary | null>(null)
   const [editName, setEditName] = useState('')
+  const [editLabels, setEditLabels] = useState('')
+  const [editMaxConcurrent, setEditMaxConcurrent] = useState<number>(0)
+  const [editBandwidthLimit, setEditBandwidthLimit] = useState('')
 
   const fetchNodes = useCallback(async () => {
     setLoading(true)
@@ -63,7 +66,12 @@ export default function NodesPage() {
       return
     }
     try {
-      await updateNode(editNode.id, { name: editName.trim() })
+      await updateNode(editNode.id, {
+        name: editName.trim(),
+        labels: editLabels.trim(),
+        maxConcurrent: editMaxConcurrent,
+        bandwidthLimit: editBandwidthLimit.trim(),
+      })
       Message.success('节点更新成功')
       setEditVisible(false)
       fetchNodes()
@@ -117,7 +125,18 @@ export default function NodesPage() {
       render: (_: string, record: NodeSummary) => record.os
         ? <Tag bordered>{record.os}/{record.arch}</Tag> : '-',
     },
-    { title: 'Agent 版本', dataIndex: 'agentVersion', width: 100, render: (v: string) => v || '-' },
+    {
+      title: 'Agent 版本', dataIndex: 'agentVersion', width: 140,
+      render: (v: string) => renderAgentVersion(v, masterVersion),
+    },
+    {
+      title: '标签 / 节点池', dataIndex: 'labels', width: 180,
+      render: (v: string) => {
+        const tags = (v || '').split(',').map(s => s.trim()).filter(Boolean)
+        if (tags.length === 0) return <Text type="secondary">-</Text>
+        return <Space wrap size={4}>{tags.map(tag => <Tag key={tag} color="arcoblue">{tag}</Tag>)}</Space>
+      },
+    },
     {
       title: '最后活跃', dataIndex: 'lastSeen', width: 170,
       render: (v: string) => v ? new Date(v).toLocaleString('zh-CN') : '-',
@@ -127,7 +146,13 @@ export default function NodesPage() {
       render: (_: unknown, record: NodeSummary) => (
         <Space>
           <Button type="text" icon={<IconEdit />} size="small"
-            onClick={() => { setEditNode(record); setEditName(record.name); setEditVisible(true) }} />
+            onClick={() => {
+              setEditNode(record); setEditName(record.name)
+              setEditLabels(record.labels || '')
+              setEditMaxConcurrent(record.maxConcurrent || 0)
+              setEditBandwidthLimit(record.bandwidthLimit || '')
+              setEditVisible(true)
+            }} />
           {!record.isLocal && (
             <>
               <Dropdown trigger="click" droplist={(
@@ -181,12 +206,46 @@ export default function NodesPage() {
 
       <Modal title="编辑节点" visible={editVisible}
         onCancel={() => setEditVisible(false)} onOk={handleEdit}
-        okText="保存" cancelText="取消">
-        <div style={{ marginBottom: 8 }}>
-          <Text type="secondary">节点名称</Text>
-        </div>
+        okText="保存" cancelText="取消" style={{ width: 520 }}>
+        <div style={{ marginBottom: 8 }}><Text type="secondary">节点名称</Text></div>
         <Input placeholder="输入节点名称" value={editName} onChange={setEditName} />
+
+        <div style={{ margin: '16px 0 8px 0' }}>
+          <Text type="secondary">标签 / 节点池</Text>
+          <Tooltip content="以英文逗号分隔，如 prod,db,high-mem。任务配置节点池标签时会从命中的在线节点中按负载最低选一台执行。">
+            <Text type="secondary" style={{ marginLeft: 8, cursor: 'help' }}>ⓘ</Text>
+          </Tooltip>
+        </div>
+        <Input placeholder="例如：prod,db,high-mem" value={editLabels} onChange={setEditLabels} />
+
+        <div style={{ margin: '16px 0 8px 0' }}><Text type="secondary">最大并发任务数（0 = 不限）</Text></div>
+        <InputNumber min={0} max={64} value={editMaxConcurrent} onChange={v => setEditMaxConcurrent(v ?? 0)} style={{ width: '100%' }} />
+
+        <div style={{ margin: '16px 0 8px 0' }}>
+          <Text type="secondary">带宽限速</Text>
+          <Tooltip content="rclone 格式，如 10M 表示 10MB/s，留空走全局默认">
+            <Text type="secondary" style={{ marginLeft: 8, cursor: 'help' }}>ⓘ</Text>
+          </Tooltip>
+        </div>
+        <Input placeholder="例如：10M 或 1G；留空使用全局默认" value={editBandwidthLimit} onChange={setEditBandwidthLimit} />
       </Modal>
     </div>
+  )
+}
+
+/**
+ * 渲染 Agent 版本 + 与 Master 的漂移状态。
+ *   空版本 → "-"（未上报）
+ *   与 Master 相同 → 原样显示
+ *   不同（且非本机） → 红色 Tag + 提示升级
+ */
+function renderAgentVersion(agentVer: string, masterVer: string | null): React.ReactNode {
+  if (!agentVer) return <Text type="secondary">-</Text>
+  if (!masterVer) return agentVer
+  if (agentVer === masterVer) return agentVer
+  return (
+    <Tooltip content={`Master 版本 ${masterVer}，建议重新生成安装命令升级 Agent`}>
+      <Tag color="orangered" style={{ cursor: 'help' }}>{agentVer} ≠ {masterVer}</Tag>
+    </Tooltip>
   )
 }

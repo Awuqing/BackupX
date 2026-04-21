@@ -34,6 +34,7 @@ type NodeSummary struct {
 	LastSeen       time.Time `json:"lastSeen"`
 	MaxConcurrent  int       `json:"maxConcurrent"`
 	BandwidthLimit string    `json:"bandwidthLimit"`
+	Labels         string    `json:"labels"`
 	CreatedAt      time.Time `json:"createdAt"`
 }
 
@@ -47,6 +48,8 @@ type NodeUpdateInput struct {
 	Name           string `json:"name" binding:"required"`
 	MaxConcurrent  int    `json:"maxConcurrent"`
 	BandwidthLimit string `json:"bandwidthLimit" binding:"max=32"`
+	// Labels CSV；同时作为调度器的节点池标签（task.NodePoolTag 对齐的值）。
+	Labels string `json:"labels" binding:"max=500"`
 }
 
 // NodeService manages the cluster nodes.
@@ -132,6 +135,7 @@ func (s *NodeService) List(ctx context.Context) ([]NodeSummary, error) {
 			LastSeen:       n.LastSeen,
 			MaxConcurrent:  n.MaxConcurrent,
 			BandwidthLimit: n.BandwidthLimit,
+			Labels:         n.Labels,
 			CreatedAt:      n.CreatedAt,
 		}
 	}
@@ -159,6 +163,7 @@ func (s *NodeService) Get(ctx context.Context, id uint) (*NodeSummary, error) {
 		LastSeen:       node.LastSeen,
 		MaxConcurrent:  node.MaxConcurrent,
 		BandwidthLimit: node.BandwidthLimit,
+		Labels:         node.Labels,
 		CreatedAt:      node.CreatedAt,
 	}, nil
 }
@@ -320,10 +325,30 @@ func (s *NodeService) Update(ctx context.Context, id uint, input NodeUpdateInput
 	}
 	node.MaxConcurrent = input.MaxConcurrent
 	node.BandwidthLimit = strings.TrimSpace(input.BandwidthLimit)
+	node.Labels = normalizeLabels(input.Labels)
 	if err := s.repo.Update(ctx, node); err != nil {
 		return nil, err
 	}
 	return s.Get(ctx, id)
+}
+
+// normalizeLabels 规整 CSV labels：去空白、去空 token、去重、保持首次出现顺序。
+// 输入 "  prod, db , prod ,high-mem " → "prod,db,high-mem"
+func normalizeLabels(raw string) string {
+	seen := make(map[string]struct{})
+	out := make([]string, 0)
+	for _, token := range strings.Split(raw, ",") {
+		label := strings.TrimSpace(token)
+		if label == "" {
+			continue
+		}
+		if _, dup := seen[label]; dup {
+			continue
+		}
+		seen[label] = struct{}{}
+		out = append(out, label)
+	}
+	return strings.Join(out, ",")
 }
 
 // DirEntry represents a file or directory in a node's file system.

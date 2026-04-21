@@ -16,7 +16,14 @@ export async function createNode(name: string) {
   return unwrapApiEnvelope(response.data)
 }
 
-export async function updateNode(id: number, data: { name: string }) {
+export interface NodeUpdateInput {
+  name: string
+  labels?: string
+  maxConcurrent?: number
+  bandwidthLimit?: string
+}
+
+export async function updateNode(id: number, data: NodeUpdateInput) {
   const response = await http.put<ApiEnvelope<NodeSummary>>(`/nodes/${id}`, data)
   return unwrapApiEnvelope(response.data)
 }

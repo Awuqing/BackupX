@@ -39,6 +39,10 @@ type BackupTask struct {
 	StorageTargets       []StorageTarget `gorm:"many2many:backup_task_storage_targets" json:"storageTargets,omitempty"`
 	NodeID               uint            `gorm:"column:node_id;index;default:0" json:"nodeId"`
 	Node                 Node            `json:"node,omitempty"`
+	// NodePoolTag 节点池标签（可选）。非空且 NodeID=0 时，调度器会从 Node.Labels 包含该 tag
+	// 的在线节点中动态挑选一台执行（按运行中任务数最少原则），失败会 best-effort 切换到下一个候选。
+	// 典型场景：NodePoolTag="db" 让 MySQL 备份任务在任意标有 "db" 的数据库节点执行。
+	NodePoolTag string `gorm:"column:node_pool_tag;size:64;index" json:"nodePoolTag"`
 	Tags                 string          `gorm:"column:tags;size:500" json:"tags"`
 	RetentionDays        int             `gorm:"column:retention_days;not null;default:30" json:"retentionDays"`
 	Compression          string          `gorm:"size:10;not null;default:'gzip'" json:"compression"`
