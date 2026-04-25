@@ -36,3 +36,20 @@ func TestRenderScriptBashBootstrap(t *testing.T) {
 		t.Errorf("script missing exec bash fallback:\n%s", got)
 	}
 }
+
+func TestRenderScriptCreatesBackupXUserAndGroup(t *testing.T) {
+	got, err := RenderScript(testCtx)
+	if err != nil {
+		t.Fatalf("render err: %v", err)
+	}
+	for _, want := range []string{
+		"getent group backupx",
+		"groupadd --system backupx",
+		"useradd --system --gid backupx",
+		"Group=backupx",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("script missing %q:\n%s", want, got)
+		}
+	}
+}

@@ -3,6 +3,7 @@ import { Typography, Button, Space, Collapse, Spin, Message, Tag } from '@arco-d
 import { IconCopy, IconRefresh } from '@arco-design/web-react/icon'
 import { fetchScriptPreview } from '../../../services/nodes'
 import type { InstallTokenResult, InstallMode } from '../../../types/nodes'
+import { buildAgentDownloadCommand, buildAgentInstallCommand } from '../installCommands'
 
 const { Text } = Typography
 
@@ -29,11 +30,8 @@ export function Step3CommandPreview({ nodeId, nodeName, token, mode, previewPara
   }, [token.expiresAt])
 
   const expired = remaining === 0
-  // 使用 bash 管道执行：避开 Debian/Ubuntu 默认 /bin/sh=dash 的差异，
-  // 同时让反向代理 / CDN 不再按 "sh" 的脚本类型做内容识别（issue #46）。
-  const command = `curl -fsSL ${token.url} | sudo bash`
-  // 备用命令：若当前机器无 bash，或中间代理过滤了管道响应，可先落盘再执行。
-  const fallbackCommand = `curl -fsSL ${token.url} -o /tmp/bx-agent-install.sh && sudo sh /tmp/bx-agent-install.sh`
+  const command = buildAgentInstallCommand(token.url, token.fallbackUrl, token.scriptBase64)
+  const fallbackCommand = buildAgentDownloadCommand(token.url, token.fallbackUrl, token.scriptBase64)
   const dockerComposeCmd = mode === 'docker' && token.composeUrl
     ? `curl -fsSL ${token.composeUrl} -o docker-compose.yml && docker-compose up -d`
     : null
@@ -82,7 +80,7 @@ export function Step3CommandPreview({ nodeId, nodeName, token, mode, previewPara
 
       <div style={{ background: 'var(--color-fill-2)', padding: '12px 14px', borderRadius: 6, marginBottom: 12 }}>
         <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-          或先下载再执行（当目标机无 bash / 反向代理过滤管道响应时）：
+          或固定下载到 /tmp 后执行：
         </Text>
         <Text style={{
           fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all',
@@ -110,7 +108,7 @@ export function Step3CommandPreview({ nodeId, nodeName, token, mode, previewPara
       )}
 
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-        命令仅显示一次，复制后请尽快在目标机执行。token 一经消费立即作废。
+        安装命令包含节点 token，请仅在目标机执行并妥善保存；公开安装链接会在 TTL 到期或首次消费后作废。
       </Text>
 
       <Collapse bordered={false} onChange={(_key, keys) => {

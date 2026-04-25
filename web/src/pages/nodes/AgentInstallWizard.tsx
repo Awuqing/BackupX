@@ -6,6 +6,7 @@ import { Step3CommandPreview } from './wizard/Step3CommandPreview'
 import { BatchCommandTable, type BatchCommandRow } from './BatchCommandTable'
 import { batchCreateNodes, createInstallToken } from '../../services/nodes'
 import type { InstallTokenResult } from '../../types/nodes'
+import { buildAgentInstallCommand } from './installCommands'
 
 const Step = Steps.Step
 
@@ -162,7 +163,7 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
         const rows: BatchCommandRow[] = tokens.map(({ c, tok }) => ({
           nodeId: c.id,
           nodeName: c.name,
-          command: `curl -fsSL ${tok.url} | sudo bash`,
+          command: buildAgentInstallCommand(tok.url, tok.fallbackUrl, tok.scriptBase64),
           expiresAt: tok.expiresAt,
         }))
         if (mountedRef.current) setBatchRows(rows)

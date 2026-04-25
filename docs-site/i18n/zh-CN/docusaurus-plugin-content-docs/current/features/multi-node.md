@@ -34,15 +34,11 @@ Web 控制台 → **节点管理** → **添加节点**，打开三步向导：
 
 - **第一步 · 节点信息**：填写节点名称；或切换"批量创建"粘贴多行名称（每行一个，最多 50 个）
 - **第二步 · 部署参数**：选择安装模式（`systemd` 推荐、`Docker`、`前台运行` 调试用）、架构（默认自动检测）、Agent 版本（默认跟随 Master 版本）、有效期（5 分钟 / 15 分钟 / 1 小时 / 24 小时）、下载源（`GitHub` 直连或 `ghproxy` 镜像，国内服务器建议后者）
-- **第三步 · 安装命令**：一行 `curl ... | sudo sh` 命令 + 实时倒计时。点击复制，粘贴到目标机以 root 权限执行
+- **第三步 · 安装命令**：一条一键安装命令 + 实时倒计时。点击复制，粘贴到目标机以 root 权限执行。默认命令会嵌入已渲染的安装脚本，目标机无需再通过反向代理访问 `/api/install/:token`；公开安装 URL 仍作为备用路径保留。
 
 ### 2. 目标机一条命令完成
 
-示例（systemd 模式）：
-
-```bash
-curl -fsSL https://master.example.com/install/Xk3p9...vM | sudo sh
-```
+请直接使用 Web 控制台生成的命令。该命令会把安装脚本写入临时文件，校验 `BACKUPX_AGENT_INSTALL_V1` 魔数，再以 root 权限执行。
 
 脚本会自动：
 
@@ -52,6 +48,8 @@ curl -fsSL https://master.example.com/install/Xk3p9...vM | sudo sh
 4. 写入 `/etc/systemd/system/backupx-agent.service`（token 已烧入环境变量）
 5. 执行 `systemctl enable --now backupx-agent`
 6. 轮询 `/api/v1/agent/self`，直到 Master 确认 `status: online`（最多 30 秒）
+
+如果使用 URL 备用命令时 `curl` 输出 HTML，或 shell 报 `Syntax error: newline unexpected`，说明安装 URL 被 Web 控制台接管而不是转发到后端。需要确保 `/api/install/` 或 `/install/` 至少一个路径能转发到 BackupX 后端，或改用控制台生成的嵌入式命令。
 
 脚本是幂等的：升级或重装只需重新生成一条安装命令再跑一次。一次性安装链接在 TTL 到期或被首次消费后立即作废。
 
