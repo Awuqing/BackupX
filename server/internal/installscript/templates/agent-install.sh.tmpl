@@ -49,7 +49,27 @@ tar xzf "$TMPDIR/pkg.tar.gz" -C "$TMPDIR"
 
 # 4. 安装二进制 + 用户
 echo "[2/4] 安装到 ${INSTALL_PREFIX}"
-id backupx >/dev/null 2>&1 || useradd --system --home-dir "$INSTALL_PREFIX" --shell /usr/sbin/nologin backupx
+if ! getent group backupx >/dev/null 2>&1; then
+    if command -v groupadd >/dev/null 2>&1; then
+        groupadd --system backupx
+    elif command -v addgroup >/dev/null 2>&1; then
+        addgroup --system backupx
+    else
+        echo "需要 groupadd 或 addgroup 来创建 backupx 组" >&2
+        exit 1
+    fi
+fi
+if ! id backupx >/dev/null 2>&1; then
+    if command -v useradd >/dev/null 2>&1; then
+        useradd --system --gid backupx --home-dir "$INSTALL_PREFIX" --shell /usr/sbin/nologin backupx
+    elif command -v adduser >/dev/null 2>&1; then
+        adduser --system --ingroup backupx --home "$INSTALL_PREFIX" --shell /usr/sbin/nologin backupx
+    else
+        echo "需要 useradd 或 adduser 来创建 backupx 用户" >&2
+        exit 1
+    fi
+fi
+id backupx >/dev/null 2>&1 || { echo "backupx 用户创建失败" >&2; exit 1; }
 install -d -o backupx -g backupx "$INSTALL_PREFIX" /var/lib/backupx-agent
 install -m 0755 "$TMPDIR/backupx-${AGENT_VERSION}-linux-${ARCH}/backupx" "$INSTALL_PREFIX/backupx"
 {{end}}
@@ -66,6 +86,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=backupx
+Group=backupx
 Environment="BACKUPX_AGENT_MASTER=${MASTER_URL}"
 Environment="BACKUPX_AGENT_TOKEN=${AGENT_TOKEN}"
 ExecStart=${INSTALL_PREFIX}/backupx agent --temp-dir /var/lib/backupx-agent

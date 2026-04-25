@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -153,6 +154,8 @@ func TestOneClickInstallFlow(t *testing.T) {
 		Data struct {
 			InstallToken string `json:"installToken"`
 			URL          string `json:"url"`
+			FallbackURL  string `json:"fallbackUrl"`
+			ScriptBase64 string `json:"scriptBase64"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(genRec.Body.Bytes(), &genResp); err != nil {
@@ -160,6 +163,16 @@ func TestOneClickInstallFlow(t *testing.T) {
 	}
 	if genResp.Data.InstallToken == "" {
 		t.Fatalf("missing installToken")
+	}
+	if !strings.Contains(genResp.Data.FallbackURL, "/install/") {
+		t.Fatalf("missing fallback install URL, got %q", genResp.Data.FallbackURL)
+	}
+	decodedScript, err := base64.StdEncoding.DecodeString(genResp.Data.ScriptBase64)
+	if err != nil {
+		t.Fatalf("scriptBase64 should be valid base64: %v", err)
+	}
+	if !strings.Contains(string(decodedScript), "BACKUPX_AGENT_INSTALL_V1") {
+		t.Fatalf("scriptBase64 should contain rendered install script")
 	}
 
 	// 3. 公开端点消费
@@ -241,6 +254,8 @@ func TestInstallScriptAliasUnderAPI(t *testing.T) {
 		Data struct {
 			InstallToken string `json:"installToken"`
 			URL          string `json:"url"`
+			FallbackURL  string `json:"fallbackUrl"`
+			ScriptBase64 string `json:"scriptBase64"`
 		} `json:"data"`
 	}
 	_ = json.Unmarshal(genRec.Body.Bytes(), &genResp)
@@ -248,6 +263,12 @@ func TestInstallScriptAliasUnderAPI(t *testing.T) {
 	// 2. 新生成的 url 应指向 /api/install/... —— 让反向代理的 /api/ 转发规则自动接管
 	if !strings.Contains(genResp.Data.URL, "/api/install/") {
 		t.Errorf("new install URL should use /api/install/ prefix, got %s", genResp.Data.URL)
+	}
+	if !strings.Contains(genResp.Data.FallbackURL, "/install/") {
+		t.Errorf("fallback install URL should use /install/ prefix, got %s", genResp.Data.FallbackURL)
+	}
+	if genResp.Data.ScriptBase64 == "" {
+		t.Errorf("new install response should include scriptBase64 for proxy-independent commands")
 	}
 
 	// 3. /api/install/:token 必须可消费（与 /install/:token 等价）

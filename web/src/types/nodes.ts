@@ -44,5 +44,8 @@ export interface InstallTokenResult {
   installToken: string
   expiresAt: string
   url: string
+  fallbackUrl?: string
+  scriptBase64?: string
   composeUrl: string
+  fallbackComposeUrl?: string
 }

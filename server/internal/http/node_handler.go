@@ -1,6 +1,7 @@
 package http
 
 import (
+	"encoding/base64"
 	"fmt"
 	stdhttp "net/http"
 	"strconv"
@@ -262,16 +263,28 @@ func (h *NodeHandler) CreateInstallToken(c *gin.Context) {
 		fmt.Sprintf("生成 %s/%s install token TTL=%ds", input.Mode, input.Arch, input.TTLSeconds))
 
 	masterURL := resolveMasterURL(c, h.externalURL)
+	script, err := renderInstallScript(masterURL, out.Node, out.Record)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
 	// 使用 /api/install/... 而非 /install/... —— 让反向代理的 /api/ 转发规则
 	// 自动接管，避免 SPA fallback 把请求当成前端路由返回 index.html（issue #46）。
+	// 同时返回 /install/... 备用地址，兼容会剥离 /api 前缀的外层反向代理。
+	// scriptBase64 让前端可以生成不依赖公开下载路径的嵌入式命令，解决 Lucky 等代理
+	// 把 /api/install/* 也 fallback 到 index.html 的场景。
 	body := gin.H{
-		"installToken": out.Token,
-		"expiresAt":    out.ExpiresAt,
-		"url":          masterURL + "/api/install/" + out.Token,
-		"composeUrl":   "",
+		"installToken":       out.Token,
+		"expiresAt":          out.ExpiresAt,
+		"url":                masterURL + "/api/install/" + out.Token,
+		"fallbackUrl":        masterURL + "/install/" + out.Token,
+		"scriptBase64":       base64.StdEncoding.EncodeToString([]byte(script)),
+		"composeUrl":         "",
+		"fallbackComposeUrl": "",
 	}
 	if input.Mode == "docker" {
 		body["composeUrl"] = masterURL + "/api/install/" + out.Token + "/compose.yml"
+		body["fallbackComposeUrl"] = masterURL + "/install/" + out.Token + "/compose.yml"
 	}
 	response.Success(c, body)
 }
