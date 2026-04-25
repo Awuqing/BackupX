@@ -55,7 +55,6 @@ func (n *SMSWebhookNotifier) Send(ctx context.Context, config map[string]any, me
 		return err
 	}
 
-	// codeql[go/request-forgery]: SMS webhook URLs are admin-configured and validated by validateSMSWebhookURL before use.
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create sms webhook request: %w", err)
@@ -64,6 +63,9 @@ func (n *SMSWebhookNotifier) Send(ctx context.Context, config map[string]any, me
 	if secret := strings.TrimSpace(asString(config["secret"])); secret != "" {
 		request.Header.Set("X-BackupX-Secret", secret)
 	}
+
+	// codeql[go/request-forgery]: SMS webhook URLs are admin-configured and validated by validateSMSWebhookURL plus dial-time public IP checks.
+	// lgtm[go/request-forgery]
 	response, err := n.client.Do(request)
 	if err != nil {
 		return fmt.Errorf("send sms webhook request: %w", err)
