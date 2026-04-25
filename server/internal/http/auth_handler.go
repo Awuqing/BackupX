@@ -2,12 +2,20 @@ package http
 
 import (
 	"net"
+	stdhttp "net/http"
 	"strings"
+	"time"
 
 	"backupx/server/internal/apperror"
 	"backupx/server/internal/service"
 	"backupx/server/pkg/response"
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	trustedDeviceCookieName   = "backupx_trusted_device"
+	trustedDeviceCookiePath   = "/api/auth"
+	trustedDeviceCookieMaxAge = int((30 * 24 * time.Hour) / time.Second)
 )
 
 type AuthHandler struct {
@@ -47,10 +55,17 @@ func (h *AuthHandler) Login(c *gin.Context) {
 		response.Error(c, apperror.BadRequest("AUTH_LOGIN_INVALID", "登录参数不合法", err))
 		return
 	}
+	if strings.TrimSpace(input.TrustedDeviceToken) == "" {
+		input.TrustedDeviceToken = trustedDeviceCookieValue(c)
+	}
 	payload, err := h.authService.Login(c.Request.Context(), input, ClientKey(c))
 	if err != nil {
 		response.Error(c, err)
 		return
+	}
+	if payload.TrustedDeviceToken != "" {
+		setTrustedDeviceCookie(c, payload.TrustedDeviceToken)
+		payload.TrustedDeviceToken = ""
 	}
 	response.Success(c, payload)
 }
@@ -86,6 +101,7 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	clearTrustedDeviceCookie(c)
 	response.Success(c, gin.H{"changed": true})
 }
 
@@ -146,6 +162,9 @@ func (h *AuthHandler) DisableTwoFactor(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	if !user.MFAEnabled {
+		clearTrustedDeviceCookie(c)
+	}
 	response.Success(c, user)
 }
 
@@ -185,6 +204,9 @@ func (h *AuthHandler) ConfigureOTP(c *gin.Context) {
 	if err != nil {
 		response.Error(c, err)
 		return
+	}
+	if !user.MFAEnabled {
+		clearTrustedDeviceCookie(c)
 	}
 	response.Success(c, user)
 }
@@ -288,6 +310,9 @@ func (h *AuthHandler) DeleteWebAuthnCredential(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	if !user.MFAEnabled {
+		clearTrustedDeviceCookie(c)
+	}
 	response.Success(c, user)
 }
 
@@ -322,6 +347,7 @@ func (h *AuthHandler) RevokeTrustedDevice(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
+	clearTrustedDeviceCookie(c)
 	response.Success(c, gin.H{"deleted": true})
 }
 
@@ -358,4 +384,32 @@ func firstForwardedValue(value string) string {
 		return ""
 	}
 	return strings.TrimSpace(parts[0])
+}
+
+func trustedDeviceCookieValue(c *gin.Context) string {
+	token, err := c.Cookie(trustedDeviceCookieName)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(token)
+}
+
+func setTrustedDeviceCookie(c *gin.Context, token string) {
+	writeTrustedDeviceCookie(c, strings.TrimSpace(token), trustedDeviceCookieMaxAge)
+}
+
+func clearTrustedDeviceCookie(c *gin.Context) {
+	writeTrustedDeviceCookie(c, "", -1)
+}
+
+func writeTrustedDeviceCookie(c *gin.Context, value string, maxAge int) {
+	c.SetSameSite(stdhttp.SameSiteLaxMode)
+	c.SetCookie(trustedDeviceCookieName, value, maxAge, trustedDeviceCookiePath, "", requestIsSecure(c), true)
+}
+
+func requestIsSecure(c *gin.Context) bool {
+	if c.Request.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(firstForwardedValue(c.GetHeader("X-Forwarded-Proto")), "https")
 }
