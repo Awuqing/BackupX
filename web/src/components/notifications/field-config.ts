@@ -14,7 +14,7 @@ const FIELD_CONFIG_MAP: Record<NotificationType, NotificationFieldConfig[]> = {
     { key: 'secret', label: '共享密钥', type: 'password', placeholder: '可选', sensitive: true },
   ],
   sms: [
-    { key: 'url', label: 'SMS Webhook URL', type: 'input', required: true, placeholder: 'https://sms-gateway.example.com/send' },
+    { key: 'url', label: 'SMS Webhook URL', type: 'input', required: true, placeholder: 'https://sms-gateway.example.com/send', description: '仅允许 HTTPS 公网地址。' },
     { key: 'secret', label: '共享密钥', type: 'password', placeholder: '可选', sensitive: true },
   ],
   telegram: [
