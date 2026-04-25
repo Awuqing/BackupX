@@ -16,15 +16,16 @@ import (
 	"backupx/server/internal/repository"
 	"backupx/server/internal/security"
 	"backupx/server/internal/service"
+	"backupx/server/internal/storage/codec"
 )
 
 func TestSetupLoginAndProfileFlow(t *testing.T) {
 	tempDir := t.TempDir()
 	cfg := config.Config{
-		Server: config.ServerConfig{Host: "127.0.0.1", Port: 8340, Mode: "test"},
+		Server:   config.ServerConfig{Host: "127.0.0.1", Port: 8340, Mode: "test"},
 		Database: config.DatabaseConfig{Path: filepath.Join(tempDir, "backupx.db")},
 		Security: config.SecurityConfig{JWTExpire: "24h"},
-		Log: config.LogConfig{Level: "error"},
+		Log:      config.LogConfig{Level: "error"},
 	}
 
 	log, err := logger.New(cfg.Log)
@@ -35,6 +36,13 @@ func TestSetupLoginAndProfileFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("database.Open error: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("db.DB error: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
 
 	userRepo := repository.NewUserRepository(db)
 	systemConfigRepo := repository.NewSystemConfigRepository(db)
@@ -43,7 +51,7 @@ func TestSetupLoginAndProfileFlow(t *testing.T) {
 		t.Fatalf("ResolveSecurity error: %v", err)
 	}
 	jwtManager := security.NewJWTManager(resolved.JWTSecret, time.Hour)
-	authService := service.NewAuthService(userRepo, systemConfigRepo, jwtManager, security.NewLoginRateLimiter(5, time.Minute))
+	authService := service.NewAuthService(userRepo, systemConfigRepo, jwtManager, security.NewLoginRateLimiter(5, time.Minute), codec.NewConfigCipher(resolved.EncryptionKey))
 	systemService := service.NewSystemService(cfg, "test", time.Now().UTC())
 
 	router := NewRouter(RouterDependencies{
@@ -58,8 +66,8 @@ func TestSetupLoginAndProfileFlow(t *testing.T) {
 	})
 
 	setupBody, _ := json.Marshal(map[string]string{
-		"username": "admin",
-		"password": "password-123",
+		"username":    "admin",
+		"password":    "password-123",
 		"displayName": "Admin",
 	})
 	setupRequest := httptest.NewRequest(http.MethodPost, "/api/auth/setup", bytes.NewBuffer(setupBody))

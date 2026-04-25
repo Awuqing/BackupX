@@ -16,11 +16,11 @@ import (
 )
 
 type NotificationUpsertInput struct {
-	Name       string         `json:"name" binding:"required,min=1,max=100"`
-	Type       string         `json:"type" binding:"required,oneof=email webhook telegram"`
-	Enabled    bool           `json:"enabled"`
-	OnSuccess  bool           `json:"onSuccess"`
-	OnFailure  bool           `json:"onFailure"`
+	Name      string `json:"name" binding:"required,min=1,max=100"`
+	Type      string `json:"type" binding:"required,oneof=email webhook telegram sms"`
+	Enabled   bool   `json:"enabled"`
+	OnSuccess bool   `json:"onSuccess"`
+	OnFailure bool   `json:"onFailure"`
 	// EventTypes 订阅的扩展事件列表。与 OnSuccess/OnFailure 并存：
 	//   - 两者均空时，订阅"备份成功/失败"对应原有语义（兼容）。
 	//   - EventTypes 显式指定时优先按清单匹配。
@@ -186,8 +186,8 @@ func (s *NotificationService) NotifyBackupResult(ctx context.Context, event Back
 //   - eventType 对应 model.NotificationEvent* 常量，用于订阅匹配
 //
 // 订阅匹配规则：
-//   1) notification.EventTypes 非空：必须包含 eventType
-//   2) notification.EventTypes 为空：沿用 OnSuccess/OnFailure 开关（仅 backup_* 事件）
+//  1. notification.EventTypes 非空：必须包含 eventType
+//  2. notification.EventTypes 为空：沿用 OnSuccess/OnFailure 开关（仅 backup_* 事件）
 func (s *NotificationService) DispatchEvent(ctx context.Context, eventType string, title string, body string, fields map[string]any) error {
 	// 同步广播到 SSE 订阅者（前端 Dashboard 实时推送）。
 	// 非阻塞：即便广播器未注入或订阅者已满也不影响 Notification 持久渠道。
@@ -207,6 +207,49 @@ func (s *NotificationService) DispatchEvent(ctx context.Context, eventType strin
 	fields["timestamp"] = time.Now().UTC().Format(time.RFC3339)
 	message := notify.Message{Title: title, Body: body, Fields: fields}
 	return s.deliver(ctx, items, message)
+}
+
+func (s *NotificationService) SendAuthEmailOTP(ctx context.Context, to string, code string) error {
+	return s.sendFirstByType(ctx, "email", map[string]any{"to": strings.TrimSpace(to)}, notify.Message{
+		Title: "BackupX 登录验证码",
+		Body:  fmt.Sprintf("您的 BackupX 登录验证码为：%s\n验证码 5 分钟内有效。若非本人操作，请立即检查账号安全。", code),
+		Fields: map[string]any{
+			"purpose": "login_otp",
+		},
+	})
+}
+
+func (s *NotificationService) SendAuthSMSOTP(ctx context.Context, phone string, code string) error {
+	return s.sendFirstByType(ctx, "sms", nil, notify.Message{
+		Title: "BackupX 登录验证码",
+		Body:  fmt.Sprintf("BackupX 登录验证码：%s，5 分钟内有效。", code),
+		Fields: map[string]any{
+			"phone":   strings.TrimSpace(phone),
+			"code":    code,
+			"purpose": "login_otp",
+		},
+	})
+}
+
+func (s *NotificationService) sendFirstByType(ctx context.Context, notificationType string, override map[string]any, message notify.Message) error {
+	items, err := s.notifications.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		if !item.Enabled || item.Type != notificationType {
+			continue
+		}
+		configMap := map[string]any{}
+		if err := s.cipher.DecryptJSON(item.ConfigCiphertext, &configMap); err != nil {
+			return fmt.Errorf("decrypt notification %d config: %w", item.ID, err)
+		}
+		for key, value := range override {
+			configMap[key] = value
+		}
+		return s.registry.Send(ctx, item.Type, configMap, message)
+	}
+	return fmt.Errorf("no enabled %s notification configured", notificationType)
 }
 
 // collectSubscribers 按事件类型收集启用的订阅者。

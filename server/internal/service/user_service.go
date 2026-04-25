@@ -22,13 +22,22 @@ func NewUserService(users repository.UserRepository) *UserService {
 
 // UserSummary 用户列表项（不含密码哈希）。
 type UserSummary struct {
-	ID          uint   `json:"id"`
-	Username    string `json:"username"`
-	DisplayName string `json:"displayName"`
-	Email       string `json:"email"`
-	Role        string `json:"role"`
-	Disabled    bool   `json:"disabled"`
-	CreatedAt   string `json:"createdAt"`
+	ID                              uint   `json:"id"`
+	Username                        string `json:"username"`
+	DisplayName                     string `json:"displayName"`
+	Email                           string `json:"email"`
+	Phone                           string `json:"phone"`
+	Role                            string `json:"role"`
+	Disabled                        bool   `json:"disabled"`
+	MFAEnabled                      bool   `json:"mfaEnabled"`
+	TwoFactorEnabled                bool   `json:"twoFactorEnabled"`
+	TwoFactorRecoveryCodesRemaining int    `json:"twoFactorRecoveryCodesRemaining"`
+	WebAuthnEnabled                 bool   `json:"webAuthnEnabled"`
+	WebAuthnCredentialCount         int    `json:"webAuthnCredentialCount"`
+	TrustedDeviceCount              int    `json:"trustedDeviceCount"`
+	EmailOTPEnabled                 bool   `json:"emailOtpEnabled"`
+	SMSOTPEnabled                   bool   `json:"smsOtpEnabled"`
+	CreatedAt                       string `json:"createdAt"`
 }
 
 // UserUpsertInput 创建/更新用户的输入。
@@ -37,6 +46,7 @@ type UserUpsertInput struct {
 	Password    string `json:"password" binding:"omitempty,min=8,max=128"`
 	DisplayName string `json:"displayName" binding:"required,min=1,max=128"`
 	Email       string `json:"email" binding:"omitempty,max=255"`
+	Phone       string `json:"phone" binding:"omitempty,max=64"`
 	Role        string `json:"role" binding:"required,oneof=admin operator viewer"`
 	Disabled    bool   `json:"disabled"`
 }
@@ -76,6 +86,7 @@ func (s *UserService) Create(ctx context.Context, input UserUpsertInput) (*UserS
 		PasswordHash: hash,
 		DisplayName:  strings.TrimSpace(input.DisplayName),
 		Email:        strings.TrimSpace(input.Email),
+		Phone:        strings.TrimSpace(input.Phone),
 		Role:         input.Role,
 		Disabled:     input.Disabled,
 	}
@@ -107,18 +118,43 @@ func (s *UserService) Update(ctx context.Context, id uint, input UserUpsertInput
 			return nil, apperror.Conflict("USER_USERNAME_EXISTS", "用户名已存在", nil)
 		}
 	}
+	passwordChanged := strings.TrimSpace(input.Password) != ""
+	disabledChanged := input.Disabled && !existing.Disabled
+	emailChanged := strings.TrimSpace(input.Email) != strings.TrimSpace(existing.Email)
+	phoneChanged := strings.TrimSpace(input.Phone) != strings.TrimSpace(existing.Phone)
 	existing.Username = strings.TrimSpace(input.Username)
 	existing.DisplayName = strings.TrimSpace(input.DisplayName)
 	existing.Email = strings.TrimSpace(input.Email)
+	existing.Phone = strings.TrimSpace(input.Phone)
 	existing.Role = input.Role
 	existing.Disabled = input.Disabled
-	if strings.TrimSpace(input.Password) != "" {
+	if passwordChanged {
 		hash, err := security.HashPassword(input.Password)
 		if err != nil {
 			return nil, apperror.Internal("USER_HASH_FAILED", "无法处理密码", err)
 		}
 		existing.PasswordHash = hash
+		existing.TrustedDevices = ""
+		existing.OutOfBandOTPCiphertext = ""
+		existing.WebAuthnChallengeCiphertext = ""
 	}
+	if strings.TrimSpace(existing.Email) == "" && existing.EmailOTPEnabled {
+		existing.EmailOTPEnabled = false
+		existing.OutOfBandOTPCiphertext = ""
+	}
+	if strings.TrimSpace(existing.Phone) == "" && existing.SMSOTPEnabled {
+		existing.SMSOTPEnabled = false
+		existing.OutOfBandOTPCiphertext = ""
+	}
+	if emailChanged || phoneChanged {
+		existing.OutOfBandOTPCiphertext = ""
+	}
+	if disabledChanged {
+		existing.TrustedDevices = ""
+		existing.OutOfBandOTPCiphertext = ""
+		existing.WebAuthnChallengeCiphertext = ""
+	}
+	clearTrustedDevicesIfMFAOff(existing)
 	if err := s.users.Update(ctx, existing); err != nil {
 		return nil, apperror.Internal("USER_UPDATE_FAILED", "无法更新用户", err)
 	}
@@ -147,14 +183,47 @@ func (s *UserService) Delete(ctx context.Context, id uint) error {
 	return s.users.Delete(ctx, id)
 }
 
+func (s *UserService) ResetTwoFactor(ctx context.Context, id uint) (*UserSummary, error) {
+	existing, err := s.users.FindByID(ctx, id)
+	if err != nil {
+		return nil, apperror.Internal("USER_GET_FAILED", "无法获取用户", err)
+	}
+	if existing == nil {
+		return nil, apperror.New(404, "USER_NOT_FOUND", "用户不存在", nil)
+	}
+	existing.TwoFactorEnabled = false
+	existing.TwoFactorSecretCiphertext = ""
+	existing.TwoFactorRecoveryCodeHashes = ""
+	existing.WebAuthnCredentials = ""
+	existing.WebAuthnChallengeCiphertext = ""
+	existing.TrustedDevices = ""
+	existing.EmailOTPEnabled = false
+	existing.SMSOTPEnabled = false
+	existing.OutOfBandOTPCiphertext = ""
+	if err := s.users.Update(ctx, existing); err != nil {
+		return nil, apperror.Internal("USER_2FA_RESET_FAILED", "无法重置 MFA", err)
+	}
+	summary := toUserSummary(existing)
+	return &summary, nil
+}
+
 func toUserSummary(u *model.User) UserSummary {
 	return UserSummary{
-		ID:          u.ID,
-		Username:    u.Username,
-		DisplayName: u.DisplayName,
-		Email:       u.Email,
-		Role:        u.Role,
-		Disabled:    u.Disabled,
-		CreatedAt:   u.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
+		ID:                              u.ID,
+		Username:                        u.Username,
+		DisplayName:                     u.DisplayName,
+		Email:                           u.Email,
+		Phone:                           u.Phone,
+		Role:                            u.Role,
+		Disabled:                        u.Disabled,
+		MFAEnabled:                      userMFAEnabled(u),
+		TwoFactorEnabled:                u.TwoFactorEnabled,
+		TwoFactorRecoveryCodesRemaining: recoveryCodeRemainingCount(u),
+		WebAuthnEnabled:                 webAuthnCredentialCount(u) > 0,
+		WebAuthnCredentialCount:         webAuthnCredentialCount(u),
+		TrustedDeviceCount:              trustedDeviceCount(u),
+		EmailOTPEnabled:                 u.EmailOTPEnabled,
+		SMSOTPEnabled:                   u.SMSOTPEnabled,
+		CreatedAt:                       u.CreatedAt.Format("2006-01-02T15:04:05Z07:00"),
 	}
 }

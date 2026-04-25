@@ -7,8 +7,17 @@ export interface UserSummary {
   username: string
   displayName: string
   email: string
+  phone: string
   role: UserRole
   disabled: boolean
+  mfaEnabled: boolean
+  twoFactorEnabled: boolean
+  twoFactorRecoveryCodesRemaining: number
+  webAuthnEnabled: boolean
+  webAuthnCredentialCount: number
+  trustedDeviceCount: number
+  emailOtpEnabled: boolean
+  smsOtpEnabled: boolean
   createdAt: string
 }
 
@@ -17,6 +26,7 @@ export interface UserUpsertPayload {
   password?: string
   displayName: string
   email?: string
+  phone?: string
   role: UserRole
   disabled: boolean
 }
@@ -38,5 +48,10 @@ export async function updateUser(id: number, payload: UserUpsertPayload) {
 
 export async function deleteUser(id: number) {
   const response = await http.delete<ApiEnvelope<{ deleted: boolean }>>(`/users/${id}`)
+  return unwrapApiEnvelope(response.data)
+}
+
+export async function resetUserTwoFactor(id: number) {
+  const response = await http.post<ApiEnvelope<UserSummary>>(`/users/${id}/2fa/reset`)
   return unwrapApiEnvelope(response.data)
 }

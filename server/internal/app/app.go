@@ -60,9 +60,9 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 
 	jwtManager := security.NewJWTManager(resolvedSecurity.JWTSecret, config.MustJWTDuration(cfg.Security))
 	rateLimiter := security.NewLoginRateLimiter(5, time.Minute)
-	authService := service.NewAuthService(userRepo, systemConfigRepo, jwtManager, rateLimiter)
-	systemService := service.NewSystemService(cfg, version, time.Now().UTC())
 	configCipher := codec.NewConfigCipher(resolvedSecurity.EncryptionKey)
+	authService := service.NewAuthService(userRepo, systemConfigRepo, jwtManager, rateLimiter, configCipher)
+	systemService := service.NewSystemService(cfg, version, time.Now().UTC())
 	storageRegistry := storage.NewRegistry(
 		storageRclone.NewLocalDiskFactory(),
 		storageRclone.NewS3Factory(),
@@ -85,8 +85,9 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	backupRunnerRegistry := backup.NewRegistry(backup.NewFileRunner(), backup.NewSQLiteRunner(), backup.NewMySQLRunner(nil), backup.NewPostgreSQLRunner(nil), backup.NewSAPHANARunner(nil))
 	logHub := backup.NewLogHub()
 	retentionService := backupretention.NewService(backupRecordRepo)
-	notifyRegistry := notify.NewRegistry(notify.NewEmailNotifier(), notify.NewWebhookNotifier(), notify.NewTelegramNotifier())
+	notifyRegistry := notify.NewRegistry(notify.NewEmailNotifier(), notify.NewWebhookNotifier(), notify.NewTelegramNotifier(), notify.NewSMSWebhookNotifier())
 	notificationService := service.NewNotificationService(notificationRepo, notifyRegistry, configCipher)
+	authService.SetNotificationService(notificationService)
 	// 初始化 rclone 传输配置（重试 + 带宽限制）
 	rcloneCtx := storageRclone.ConfiguredContext(ctx, storageRclone.TransferConfig{
 		LowLevelRetries: cfg.Backup.Retries,
@@ -245,32 +246,32 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	metricsCollector.Start(ctx)
 
 	router := aphttp.NewRouter(aphttp.RouterDependencies{
-		Context:                ctx,
-		Config:                 cfg,
-		Version:                version,
-		Logger:                 appLogger,
-		AuthService:            authService,
-		SystemService:          systemService,
-		StorageTargetService:   storageTargetService,
-		BackupTaskService:      backupTaskService,
-		BackupExecutionService: backupExecutionService,
-		BackupRecordService:    backupRecordService,
-		RestoreService:         restoreService,
-		VerificationService:    verificationService,
-		ReplicationService:     replicationService,
-		TaskTemplateService:    taskTemplateService,
-		TaskExportService:      taskExportService,
-		SearchService:          searchService,
-		EventBroadcaster:       eventBroadcaster,
-		UserService:            userService,
-		ApiKeyService:          apiKeyService,
-		NotificationService:    notificationService,
-		DashboardService:       dashboardService,
-		SettingsService:        settingsService,
+		Context:                  ctx,
+		Config:                   cfg,
+		Version:                  version,
+		Logger:                   appLogger,
+		AuthService:              authService,
+		SystemService:            systemService,
+		StorageTargetService:     storageTargetService,
+		BackupTaskService:        backupTaskService,
+		BackupExecutionService:   backupExecutionService,
+		BackupRecordService:      backupRecordService,
+		RestoreService:           restoreService,
+		VerificationService:      verificationService,
+		ReplicationService:       replicationService,
+		TaskTemplateService:      taskTemplateService,
+		TaskExportService:        taskExportService,
+		SearchService:            searchService,
+		EventBroadcaster:         eventBroadcaster,
+		UserService:              userService,
+		ApiKeyService:            apiKeyService,
+		NotificationService:      notificationService,
+		DashboardService:         dashboardService,
+		SettingsService:          settingsService,
 		NodeService:              nodeService,
 		AgentService:             agentService,
 		DatabaseDiscoveryService: databaseDiscoveryService,
-		AuditService:            auditService,
+		AuditService:             auditService,
 		JWTManager:               jwtManager,
 		UserRepository:           userRepo,
 		SystemConfigRepo:         systemConfigRepo,

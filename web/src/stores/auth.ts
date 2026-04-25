@@ -15,6 +15,7 @@ interface AuthState {
   setup: (payload: SetupPayload) => Promise<void>
   logout: () => void
   applyAuth: (token: string, user: UserInfo) => void
+  setUser: (user: UserInfo) => void
 }
 
 function clearAuthState(set: (partial: Partial<AuthState>) => void) {
@@ -64,6 +65,9 @@ export const useAuthStore = create<AuthState>()(
       applyAuth: (token, user) => {
         setAccessToken(token)
         set({ token, user, status: 'authenticated', bootstrapped: true })
+      },
+      setUser: (user) => {
+        set({ user })
       },
     }),
     {

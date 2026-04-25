@@ -19,6 +19,7 @@ import (
 	"backupx/server/internal/repository"
 	"backupx/server/internal/security"
 	"backupx/server/internal/service"
+	"backupx/server/internal/storage/codec"
 )
 
 // setupInstallFlowRouter 构造一个 Node + Agent + InstallToken 全量依赖的 router，
@@ -40,6 +41,13 @@ func setupInstallFlowRouter(t *testing.T) (http.Handler, string) {
 	if err != nil {
 		t.Fatalf("db: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("sql db: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = sqlDB.Close()
+	})
 
 	userRepo := repository.NewUserRepository(db)
 	systemConfigRepo := repository.NewSystemConfigRepository(db)
@@ -48,7 +56,7 @@ func setupInstallFlowRouter(t *testing.T) (http.Handler, string) {
 		t.Fatalf("security: %v", err)
 	}
 	jwtMgr := security.NewJWTManager(resolved.JWTSecret, time.Hour)
-	authSvc := service.NewAuthService(userRepo, systemConfigRepo, jwtMgr, security.NewLoginRateLimiter(5, time.Minute))
+	authSvc := service.NewAuthService(userRepo, systemConfigRepo, jwtMgr, security.NewLoginRateLimiter(5, time.Minute), codec.NewConfigCipher(resolved.EncryptionKey))
 	systemSvc := service.NewSystemService(cfg, "test", time.Now().UTC())
 
 	nodeRepo := repository.NewNodeRepository(db)

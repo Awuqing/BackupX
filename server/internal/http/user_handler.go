@@ -78,3 +78,18 @@ func (h *UserHandler) Delete(c *gin.Context) {
 		fmt.Sprintf("删除用户 (ID: %d)", id))
 	response.Success(c, gin.H{"deleted": true})
 }
+
+func (h *UserHandler) ResetTwoFactor(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	item, err := h.service.ResetTwoFactor(c.Request.Context(), id)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	recordAudit(c, h.auditService, "user", "reset_two_factor", "user", fmt.Sprintf("%d", id), item.Username,
+		fmt.Sprintf("重置用户 %s 的 MFA", item.Username))
+	response.Success(c, item)
+}

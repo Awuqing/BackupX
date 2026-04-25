@@ -5,15 +5,18 @@ describe('notification field config', () => {
   it('returns readable type labels', () => {
     expect(getNotificationTypeLabel('email')).toBe('Email')
     expect(getNotificationTypeLabel('telegram')).toBe('Telegram')
+    expect(getNotificationTypeLabel('sms')).toBe('SMS Webhook')
   })
 
   it('returns required fields for each notification type', () => {
     const emailFields = getNotificationFieldConfigs('email')
     const webhookFields = getNotificationFieldConfigs('webhook')
     const telegramFields = getNotificationFieldConfigs('telegram')
+    const smsFields = getNotificationFieldConfigs('sms')
 
     expect(emailFields.some((field) => field.key === 'host' && field.required)).toBe(true)
     expect(webhookFields.some((field) => field.key === 'url' && field.required)).toBe(true)
     expect(telegramFields.some((field) => field.key === 'botToken' && field.required)).toBe(true)
+    expect(smsFields.some((field) => field.key === 'url' && field.required)).toBe(true)
   })
 })
