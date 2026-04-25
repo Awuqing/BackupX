@@ -1,10 +1,11 @@
-import { Alert, Button, Card, Form, Input, Space, Typography, Message } from '@arco-design/web-react'
-import { IconCloud, IconLock, IconUser } from '@arco-design/web-react/icon'
+import { Button, Checkbox, Form, Input, Space, Typography, Message } from '@arco-design/web-react'
+import { IconCloud, IconLock, IconSafe, IconUser } from '@arco-design/web-react/icon'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
-import { fetchSetupStatus } from '../../services/auth'
+import { beginWebAuthnLogin, fetchSetupStatus, sendLoginOtp } from '../../services/auth'
 import { useAuthStore } from '../../stores/auth'
+import { getWebAuthnAssertion } from '../../utils/webauthn'
 
 interface SetupFormValues {
   username: string
@@ -15,11 +16,16 @@ interface SetupFormValues {
 interface LoginFormValues {
   username: string
   password: string
+  twoFactorCode?: string
+  rememberDevice?: boolean
 }
 
 function resolveErrorMessage(error: unknown) {
   if (axios.isAxiosError(error)) {
     return error.response?.data?.message ?? '请求失败，请稍后重试'
+  }
+  if (error instanceof Error) {
+    return error.message
   }
   return '请求失败，请稍后重试'
 }
@@ -29,8 +35,20 @@ export function LoginPage() {
   const authStatus = useAuthStore((state) => state.status)
   const doLogin = useAuthStore((state) => state.login)
   const doSetup = useAuthStore((state) => state.setup)
+  const [loginForm] = Form.useForm<LoginFormValues>()
   const [initialized, setInitialized] = useState<boolean | null>(null)
   const [loading, setLoading] = useState(false)
+  const [mfaActionLoading, setMfaActionLoading] = useState('')
+  const [twoFactorRequired, setTwoFactorRequired] = useState(false)
+
+  function resetTwoFactorPrompt() {
+    if (!twoFactorRequired) {
+      return
+    }
+    setTwoFactorRequired(false)
+    loginForm.setFieldValue('twoFactorCode', undefined)
+    loginForm.setFieldValue('rememberDevice', false)
+  }
 
   useEffect(() => {
     if (authStatus === 'authenticated') {
@@ -73,13 +91,77 @@ export function LoginPage() {
   const handleLogin = async (values: LoginFormValues) => {
     setLoading(true)
     try {
-      await doLogin(values)
+      await doLogin({
+        ...values,
+        trustedDeviceName: values.rememberDevice ? navigator.userAgent.slice(0, 120) : undefined,
+      })
+      setTwoFactorRequired(false)
+      Message.success('登录成功')
+      navigate('/dashboard', { replace: true })
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        const code = error.response?.data?.code
+        if (code === 'AUTH_2FA_REQUIRED' || code === 'AUTH_2FA_INVALID') {
+          setTwoFactorRequired(true)
+          Message.error(resolveErrorMessage(error))
+          return
+        }
+      }
+      Message.error(resolveErrorMessage(error))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function readLoginCredentials(): (LoginFormValues & { username: string; password: string }) | null {
+    const values = loginForm.getFieldsValue()
+    if (!values.username?.trim() || !values.password?.trim()) {
+      Message.error('请先输入用户名和密码')
+      return null
+    }
+    return {
+      ...values,
+      username: values.username,
+      password: values.password,
+    }
+  }
+
+  async function handleSendOTP(channel: 'email' | 'sms') {
+    const values = readLoginCredentials()
+    if (!values) return
+    setMfaActionLoading(channel)
+    try {
+      await sendLoginOtp({ username: values.username, password: values.password, channel })
+      Message.success(channel === 'email' ? '邮件验证码已发送' : '短信验证码已发送')
+    } catch (error) {
+      Message.error(resolveErrorMessage(error))
+    } finally {
+      setMfaActionLoading('')
+    }
+  }
+
+  async function handleWebAuthnLogin() {
+    const values = readLoginCredentials()
+    if (!values) return
+    setMfaActionLoading('webauthn')
+    try {
+      const options = await beginWebAuthnLogin({ username: values.username, password: values.password })
+      const assertion = await getWebAuthnAssertion(options)
+      await doLogin({
+        username: values.username,
+        password: values.password,
+        webAuthnAssertion: assertion,
+        trustedDeviceToken: '',
+        rememberDevice: values.rememberDevice,
+        trustedDeviceName: navigator.userAgent.slice(0, 120),
+      })
+      setTwoFactorRequired(false)
       Message.success('登录成功')
       navigate('/dashboard', { replace: true })
     } catch (error) {
       Message.error(resolveErrorMessage(error))
     } finally {
-      setLoading(false)
+      setMfaActionLoading('')
     }
   }
 
@@ -181,15 +263,30 @@ export function LoginPage() {
                 </Button>
               </Form>
             ) : (
-              <Form<LoginFormValues> layout="vertical" onSubmit={handleLogin}>
+              <Form<LoginFormValues> form={loginForm} layout="vertical" onSubmit={handleLogin}>
                 <Form.Item field="username" label="用户名" rules={[{ required: true, minLength: 3 }]}>
-                  <Input placeholder="请输入用户名" prefix={<IconUser />} size="large" />
+                  <Input placeholder="请输入用户名" prefix={<IconUser />} size="large" onChange={resetTwoFactorPrompt} />
                 </Form.Item>
                 <Form.Item field="password" label="密码" rules={[{ required: true, minLength: 8 }]}>
-                  <Input.Password placeholder="请输入密码" prefix={<IconLock />} size="large" />
+                  <Input.Password placeholder="请输入密码" prefix={<IconLock />} size="large" onChange={resetTwoFactorPrompt} />
                 </Form.Item>
+                {twoFactorRequired && (
+                  <>
+                    <Form.Item field="twoFactorCode" label="验证码或恢复码" rules={[{ required: true, minLength: 6, maxLength: 32 }]}>
+                      <Input placeholder="请输入 TOTP、恢复码、邮件或短信验证码" prefix={<IconSafe />} size="large" maxLength={32} />
+                    </Form.Item>
+                    <Space wrap style={{ marginTop: -8, marginBottom: 8 }}>
+                      <Button loading={mfaActionLoading === 'email'} onClick={() => void handleSendOTP('email')}>发送邮件验证码</Button>
+                      <Button loading={mfaActionLoading === 'sms'} onClick={() => void handleSendOTP('sms')}>发送短信验证码</Button>
+                      <Button loading={mfaActionLoading === 'webauthn'} onClick={() => void handleWebAuthnLogin()}>使用通行密钥</Button>
+                    </Space>
+                    <Form.Item field="rememberDevice" triggerPropName="checked">
+                      <Checkbox>信任此设备 30 天</Checkbox>
+                    </Form.Item>
+                  </>
+                )}
                 <Button long type="primary" htmlType="submit" loading={loading} size="large" style={{ borderRadius: 8, height: 44, marginTop: 16 }}>
-                  登录
+                  {twoFactorRequired ? '验证并登录' : '登录'}
                 </Button>
               </Form>
             )}

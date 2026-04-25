@@ -6,7 +6,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 // https://awuqing.github.io/BackupX/
 const config: Config = {
   title: 'BackupX',
-  tagline: 'Self-hosted server backup management — one binary, one command',
+  tagline: 'Self-hosted backup orchestration for servers, databases, storage targets and remote agents',
   favicon: 'img/favicon.ico',
 
   future: {
@@ -77,6 +77,16 @@ const config: Config = {
           position: 'left',
         },
         {
+          to: '/community',
+          label: 'Community',
+          position: 'left',
+        },
+        {
+          to: '/sponsors',
+          label: 'Sponsors',
+          position: 'left',
+        },
+        {
           type: 'localeDropdown',
           position: 'right',
         },
@@ -113,6 +123,22 @@ const config: Config = {
             {label: 'Releases', href: 'https://github.com/Awuqing/BackupX/releases'},
             {label: 'Docker Hub', href: 'https://hub.docker.com/r/awuqing/backupx'},
             {label: 'Issues', href: 'https://github.com/Awuqing/BackupX/issues'},
+          ],
+        },
+        {
+          title: 'Community',
+          items: [
+            {label: 'Contributors', href: 'https://github.com/Awuqing/BackupX/graphs/contributors'},
+            {label: 'Pull Requests', href: 'https://github.com/Awuqing/BackupX/pulls'},
+            {label: 'Sponsor', to: '/sponsors'},
+          ],
+        },
+        {
+          title: 'Sponsors',
+          items: [
+            {label: 'Sponsor BackupX', href: 'https://github.com/sponsors/Awuqing'},
+            {label: 'Partnership', href: 'https://github.com/Awuqing/BackupX/issues/new/choose'},
+            {label: 'Sponsor tiers', to: '/sponsors'},
           ],
         },
       ],

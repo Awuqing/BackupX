@@ -1,22 +1,22 @@
 {
   "home.badge": {
-    "message": "开源 · v1.6.0",
+    "message": "开源备份控制平面 · v2.2.1",
     "description": "Version badge on the hero"
   },
   "home.title.part1": {
-    "message": "为每一台服务器提供",
+    "message": "面向自托管服务器的",
     "description": "Hero title, first line"
   },
   "home.title.part2": {
-    "message": "自托管备份管理。",
+    "message": "备份编排平台。",
     "description": "Hero title accent second line"
   },
   "home.tagline": {
-    "message": "一个二进制，一条命令。文件 / 数据库 / SAP HANA 备份直送 70+ 存储后端。",
+    "message": "在一个清爽控制台中管理文件、数据库、SAP HANA 和远程节点备份。控制平面自己掌握，存储后端灵活选择。",
     "description": "Tagline on the home page"
   },
   "home.pageTitle": {
-    "message": "自托管备份管理",
+    "message": "面向自托管服务器的备份编排",
     "description": "Page <title> element on the home page"
   },
   "home.getStarted": {
@@ -28,13 +28,26 @@
     "description": "Hero metric label: storage backends"
   },
   "home.metric.backupTypes": {
-    "message": "备份类型",
+    "message": "远程执行",
     "description": "Hero metric label: backup types"
   },
   "home.metric.license": {
     "message": "开源协议",
     "description": "Hero metric label: license"
   },
+  "home.visual.eyebrow": {"message": "BackupX 控制台"},
+  "home.visual.title": {"message": "运维概览"},
+  "home.visual.status": {"message": "健康"},
+  "home.visual.success": {"message": "成功率"},
+  "home.visual.nodes": {"message": "活跃节点"},
+  "home.visual.targets": {"message": "存储目标"},
+  "home.visual.row1.title": {"message": "PostgreSQL 夜间备份"},
+  "home.visual.row1.desc": {"message": "加密归档已上传至 S3"},
+  "home.visual.row2.title": {"message": "SAP HANA 快照"},
+  "home.visual.row2.desc": {"message": "正在 agent-shanghai-02 上运行"},
+  "home.visual.row3.title": {"message": "保留策略清理"},
+  "home.visual.row3.desc": {"message": "下一次执行在 4 小时后"},
+  "home.command.title": {"message": "使用 Docker 启动"},
 
   "section.features.tag": {
     "message": "核心能力",
@@ -78,5 +91,70 @@
   "showcase.storage.desc": {"message": "阿里云 OSS、腾讯云 COS、S3、Google Drive、WebDAV — 加上每一种 rclone 后端。测试连接、收藏、查看实时容量。"},
   "showcase.nodes.title": {"message": "几分钟搭起 Master-Agent"},
   "showcase.nodes.desc": {"message": "创建节点、复制令牌、在任意远程主机启动 Agent。路由到节点的任务在本地执行并直接上传到存储 — 无需反向连通性。"},
-  "showcase.cta": {"message": "开始阅读文档"}
+  "showcase.cta": {"message": "开始阅读文档"},
+
+  "community.tag": {"message": "社区"},
+  "community.pageTitle": {"message": "社区、赞助商与贡献者"},
+  "community.pageDescription": {"message": "赞助 BackupX，了解贡献者，并找到务实的参与方式。"},
+  "community.title": {"message": "开放协作，面向长期运维"},
+  "community.subtitle": {"message": "备份软件的信任来自透明发布、真实部署反馈，以及足够务实的贡献路径。"},
+  "community.sponsor.kicker": {"message": "赞助商"},
+  "community.sponsor.wallTitle": {"message": "赞助商"},
+  "community.sponsor.title": {"message": "支持你依赖的备份基础设施"},
+  "community.sponsor.cta": {"message": "赞助 BackupX"},
+  "community.sponsor.openSlot": {"message": "赞助席位开放"},
+  "community.sponsor.logo.project": {"message": "项目赞助"},
+  "community.sponsor.logo.cloud": {"message": "云服务伙伴"},
+  "community.sponsor.logo.object": {"message": "对象存储"},
+  "community.sponsor.logo.cdn": {"message": "CDN 伙伴"},
+  "community.sponsor.logo.database": {"message": "数据库伙伴"},
+  "community.sponsor.logo.security": {"message": "安全审计"},
+  "community.sponsor.logo.agent": {"message": "远程节点实验室"},
+  "community.sponsor.logo.docs": {"message": "文档赞助"},
+  "community.sponsor.logo.release": {"message": "发布赞助"},
+  "community.sponsor.logo.s3": {"message": "S3 兼容"},
+  "community.sponsor.logo.webdav": {"message": "WebDAV 伙伴"},
+  "community.sponsor.logo.sftp": {"message": "SFTP 伙伴"},
+  "community.sponsor.logo.docker": {"message": "容器伙伴"},
+  "community.sponsor.logo.mirror": {"message": "镜像伙伴"},
+  "community.sponsor.logo.restore": {"message": "恢复演练"},
+  "community.sponsor.logo.qa": {"message": "测试实验室"},
+  "community.sponsor.logo.oss": {"message": "开源支持"},
+  "community.sponsor.logo.open": {"message": "赞助席位开放"},
+  "community.sponsor.infrastructure.label": {"message": "基础设施"},
+  "community.sponsor.infrastructure.title": {"message": "云与存储生态伙伴"},
+  "community.sponsor.infrastructure.desc": {"message": "帮助 BackupX 覆盖对象存储、WebDAV、SFTP 以及区域云平台的真实验证。"},
+  "community.sponsor.security.label": {"message": "安全"},
+  "community.sponsor.security.title": {"message": "审计与可靠性支持者"},
+  "community.sponsor.security.desc": {"message": "支持加密、恢复演练、发布签名和运维检查等强化工作。"},
+  "community.sponsor.community.label": {"message": "社区"},
+  "community.sponsor.community.title": {"message": "开源支持者"},
+  "community.sponsor.community.desc": {"message": "支持文档、示例、平台测试和贡献者引导。"},
+  "community.sponsor.tier.backer.name": {"message": "Backer"},
+  "community.sponsor.tier.backer.amount": {"message": "适合个人与小团队"},
+  "community.sponsor.tier.backer.desc": {"message": "支持文档、Issue 分流、兼容性测试和小型体验改进。"},
+  "community.sponsor.tier.partner.name": {"message": "Partner"},
+  "community.sponsor.tier.partner.amount": {"message": "适合存储与基础设施厂商"},
+  "community.sponsor.tier.partner.desc": {"message": "支持 Provider 验证、部署示例、基准说明和集成指南。"},
+  "community.sponsor.tier.enterprise.name": {"message": "Enterprise"},
+  "community.sponsor.tier.enterprise.amount": {"message": "适合生产环境使用方"},
+  "community.sponsor.tier.enterprise.desc": {"message": "赞助恢复演练、发布加固、审计和长期维护等可靠性工作。"},
+  "community.contributor.kicker": {"message": "贡献者"},
+  "community.contributor.all": {"message": "查看全部"},
+  "community.contributor.source": {"message": "浏览器端通过 GitHub contributors API 获取。"},
+  "community.contributor.botRole": {"message": "自动化贡献者"},
+  "community.contributor.githubRole": {"message": "GitHub 贡献者"},
+  "community.contributor.contributions": {"message": "{count} 次贡献"},
+  "community.path.kicker": {"message": "贡献路径"},
+  "community.path.issues.title": {"message": "反馈生产问题"},
+  "community.path.issues.desc": {"message": "提交日志、部署拓扑和恢复预期。"},
+  "community.path.docs.title": {"message": "完善文档与示例"},
+  "community.path.docs.desc": {"message": "贡献存储、Agent 和数据库部署指南。"},
+  "community.path.code.title": {"message": "提交聚焦的 PR"},
+  "community.path.code.desc": {"message": "保持改动小而可测，并贴合现有架构。"},
+  "sponsors.pageTitle": {"message": "赞助商"},
+  "sponsors.pageDescription": {"message": "赞助 BackupX 的可靠性、文档、存储兼容性和长期维护。"},
+  "sponsors.tag": {"message": "赞助商"},
+  "sponsors.title": {"message": "赞助 BackupX 生态"},
+  "sponsors.subtitle": {"message": "赞助帮助 BackupX 更贴近真实运维：经过验证的存储 Provider、可靠发布、恢复信心和更完善的文档。"}
 }

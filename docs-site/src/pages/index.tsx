@@ -7,34 +7,34 @@ import Layout from '@theme/Layout';
 import Heading from '@theme/Heading';
 import HomepageFeatures from '@site/src/components/HomepageFeatures';
 import HomepageShowcase from '@site/src/components/HomepageShowcase';
+import HomepageCommunity from '@site/src/components/HomepageCommunity';
 
 import styles from './index.module.css';
 
 function HomepageHeader() {
   return (
     <header className={styles.hero}>
-      <div className={styles.heroBg} aria-hidden="true" />
       <div className={clsx('container', styles.heroInner)}>
         <div className={styles.heroContent}>
           <div className={styles.badge}>
             <span className={styles.badgeDot} />
-            <Translate id="home.badge">Open-source · v1.6.0</Translate>
+            <Translate id="home.badge">Open-source backup control plane · v2.2.1</Translate>
           </div>
           <Heading as="h1" className={styles.heroTitle}>
-            <Translate id="home.title.part1">Self-hosted backup management</Translate>
+            <Translate id="home.title.part1">Backup orchestration</Translate>
             <span className={styles.heroTitleAccent}>
-              <Translate id="home.title.part2">for every server.</Translate>
+              <Translate id="home.title.part2">for self-hosted servers.</Translate>
             </span>
           </Heading>
           <p className={styles.heroSubtitle}>
             <Translate id="home.tagline">
-              One binary, one command. File / database / SAP HANA backups routed to 70+ storage backends.
+              Run file, database, SAP HANA and remote-node backups from one clean console. Keep the control plane yours, keep the storage flexible.
             </Translate>
           </p>
           <div className={styles.actions}>
             <Link className={clsx('button button--primary button--lg', styles.primaryBtn)} to="/docs/getting-started/quick-start">
               <Translate id="home.getStarted">Get Started</Translate>
-              <span className={styles.btnArrow} aria-hidden="true">→</span>
+              <span className={styles.btnArrow} aria-hidden="true">-&gt;</span>
             </Link>
             <Link className={clsx('button button--lg', styles.secondaryBtn)} to="https://github.com/Awuqing/BackupX">
               <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" style={{marginRight: 6}}>
@@ -52,9 +52,9 @@ function HomepageHeader() {
             </div>
             <div className={styles.metricDivider} />
             <div className={styles.metric}>
-              <div className={styles.metricValue}>5</div>
+              <div className={styles.metricValue}>Agent</div>
               <div className={styles.metricLabel}>
-                <Translate id="home.metric.backupTypes">Backup types</Translate>
+                <Translate id="home.metric.backupTypes">Remote execution</Translate>
               </div>
             </div>
             <div className={styles.metricDivider} />
@@ -66,29 +66,85 @@ function HomepageHeader() {
             </div>
           </div>
         </div>
-        <div className={styles.heroCode}>
-          <div className={styles.codeWindow}>
-            <div className={styles.codeHeader}>
-              <span className={clsx(styles.codeDot, styles.codeDotRed)} />
-              <span className={clsx(styles.codeDot, styles.codeDotYellow)} />
-              <span className={clsx(styles.codeDot, styles.codeDotGreen)} />
-              <span className={styles.codeTitle}>bash</span>
+        <div className={styles.heroVisual}>
+          <div className={styles.consolePanel}>
+            <div className={styles.consoleHeader}>
+              <div>
+                <span className={styles.consoleEyebrow}>
+                  <Translate id="home.visual.eyebrow">BackupX Console</Translate>
+                </span>
+                <strong>
+                  <Translate id="home.visual.title">Operations overview</Translate>
+                </strong>
+              </div>
+              <span className={styles.consoleStatus}>
+                <Translate id="home.visual.status">Healthy</Translate>
+              </span>
             </div>
-            <pre className={styles.codeBody}>
-              <code>
-                <span className={styles.codeComment}># Docker one-liner</span>{'\n'}
-                <span className={styles.codePrompt}>$</span> docker run -d --name backupx \{'\n'}
-                {'    '}-p 8340:8340 \{'\n'}
-                {'    '}-v backupx-data:/app/data \{'\n'}
-                {'    '}awuqing/backupx:latest{'\n'}
-                {'\n'}
-                <span className={styles.codeComment}># Open http://localhost:8340</span>{'\n'}
-                <span className={styles.codeComment}># Deploy an Agent on a remote host</span>{'\n'}
-                <span className={styles.codePrompt}>$</span> backupx agent \{'\n'}
-                {'    '}--master <span className={styles.codeString}>http://master:8340</span> \{'\n'}
-                {'    '}--token <span className={styles.codeString}>&lt;token&gt;</span>
-              </code>
-            </pre>
+            <div className={styles.consoleGrid}>
+              <div>
+                <span className={styles.consoleLabel}>
+                  <Translate id="home.visual.success">Success rate</Translate>
+                </span>
+                <strong>99.4%</strong>
+              </div>
+              <div>
+                <span className={styles.consoleLabel}>
+                  <Translate id="home.visual.nodes">Active nodes</Translate>
+                </span>
+                <strong>12</strong>
+              </div>
+              <div>
+                <span className={styles.consoleLabel}>
+                  <Translate id="home.visual.targets">Storage targets</Translate>
+                </span>
+                <strong>8</strong>
+              </div>
+            </div>
+            <div className={styles.timeline}>
+              <div className={styles.timelineRow}>
+                <span className={styles.timelineDotOk} />
+                <div>
+                  <strong>
+                    <Translate id="home.visual.row1.title">PostgreSQL nightly</Translate>
+                  </strong>
+                  <span>
+                    <Translate id="home.visual.row1.desc">Encrypted archive uploaded to S3</Translate>
+                  </span>
+                </div>
+                <em>02:10</em>
+              </div>
+              <div className={styles.timelineRow}>
+                <span className={styles.timelineDotInfo} />
+                <div>
+                  <strong>
+                    <Translate id="home.visual.row2.title">SAP HANA snapshot</Translate>
+                  </strong>
+                  <span>
+                    <Translate id="home.visual.row2.desc">Running on agent-shanghai-02</Translate>
+                  </span>
+                </div>
+                <em>68%</em>
+              </div>
+              <div className={styles.timelineRow}>
+                <span className={styles.timelineDotWarn} />
+                <div>
+                  <strong>
+                    <Translate id="home.visual.row3.title">Retention cleanup</Translate>
+                  </strong>
+                  <span>
+                    <Translate id="home.visual.row3.desc">Next run in 4 hours</Translate>
+                  </span>
+                </div>
+                <em>queued</em>
+              </div>
+            </div>
+          </div>
+          <div className={styles.commandCard}>
+            <div className={styles.commandTitle}>
+              <Translate id="home.command.title">Start with Docker</Translate>
+            </div>
+            <code>docker run -d -p 8340:8340 awuqing/backupx:v2.2.1</code>
           </div>
         </div>
       </div>
@@ -100,12 +156,13 @@ export default function Home(): ReactNode {
   const {siteConfig} = useDocusaurusContext();
   return (
     <Layout
-      title={translate({id: 'home.pageTitle', message: 'Self-hosted backup management'})}
+      title={translate({id: 'home.pageTitle', message: 'Backup orchestration for self-hosted servers'})}
       description={siteConfig.tagline}>
       <HomepageHeader />
       <main>
         <HomepageFeatures />
         <HomepageShowcase />
+        <HomepageCommunity />
       </main>
     </Layout>
   );

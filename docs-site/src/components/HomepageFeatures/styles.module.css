@@ -1,5 +1,6 @@
 .section {
-  padding: 6rem 0 4rem;
+  padding: 5.5rem 0 4.25rem;
+  background: var(--ifm-background-color);
 }
 
 .sectionHead {
@@ -9,14 +10,17 @@
 }
 
 .sectionTag {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.15em;
+  font-weight: 750;
+  letter-spacing: 0;
   color: var(--ifm-color-primary);
   padding: 4px 12px;
   background: rgba(22, 93, 255, 0.08);
-  border-radius: 4px;
+  border: 1px solid rgba(22, 93, 255, 0.16);
+  border-radius: 8px;
   margin-bottom: 1rem;
 }
 
@@ -26,10 +30,10 @@
 }
 
 .sectionTitle {
-  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  font-size: 2.35rem;
   line-height: 1.2;
-  letter-spacing: -0.02em;
-  font-weight: 700;
+  letter-spacing: 0;
+  font-weight: 750;
   margin: 0 0 1rem;
   color: var(--ifm-heading-color);
 }
@@ -51,6 +55,9 @@
   .section {
     padding: 3.5rem 0 2rem;
   }
+  .sectionTitle {
+    font-size: 2rem;
+  }
   .grid {
     grid-template-columns: 1fr;
   }
@@ -70,7 +77,7 @@
   padding: 1.75rem;
   background: var(--ifm-background-color);
   border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 12px;
+  border-radius: 8px;
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
   text-decoration: none !important;
   color: inherit;
@@ -78,7 +85,7 @@
 }
 
 .featureCardLink:hover {
-  transform: translateY(-3px);
+  transform: translateY(-2px);
   border-color: var(--ifm-color-primary);
   box-shadow: 0 12px 30px -8px rgba(22, 93, 255, 0.18);
   color: inherit;
@@ -99,26 +106,26 @@
 .iconWrap {
   width: 48px;
   height: 48px;
-  border-radius: 10px;
+  border-radius: 8px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, rgba(22, 93, 255, 0.1) 0%, rgba(143, 75, 255, 0.08) 100%);
+  background: linear-gradient(135deg, rgba(22, 93, 255, 0.1) 0%, rgba(20, 201, 201, 0.12) 100%);
   color: var(--ifm-color-primary);
   margin-bottom: 1.25rem;
 }
 
 [data-theme='dark'] .iconWrap {
-  background: linear-gradient(135deg, rgba(96, 126, 255, 0.15) 0%, rgba(143, 75, 255, 0.12) 100%);
+  background: linear-gradient(135deg, rgba(96, 126, 255, 0.15) 0%, rgba(20, 201, 201, 0.12) 100%);
   color: var(--ifm-color-primary-lighter);
 }
 
 .featureTitle {
   font-size: 1.15rem;
-  font-weight: 600;
+  font-weight: 700;
   margin: 0 0 0.6rem;
   color: var(--ifm-heading-color);
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 .featureDesc {
@@ -145,4 +152,18 @@
 
 .featureCardLink:hover .featureArrow {
   transform: translateX(4px);
+}
+
+@media (max-width: 640px) {
+  .sectionTitle {
+    font-size: 1.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .featureCard,
+  .featureCardLink,
+  .featureArrow {
+    transition: none;
+  }
 }

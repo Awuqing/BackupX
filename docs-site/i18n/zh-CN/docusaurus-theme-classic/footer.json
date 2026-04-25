@@ -2,6 +2,8 @@
   "link.title.Docs": {"message": "文档"},
   "link.title.Features": {"message": "功能"},
   "link.title.More": {"message": "更多"},
+  "link.title.Community": {"message": "社区"},
+  "link.title.Sponsors": {"message": "赞助商"},
   "link.item.label.Introduction": {"message": "简介"},
   "link.item.label.Quick Start": {"message": "快速开始"},
   "link.item.label.Installation": {"message": "安装"},
@@ -11,5 +13,11 @@
   "link.item.label.GitHub": {"message": "GitHub"},
   "link.item.label.Releases": {"message": "Releases"},
   "link.item.label.Docker Hub": {"message": "Docker Hub"},
-  "link.item.label.Issues": {"message": "Issues"}
+  "link.item.label.Issues": {"message": "Issues"},
+  "link.item.label.Contributors": {"message": "贡献者"},
+  "link.item.label.Pull Requests": {"message": "Pull Requests"},
+  "link.item.label.Sponsor": {"message": "赞助"},
+  "link.item.label.Sponsor BackupX": {"message": "赞助 BackupX"},
+  "link.item.label.Partnership": {"message": "合作伙伴"},
+  "link.item.label.Sponsor tiers": {"message": "赞助层级"}
 }

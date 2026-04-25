@@ -94,9 +94,22 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 			auth.GET("/setup/status", authHandler.SetupStatus)
 			auth.POST("/setup", authHandler.Setup)
 			auth.POST("/login", authHandler.Login)
+			auth.POST("/otp/send", authHandler.SendLoginOTP)
+			auth.POST("/webauthn/login/options", authHandler.BeginWebAuthnLogin)
 			auth.POST("/logout", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.Logout)
 			auth.GET("/profile", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.Profile)
 			auth.PUT("/password", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.ChangePassword)
+			auth.POST("/2fa/setup", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.PrepareTwoFactor)
+			auth.POST("/2fa/enable", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.EnableTwoFactor)
+			auth.POST("/2fa/recovery-codes", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.RegenerateRecoveryCodes)
+			auth.DELETE("/2fa", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.DisableTwoFactor)
+			auth.PUT("/otp/config", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.ConfigureOTP)
+			auth.POST("/webauthn/register/options", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.BeginWebAuthnRegistration)
+			auth.POST("/webauthn/register/finish", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.FinishWebAuthnRegistration)
+			auth.GET("/webauthn/credentials", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.ListWebAuthnCredentials)
+			auth.DELETE("/webauthn/credentials/:id", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.DeleteWebAuthnCredential)
+			auth.GET("/trusted-devices", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.ListTrustedDevices)
+			auth.DELETE("/trusted-devices/:id", AuthMiddleware(deps.JWTManager, apiKeyAuth), authHandler.RevokeTrustedDevice)
 		}
 
 		system := api.Group("/system")
@@ -229,6 +242,7 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 			users.GET("", userHandler.List)
 			users.POST("", userHandler.Create)
 			users.PUT("/:id", userHandler.Update)
+			users.POST("/:id/2fa/reset", userHandler.ResetTwoFactor)
 			users.DELETE("/:id", userHandler.Delete)
 		}
 
@@ -279,10 +293,10 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		nodes.PUT("/:id", RequireRole("admin"), nodeHandler.Update)
 		nodes.DELETE("/:id", RequireRole("admin"), nodeHandler.Delete)
 		nodes.GET("/:id/fs/list", nodeHandler.ListDirectory)
-			nodes.POST("/batch", RequireRole("admin"), nodeHandler.BatchCreate)
-			nodes.POST("/:id/install-tokens", RequireRole("admin"), nodeHandler.CreateInstallToken)
-			nodes.POST("/:id/rotate-token", RequireRole("admin"), nodeHandler.RotateToken)
-			nodes.GET("/:id/install-script-preview", RequireRole("admin"), nodeHandler.PreviewScript)
+		nodes.POST("/batch", RequireRole("admin"), nodeHandler.BatchCreate)
+		nodes.POST("/:id/install-tokens", RequireRole("admin"), nodeHandler.CreateInstallToken)
+		nodes.POST("/:id/rotate-token", RequireRole("admin"), nodeHandler.RotateToken)
+		nodes.GET("/:id/install-script-preview", RequireRole("admin"), nodeHandler.PreviewScript)
 
 		// Agent API（token 认证，无需 JWT）
 		if deps.AgentService != nil {

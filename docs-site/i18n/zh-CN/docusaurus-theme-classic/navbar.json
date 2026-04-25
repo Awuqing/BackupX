@@ -7,6 +7,14 @@
     "message": "下载",
     "description": "Navbar item: Downloads"
   },
+  "item.label.Community": {
+    "message": "社区",
+    "description": "Navbar item: Community"
+  },
+  "item.label.Sponsors": {
+    "message": "赞助商",
+    "description": "Navbar item: Sponsors"
+  },
   "item.label.GitHub": {
     "message": "GitHub",
     "description": "Navbar item: GitHub"

@@ -1,10 +1,14 @@
 .section {
-  padding: 4rem 0 6rem;
-  background: linear-gradient(180deg, transparent 0%, rgba(22, 93, 255, 0.03) 100%);
+  padding: 4.5rem 0 5.5rem;
+  background:
+    linear-gradient(180deg, rgba(245, 247, 250, 0) 0%, rgba(245, 247, 250, 0.72) 100%),
+    var(--ifm-background-color);
 }
 
 [data-theme='dark'] .section {
-  background: linear-gradient(180deg, transparent 0%, rgba(64, 128, 255, 0.04) 100%);
+  background:
+    linear-gradient(180deg, rgba(15, 17, 21, 0) 0%, rgba(255, 255, 255, 0.03) 100%),
+    var(--ifm-background-color);
 }
 
 .sectionHead {
@@ -14,26 +18,30 @@
 }
 
 .sectionTag {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
   font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.15em;
-  color: #8f4bff;
+  font-weight: 750;
+  letter-spacing: 0;
+  color: #0e7490;
   padding: 4px 12px;
-  background: rgba(143, 75, 255, 0.08);
-  border-radius: 4px;
+  background: rgba(20, 201, 201, 0.1);
+  border: 1px solid rgba(20, 201, 201, 0.2);
+  border-radius: 8px;
   margin-bottom: 1rem;
 }
 
 [data-theme='dark'] .sectionTag {
-  background: rgba(143, 75, 255, 0.18);
+  background: rgba(20, 201, 201, 0.16);
+  color: #67e8f9;
 }
 
 .sectionTitle {
-  font-size: clamp(1.8rem, 3vw, 2.5rem);
+  font-size: 2.35rem;
   line-height: 1.2;
-  letter-spacing: -0.02em;
-  font-weight: 700;
+  letter-spacing: 0;
+  font-weight: 750;
   margin: 0 0 1rem;
   color: var(--ifm-heading-color);
 }
@@ -49,34 +57,39 @@
 .tabs {
   display: flex;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
   margin-bottom: 2rem;
   flex-wrap: wrap;
+  padding: 6px;
+  background: var(--ifm-color-emphasis-100);
+  border: 1px solid var(--ifm-color-emphasis-200);
+  border-radius: 8px;
 }
 
 .tabBtn {
+  min-height: 40px;
   padding: 8px 18px;
   background: transparent;
-  border: 1px solid var(--ifm-color-emphasis-300);
-  border-radius: 999px;
+  border: 1px solid transparent;
+  border-radius: 8px;
   color: var(--ifm-color-content-secondary);
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 650;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: color 0.2s ease, border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
 }
 
 .tabBtn:hover {
   color: var(--ifm-color-primary);
-  border-color: var(--ifm-color-primary);
+  background: var(--ifm-background-color);
 }
 
 .tabBtnActive,
 .tabBtnActive:hover {
-  background: linear-gradient(90deg, #165dff 0%, #4080ff 100%);
-  color: #fff !important;
-  border-color: transparent;
-  box-shadow: 0 4px 14px rgba(22, 93, 255, 0.3);
+  background: var(--ifm-background-color);
+  color: var(--ifm-color-primary) !important;
+  border-color: rgba(22, 93, 255, 0.18);
+  box-shadow: 0 6px 16px rgba(22, 93, 255, 0.12);
 }
 
 /* Stage */
@@ -96,10 +109,10 @@
 
 .browser {
   background: var(--ifm-background-color);
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
   box-shadow:
-    0 30px 60px -20px rgba(22, 93, 255, 0.25),
+    0 24px 58px -22px rgba(22, 93, 255, 0.28),
     0 0 0 1px var(--ifm-color-emphasis-200);
 }
 
@@ -137,7 +150,7 @@
   margin: 0 auto;
   padding: 3px 14px;
   background: var(--ifm-background-color);
-  border-radius: 999px;
+  border-radius: 8px;
   font-size: 12px;
   color: var(--ifm-color-content-secondary);
   font-family: 'SFMono-Regular', Menlo, monospace;
@@ -169,8 +182,8 @@
 .captionTitle {
   font-size: 1.7rem;
   line-height: 1.2;
-  letter-spacing: -0.02em;
-  font-weight: 700;
+  letter-spacing: 0;
+  font-weight: 750;
   margin: 0 0 1rem;
   color: var(--ifm-heading-color);
 }
@@ -186,11 +199,49 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-weight: 500;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid rgba(22, 93, 255, 0.18);
+  border-radius: 8px;
+  font-weight: 650;
   color: var(--ifm-color-primary);
   text-decoration: none !important;
+  transition: border-color 0.2s ease, background 0.2s ease;
 }
 
 .captionLink:hover {
   color: var(--ifm-color-primary-dark);
+  background: rgba(22, 93, 255, 0.06);
+  border-color: var(--ifm-color-primary);
+}
+
+@media (max-width: 996px) {
+  .sectionTitle {
+    font-size: 2rem;
+  }
+}
+
+@media (max-width: 640px) {
+  .section {
+    padding: 3.25rem 0 4rem;
+  }
+
+  .sectionTitle {
+    font-size: 1.75rem;
+  }
+
+  .tabs {
+    justify-content: stretch;
+  }
+
+  .tabBtn {
+    flex: 1 1 130px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabBtn,
+  .captionLink {
+    transition: none;
+  }
 }

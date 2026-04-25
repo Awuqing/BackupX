@@ -110,7 +110,7 @@ export default function HomepageShowcase(): ReactNode {
             <p className={styles.captionDesc}>{current.description}</p>
             <Link to="/docs/getting-started/quick-start" className={styles.captionLink}>
               <Translate id="showcase.cta">Explore the docs</Translate>
-              <span aria-hidden="true"> →</span>
+              <span aria-hidden="true"> -&gt;</span>
             </Link>
           </div>
         </div>
