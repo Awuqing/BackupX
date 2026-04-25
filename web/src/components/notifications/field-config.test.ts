@@ -5,6 +5,7 @@ describe('notification field config', () => {
   it('returns readable type labels', () => {
     expect(getNotificationTypeLabel('email')).toBe('Email')
     expect(getNotificationTypeLabel('telegram')).toBe('Telegram')
+    expect(getNotificationTypeLabel('webhook')).toBe('Webhook')
   })
 
   it('returns required fields for each notification type', () => {

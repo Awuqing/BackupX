@@ -129,7 +129,7 @@ function Feature({title, description, icon, link}: FeatureItem) {
       {link && (
         <span className={styles.featureLink}>
           <Translate id="feat.learnMore">Learn more</Translate>
-          <span className={styles.featureArrow} aria-hidden="true">→</span>
+          <span className={styles.featureArrow} aria-hidden="true">-&gt;</span>
         </span>
       )}
     </>

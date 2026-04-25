@@ -16,14 +16,15 @@
   /* Surfaces */
   --ifm-background-color: #ffffff;
   --ifm-background-surface-color: #ffffff;
-  --ifm-color-emphasis-100: #f7f9fc;
-  --ifm-color-emphasis-200: #eef1f6;
-  --ifm-color-emphasis-300: #dde3ec;
+  --ifm-color-emphasis-100: #f5f7fa;
+  --ifm-color-emphasis-200: #e5e6eb;
+  --ifm-color-emphasis-300: #c9cdd4;
+  --ifm-color-emphasis-400: #a9aeb8;
 
   /* Typography */
   --ifm-font-family-base: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   --ifm-font-family-monospace: 'SFMono-Regular', Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
-  --ifm-heading-font-weight: 600;
+  --ifm-heading-font-weight: 700;
   --ifm-code-font-size: 92%;
   --ifm-h1-font-size: 2.25rem;
   --ifm-h2-font-size: 1.75rem;
@@ -33,10 +34,11 @@
   --ifm-color-content: #1d2129;
   --ifm-color-content-secondary: #4e5969;
   --ifm-heading-color: #1d2129;
+  --ifm-global-radius: 8px;
 
   /* Navbar */
   --ifm-navbar-height: 64px;
-  --ifm-navbar-background-color: rgba(255, 255, 255, 0.82);
+  --ifm-navbar-background-color: rgba(255, 255, 255, 0.9);
   --ifm-navbar-link-color: #4e5969;
   --ifm-navbar-link-hover-color: var(--ifm-color-primary);
 
@@ -64,15 +66,16 @@
 
   --ifm-background-color: #0f1115;
   --ifm-background-surface-color: #16181d;
-  --ifm-color-emphasis-100: #1a1d23;
-  --ifm-color-emphasis-200: #23272f;
-  --ifm-color-emphasis-300: #2e343d;
+  --ifm-color-emphasis-100: #1d2129;
+  --ifm-color-emphasis-200: #272e3b;
+  --ifm-color-emphasis-300: #384252;
+  --ifm-color-emphasis-400: #4e5969;
 
   --ifm-color-content: #e6e9ef;
   --ifm-color-content-secondary: #9aa3b2;
   --ifm-heading-color: #f0f2f5;
 
-  --ifm-navbar-background-color: rgba(15, 17, 21, 0.82);
+  --ifm-navbar-background-color: rgba(15, 17, 21, 0.9);
   --ifm-navbar-link-color: #c9d1db;
 
   --ifm-menu-color: #c9d1db;
@@ -97,7 +100,7 @@
 
 .navbar__title {
   font-weight: 700;
-  letter-spacing: -0.01em;
+  letter-spacing: 0;
 }
 
 .navbar__link {
@@ -105,10 +108,26 @@
   font-size: 14px;
 }
 
+.navbar__link,
+.button,
+a {
+  transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.button {
+  border-radius: 8px;
+  font-weight: 650;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ifm-color-primary);
+  outline-offset: 2px;
+}
+
 /* Sidebar tweaks */
 .menu__link {
   font-size: 14px;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 6px 10px;
   line-height: 1.4;
 }
@@ -226,9 +245,20 @@ code {
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--ifm-color-emphasis-400, #adb5bd);
+  background: var(--ifm-color-emphasis-400);
 }
 
 [data-theme='dark'] ::-webkit-scrollbar-thumb {
   background: rgba(255, 255, 255, 0.15);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }
