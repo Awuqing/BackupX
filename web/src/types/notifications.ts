@@ -1,4 +1,4 @@
-export type NotificationType = 'email' | 'webhook' | 'telegram' | 'sms'
+export type NotificationType = 'email' | 'webhook' | 'telegram'
 export type NotificationFieldType = 'input' | 'password' | 'number' | 'textarea'
 
 export interface NotificationSummary {

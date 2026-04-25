@@ -553,7 +553,7 @@ export function AppLayout() {
             <Divider />
             <Space direction="vertical" size="medium" style={{ width: '100%' }}>
               <Typography.Title heading={6} style={{ margin: 0 }}>邮件 / 短信 OTP</Typography.Title>
-              <Alert type="info" content="邮件 OTP 使用已启用的 Email 通知配置发送；短信 OTP 使用 SMS Webhook 通知配置发送。" />
+              <Alert type="info" content="邮件 OTP 使用已启用的 Email 通知配置发送；短信 OTP 使用 Webhook 通知配置发送，payload 会包含 phone/code/purpose 字段。" />
               <Space wrap>
                 <Tag color={user?.emailOtpEnabled ? 'green' : 'gray'} bordered>邮件 OTP {user?.emailOtpEnabled ? '已启用' : '未启用'}</Tag>
                 <Tag color={user?.smsOtpEnabled ? 'green' : 'gray'} bordered>短信 OTP {user?.smsOtpEnabled ? '已启用' : '未启用'}</Tag>

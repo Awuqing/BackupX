@@ -85,7 +85,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	backupRunnerRegistry := backup.NewRegistry(backup.NewFileRunner(), backup.NewSQLiteRunner(), backup.NewMySQLRunner(nil), backup.NewPostgreSQLRunner(nil), backup.NewSAPHANARunner(nil))
 	logHub := backup.NewLogHub()
 	retentionService := backupretention.NewService(backupRecordRepo)
-	notifyRegistry := notify.NewRegistry(notify.NewEmailNotifier(), notify.NewWebhookNotifier(), notify.NewTelegramNotifier(), notify.NewSMSWebhookNotifier())
+	notifyRegistry := notify.NewRegistry(notify.NewEmailNotifier(), notify.NewWebhookNotifier(), notify.NewTelegramNotifier())
 	notificationService := service.NewNotificationService(notificationRepo, notifyRegistry, configCipher)
 	authService.SetNotificationService(notificationService)
 	// 初始化 rclone 传输配置（重试 + 带宽限制）

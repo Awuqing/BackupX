@@ -13,10 +13,6 @@ const FIELD_CONFIG_MAP: Record<NotificationType, NotificationFieldConfig[]> = {
     { key: 'url', label: 'Webhook URL', type: 'input', required: true, placeholder: 'https://hooks.example.com/backupx' },
     { key: 'secret', label: '共享密钥', type: 'password', placeholder: '可选', sensitive: true },
   ],
-  sms: [
-    { key: 'url', label: 'SMS Webhook URL', type: 'input', required: true, placeholder: 'https://sms-gateway.example.com/send', description: '仅允许 HTTPS 公网地址。' },
-    { key: 'secret', label: '共享密钥', type: 'password', placeholder: '可选', sensitive: true },
-  ],
   telegram: [
     { key: 'botToken', label: 'Bot Token', type: 'password', required: true, placeholder: '123456:ABC', sensitive: true },
     { key: 'chatId', label: 'Chat ID', type: 'input', required: true, placeholder: '-100xxxxxxxxxx' },
@@ -27,7 +23,6 @@ export const notificationTypeOptions = [
   { label: 'Email', value: 'email' },
   { label: 'Webhook', value: 'webhook' },
   { label: 'Telegram', value: 'telegram' },
-  { label: 'SMS Webhook', value: 'sms' },
 ] as const
 
 export function getNotificationTypeLabel(type: NotificationType) {
@@ -38,8 +33,6 @@ export function getNotificationTypeLabel(type: NotificationType) {
       return 'Webhook'
     case 'telegram':
       return 'Telegram'
-    case 'sms':
-      return 'SMS Webhook'
     default:
       return type
   }

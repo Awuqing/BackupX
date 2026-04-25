@@ -17,7 +17,7 @@ import (
 
 type NotificationUpsertInput struct {
 	Name      string `json:"name" binding:"required,min=1,max=100"`
-	Type      string `json:"type" binding:"required,oneof=email webhook telegram sms"`
+	Type      string `json:"type" binding:"required,oneof=email webhook telegram"`
 	Enabled   bool   `json:"enabled"`
 	OnSuccess bool   `json:"onSuccess"`
 	OnFailure bool   `json:"onFailure"`
@@ -220,7 +220,7 @@ func (s *NotificationService) SendAuthEmailOTP(ctx context.Context, to string, c
 }
 
 func (s *NotificationService) SendAuthSMSOTP(ctx context.Context, phone string, code string) error {
-	return s.sendFirstByType(ctx, "sms", nil, notify.Message{
+	return s.sendFirstByType(ctx, "webhook", nil, notify.Message{
 		Title: "BackupX 登录验证码",
 		Body:  fmt.Sprintf("BackupX 登录验证码：%s，5 分钟内有效。", code),
 		Fields: map[string]any{
