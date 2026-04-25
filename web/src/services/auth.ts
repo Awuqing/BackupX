@@ -40,33 +40,8 @@ export interface AuthResult {
   trustedDevice?: TrustedDevice
 }
 
-const TRUSTED_DEVICE_TOKEN_KEY = 'backupx-trusted-device-token'
-const TRUSTED_DEVICE_TOKEN_PREFIX = 'backupx-trusted-device-token:'
-
-function trustedDeviceTokenKey(username: string) {
-  return `${TRUSTED_DEVICE_TOKEN_PREFIX}${username.trim().toLowerCase()}`
-}
-
-export function getTrustedDeviceToken(username?: string) {
-  if (username?.trim()) {
-    return localStorage.getItem(trustedDeviceTokenKey(username)) ?? localStorage.getItem(TRUSTED_DEVICE_TOKEN_KEY) ?? ''
-  }
-  return localStorage.getItem(TRUSTED_DEVICE_TOKEN_KEY) ?? ''
-}
-
-export function clearTrustedDeviceToken(username?: string) {
-  if (username?.trim()) {
-    localStorage.removeItem(trustedDeviceTokenKey(username))
-    localStorage.removeItem(TRUSTED_DEVICE_TOKEN_KEY)
-    return
-  }
-  localStorage.removeItem(TRUSTED_DEVICE_TOKEN_KEY)
-  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
-    const key = localStorage.key(index)
-    if (key?.startsWith(TRUSTED_DEVICE_TOKEN_PREFIX)) {
-      localStorage.removeItem(key)
-    }
-  }
+export function clearTrustedDeviceToken(_username?: string) {
+  // 可信设备 token 由后端写入 HttpOnly cookie，前端不能也不应该读取。
 }
 
 export async function fetchSetupStatus() {
@@ -80,16 +55,8 @@ export async function setup(payload: SetupPayload) {
 }
 
 export async function login(payload: LoginPayload) {
-  const response = await http.post<{ code: string; message: string; data: AuthResult }>('/auth/login', {
-    ...payload,
-    trustedDeviceToken: payload.trustedDeviceToken ?? getTrustedDeviceToken(payload.username),
-  })
-  const result = response.data.data
-  if (result.trustedDeviceToken) {
-    localStorage.setItem(trustedDeviceTokenKey(payload.username), result.trustedDeviceToken)
-    localStorage.removeItem(TRUSTED_DEVICE_TOKEN_KEY)
-  }
-  return result
+  const response = await http.post<{ code: string; message: string; data: AuthResult }>('/auth/login', payload)
+  return response.data.data
 }
 
 export async function fetchProfile() {

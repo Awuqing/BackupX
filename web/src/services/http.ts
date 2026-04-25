@@ -12,6 +12,7 @@ let unauthorizedHandler: (() => void) | null = null
 export const http = axios.create({
   baseURL: '/api',
   timeout: 10000,
+  withCredentials: true,
 })
 
 export function setAccessToken(token: string) {
