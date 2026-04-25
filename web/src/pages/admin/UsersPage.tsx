@@ -1,6 +1,7 @@
 import { Alert, Button, Card, Empty, Form, Input, Message, Modal, Select, Space, Switch, Table, Tag, Typography } from '@arco-design/web-react'
 import { useCallback, useEffect, useState } from 'react'
-import { createUser, deleteUser, listUsers, updateUser, type UserRole, type UserSummary, type UserUpsertPayload } from '../../services/users'
+import { createUser, deleteUser, listUsers, resetUserTwoFactor, updateUser, type UserRole, type UserSummary, type UserUpsertPayload } from '../../services/users'
+import { clearTrustedDeviceToken } from '../../services/auth'
 import { useAuthStore } from '../../stores/auth'
 import { resolveErrorMessage } from '../../utils/error'
 import { isAdmin, roleLabel } from '../../utils/permissions'
@@ -12,12 +13,13 @@ const roleOptions = [
 ]
 
 function createEmpty(): UserUpsertPayload {
-  return { username: '', password: '', displayName: '', email: '', role: 'operator', disabled: false }
+  return { username: '', password: '', displayName: '', email: '', phone: '', role: 'operator', disabled: false }
 }
 
 // UsersPage admin 用户管理。非 admin 角色进入路由会被路由守卫拦截。
 export function UsersPage() {
   const user = useAuthStore((s) => s.user)
+  const setUser = useAuthStore((s) => s.setUser)
   const [items, setItems] = useState<UserSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -55,6 +57,7 @@ export function UsersPage() {
       password: '',
       displayName: item.displayName,
       email: item.email,
+      phone: item.phone,
       role: item.role,
       disabled: item.disabled,
     })
@@ -73,7 +76,13 @@ export function UsersPage() {
     setSubmitting(true)
     try {
       if (editing) {
-        await updateUser(editing.id, draft)
+        const updated = await updateUser(editing.id, draft)
+        if (updated.id === user?.id) {
+          if (draft.password?.trim()) {
+            clearTrustedDeviceToken(updated.username)
+          }
+          setUser(updated)
+        }
         Message.success('用户已更新')
       } else {
         await createUser(draft)
@@ -96,6 +105,21 @@ export function UsersPage() {
       await load()
     } catch (e) {
       Message.error(resolveErrorMessage(e, '删除失败'))
+    }
+  }
+
+  async function handleResetTwoFactor(item: UserSummary) {
+    if (!window.confirm(`确定重置用户「${item.username}」的全部 MFA 配置吗？该用户之后可仅凭密码登录。`)) return
+    try {
+      const updated = await resetUserTwoFactor(item.id)
+      if (updated.id === user?.id) {
+        clearTrustedDeviceToken(updated.username)
+        setUser(updated)
+      }
+      Message.success('MFA 已重置')
+      await load()
+    } catch (e) {
+      Message.error(resolveErrorMessage(e, '重置 MFA 失败'))
     }
   }
 
@@ -132,12 +156,27 @@ export function UsersPage() {
               </Space>
             ) },
             { title: '角色', dataIndex: 'role', render: (value: string) => <Tag color="arcoblue" bordered>{roleLabel(value)}</Tag> },
-            { title: '邮箱', dataIndex: 'email', render: (v: string) => v || '-' },
+            { title: '邮箱 / 手机', dataIndex: 'email', render: (_: string, row: UserSummary) => (
+              <Space direction="vertical" size={2}>
+                <Typography.Text>{row.email || '-'}</Typography.Text>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>{row.phone || '-'}</Typography.Text>
+              </Space>
+            ) },
             { title: '状态', dataIndex: 'disabled', render: (disabled: boolean) => disabled ? <Tag color="red" bordered>已停用</Tag> : <Tag color="green" bordered>启用</Tag> },
+            { title: 'MFA', dataIndex: 'mfaEnabled', render: (_: boolean, row: UserSummary) => row.mfaEnabled ? (
+              <Space wrap size={4}>
+                {row.twoFactorEnabled ? <Tag color="green" bordered>TOTP</Tag> : null}
+                {row.webAuthnEnabled ? <Tag color="arcoblue" bordered>Passkey {row.webAuthnCredentialCount}</Tag> : null}
+                {row.emailOtpEnabled ? <Tag color="purple" bordered>邮件</Tag> : null}
+                {row.smsOtpEnabled ? <Tag color="orange" bordered>短信</Tag> : null}
+                {row.twoFactorEnabled ? <Typography.Text type="secondary" style={{ fontSize: 12 }}>恢复码 {row.twoFactorRecoveryCodesRemaining}</Typography.Text> : null}
+              </Space>
+            ) : <Tag bordered>未启用</Tag> },
             { title: '创建时间', dataIndex: 'createdAt' },
-            { title: '操作', width: 180, render: (_: unknown, row: UserSummary) => (
+            { title: '操作', width: 260, render: (_: unknown, row: UserSummary) => (
               <Space>
                 <Button size="small" type="text" onClick={() => openEdit(row)}>编辑</Button>
+                {row.mfaEnabled && <Button size="small" type="text" onClick={() => void handleResetTwoFactor(row)}>重置 MFA</Button>}
                 <Button size="small" type="text" status="danger" onClick={() => void handleDelete(row)} disabled={row.id === user?.id}>删除</Button>
               </Space>
             ) },
@@ -162,6 +201,9 @@ export function UsersPage() {
           </Form.Item>
           <Form.Item label="邮箱">
             <Input value={draft.email} onChange={(v) => setDraft({ ...draft, email: v })} />
+          </Form.Item>
+          <Form.Item label="手机号">
+            <Input value={draft.phone} onChange={(v) => setDraft({ ...draft, phone: v })} />
           </Form.Item>
           <Form.Item label={editing ? '新密码（留空不修改）' : '初始密码'} required={!editing}>
             <Input.Password value={draft.password} onChange={(v) => setDraft({ ...draft, password: v })} />
