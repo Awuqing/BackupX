@@ -59,16 +59,7 @@ func (h *InstallHandler) Script(c *gin.Context) {
 		return
 	}
 	h.recordConsumeAudit(c, consumed, "script")
-	script, err := installscript.RenderScript(installscript.Context{
-		MasterURL:     resolveMasterURL(c, h.externalURL),
-		AgentToken:    consumed.Node.Token,
-		AgentVersion:  consumed.Record.AgentVer,
-		Mode:          consumed.Record.Mode,
-		Arch:          consumed.Record.Arch,
-		DownloadBase:  installscript.DownloadBaseFor(consumed.Record.DownloadSrc),
-		InstallPrefix: "/opt/backupx-agent",
-		NodeID:        consumed.Node.ID,
-	})
+	script, err := renderInstallScript(resolveMasterURL(c, h.externalURL), consumed.Node, consumed.Record)
 	if err != nil {
 		c.String(stdhttp.StatusInternalServerError, "render error\n")
 		return
@@ -138,6 +129,19 @@ func (h *InstallHandler) recordConsumeAudit(c *gin.Context, consumed *service.Co
 		TargetName: consumed.Node.Name,
 		Detail:     "install token 消费 (" + kind + ")",
 		ClientIP:   c.ClientIP(),
+	})
+}
+
+func renderInstallScript(masterURL string, node *model.Node, record *model.AgentInstallToken) (string, error) {
+	return installscript.RenderScript(installscript.Context{
+		MasterURL:     masterURL,
+		AgentToken:    node.Token,
+		AgentVersion:  record.AgentVer,
+		Mode:          record.Mode,
+		Arch:          record.Arch,
+		DownloadBase:  installscript.DownloadBaseFor(record.DownloadSrc),
+		InstallPrefix: "/opt/backupx-agent",
+		NodeID:        node.ID,
 	})
 }
 
