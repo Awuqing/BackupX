@@ -45,7 +45,7 @@ type Service struct {
 func NewService(tasks repository.BackupTaskRepository, runner TaskRunner, logger *zap.Logger) *Service {
 	parser := cron.NewParser(cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 	return &Service{
-		cron:          cron.New(cron.WithParser(parser), cron.WithLocation(time.UTC)),
+		cron:          cron.New(cron.WithParser(parser), cron.WithLocation(time.Local)),
 		tasks:         tasks,
 		runner:        runner,
 		logger:        logger,
