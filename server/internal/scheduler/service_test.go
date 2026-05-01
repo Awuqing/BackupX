@@ -68,3 +68,37 @@ func TestServiceSyncTaskAndTrigger(t *testing.T) {
 		t.Fatalf("expected scheduled runner to be triggered")
 	}
 }
+
+func TestServiceSchedulesTasksInLocalTimezone(t *testing.T) {
+	location, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		t.Fatalf("LoadLocation returned error: %v", err)
+	}
+	originalLocal := time.Local
+	time.Local = location
+	t.Cleanup(func() {
+		time.Local = originalLocal
+	})
+
+	service := NewService(&fakeTaskRepository{}, &fakeRunner{}, nil)
+	if got := service.cron.Location(); got != location {
+		t.Fatalf("cron location = %v, want %v", got, location)
+	}
+
+	task := &model.BackupTask{ID: 1, Enabled: true, CronExpr: "0 5 * * *"}
+	if err := service.SyncTask(context.Background(), task); err != nil {
+		t.Fatalf("SyncTask returned error: %v", err)
+	}
+	entryID, ok := service.entries[task.ID]
+	if !ok {
+		t.Fatalf("expected cron entry for task %d", task.ID)
+	}
+
+	entry := service.cron.Entry(entryID)
+	now := time.Date(2026, 4, 30, 4, 0, 0, 0, location)
+	got := entry.Schedule.Next(now)
+	want := time.Date(2026, 4, 30, 5, 0, 0, 0, location)
+	if !got.Equal(want) {
+		t.Fatalf("next run = %s, want %s", got, want)
+	}
+}
