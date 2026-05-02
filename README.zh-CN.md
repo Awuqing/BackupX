@@ -62,6 +62,8 @@ curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-lin
 tar xzf backupx-*.tar.gz && cd backupx-* && sudo ./install.sh
 ```
 
+ARM64 主机请下载 `backupx-linux-arm64.tar.gz`。预编译包内包含 `backupx`、`web/`、`config.example.yaml` 和 `install.sh`，请在解压后的目录内执行 `install.sh`。
+
 打开 `http://your-server:8340`，创建管理员账户，按 [5 分钟快速开始](https://awuqing.github.io/BackupX/zh-Hans/docs/getting-started/quick-start) 完成首次备份。
 
 ## 文档
