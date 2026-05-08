@@ -25,6 +25,8 @@ services:
       - /etc/nginx:/mnt/nginx-conf:ro
     environment:
       - TZ=Asia/Shanghai
+      # 远程 Agent 需要通过公网或可路由地址连接 Master 时必须配置：
+      # - BACKUPX_SERVER_EXTERNAL_URL=https://backup.example.com
       - BACKUPX_LOG_LEVEL=info
       - BACKUPX_BACKUP_MAX_CONCURRENT=2
 
@@ -41,6 +43,17 @@ docker compose up -d
 ## 备份宿主机目录
 
 想备份宿主机上的文件，需要将对应路径挂载进容器。在 Web UI 创建文件类型任务时，把源路径指向挂载后的容器内路径（如 `/mnt/www`）。
+
+## 多节点集群
+
+如果要在其他机器部署 Agent，请在 Master 容器上设置 `BACKUPX_SERVER_EXTERNAL_URL`，值为所有 Agent 都能访问到的 URL：
+
+```yaml
+environment:
+  - BACKUPX_SERVER_EXTERNAL_URL=https://backup.example.com
+```
+
+Agent 跨不可信网络访问时建议使用 HTTPS。控制台生成的一键安装脚本和 docker-compose 片段会把这个值写成 `BACKUPX_AGENT_MASTER`。
 
 ## 环境变量
 
