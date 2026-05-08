@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -19,10 +20,10 @@ import (
 
 // Executor 负责在 Agent 本地执行命令。
 type Executor struct {
-	client           *MasterClient
-	tempDir          string
-	backupRegistry   *backup.Registry
-	storageRegistry  *storage.Registry
+	client          *MasterClient
+	tempDir         string
+	backupRegistry  *backup.Registry
+	storageRegistry *storage.Registry
 }
 
 // NewExecutor 构造执行器。预先初始化 backup runner 与 storage registry。
@@ -59,6 +60,11 @@ func NewExecutor(client *MasterClient, tempDir string) *Executor {
 // 注意：Agent 当前不支持 Encrypt=true（加密密钥不下发到 Agent，避免密钥扩散）。
 // 遇到启用加密的任务会向 Master 上报失败并返回错误。
 func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) error {
+	if err := e.ensureTempDir(); err != nil {
+		e.reportRecordFailure(ctx, recordID, err.Error())
+		return err
+	}
+
 	// 1) 拉取任务规格
 	spec, err := e.client.GetTaskSpec(ctx, taskID)
 	if err != nil {
@@ -74,10 +80,6 @@ func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) er
 
 	// 2) 构造 backup.TaskSpec 并找对应 runner
 	startedAt := time.Now().UTC()
-	if err := os.MkdirAll(e.tempDir, 0o755); err != nil {
-		e.reportRecordFailure(ctx, recordID, fmt.Sprintf("创建临时目录失败: %v", err))
-		return err
-	}
 	backupSpec := buildBackupTaskSpec(spec, startedAt, e.tempDir)
 	runner, err := e.backupRegistry.Runner(backupSpec.Type)
 	if err != nil {
@@ -184,22 +186,8 @@ func (e *Executor) reportRecordFailure(ctx context.Context, recordID uint, msg s
 
 // buildBackupTaskSpec 把 AgentTaskSpec 转换为 backup.TaskSpec。
 func buildBackupTaskSpec(spec *TaskSpec, startedAt time.Time, tempDir string) backup.TaskSpec {
-	var sourcePaths []string
-	if strings.TrimSpace(spec.SourcePaths) != "" {
-		for _, p := range strings.Split(spec.SourcePaths, "\n") {
-			if p = strings.TrimSpace(p); p != "" {
-				sourcePaths = append(sourcePaths, p)
-			}
-		}
-	}
-	var excludes []string
-	if strings.TrimSpace(spec.ExcludePatterns) != "" {
-		for _, p := range strings.Split(spec.ExcludePatterns, "\n") {
-			if p = strings.TrimSpace(p); p != "" {
-				excludes = append(excludes, p)
-			}
-		}
-	}
+	sourcePaths := parseStringListField(spec.SourcePaths)
+	excludes := parseStringListField(spec.ExcludePatterns)
 	return backup.TaskSpec{
 		ID:              spec.TaskID,
 		Name:            spec.Name,
@@ -222,6 +210,37 @@ func buildBackupTaskSpec(spec *TaskSpec, startedAt time.Time, tempDir string) ba
 	}
 }
 
+func (e *Executor) ensureTempDir() error {
+	if err := os.MkdirAll(e.tempDir, 0o755); err != nil {
+		return fmt.Errorf("create agent temp dir: %w", err)
+	}
+	return nil
+}
+
+func parseStringListField(value string) []string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" || trimmed == "[]" {
+		return nil
+	}
+	var jsonItems []string
+	if err := json.Unmarshal([]byte(trimmed), &jsonItems); err == nil {
+		return compactStringList(jsonItems)
+	}
+	return compactStringList(strings.FieldsFunc(trimmed, func(r rune) bool {
+		return r == '\n' || r == '\r'
+	}))
+}
+
+func compactStringList(items []string) []string {
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if trimmed := strings.TrimSpace(item); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
 // recordLogger 把 runner 日志回传到 Master 记录。
 // 实现 backup.LogWriter，每条日志追加到 record.log_content。
 type recordLogger struct {
@@ -240,8 +259,8 @@ func (l *recordLogger) WriteLine(message string) {
 
 // restoreLogger 把 runner 日志回传到 Master 恢复记录。
 type restoreLogger struct {
-	ctx      context.Context
-	client   *MasterClient
+	ctx       context.Context
+	client    *MasterClient
 	restoreID uint
 }
 
@@ -270,6 +289,11 @@ func (e *Executor) DeleteStorageObject(ctx context.Context, targetType string, t
 //   - 执行：backup.Registry.Runner(spec.Type).Restore
 //   - 上报：通过 UpdateRestore（status/logAppend）
 func (e *Executor) ExecuteRestore(ctx context.Context, restoreRecordID uint) error {
+	if err := e.ensureTempDir(); err != nil {
+		e.reportRestoreFailure(ctx, restoreRecordID, err.Error())
+		return err
+	}
+
 	spec, err := e.client.GetRestoreSpec(ctx, restoreRecordID)
 	if err != nil {
 		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("拉取恢复规格失败: %v", err))
@@ -282,10 +306,6 @@ func (e *Executor) ExecuteRestore(ctx context.Context, restoreRecordID uint) err
 	}
 	e.appendRestoreLog(ctx, restoreRecordID, fmt.Sprintf("[agent] 开始恢复 %s (type=%s)\n", spec.TaskName, spec.Type))
 
-	if err := os.MkdirAll(e.tempDir, 0o755); err != nil {
-		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("创建临时目录失败: %v", err))
-		return err
-	}
 	tmpDir, err := os.MkdirTemp(e.tempDir, "restore-*")
 	if err != nil {
 		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("创建恢复临时目录失败: %v", err))

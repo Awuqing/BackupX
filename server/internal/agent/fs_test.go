@@ -36,6 +36,21 @@ func TestListLocalDir(t *testing.T) {
 	}
 }
 
+func TestListLocalDirEmptyPathUsesRoot(t *testing.T) {
+	entries, err := listLocalDir("")
+	if err != nil {
+		t.Fatalf("list root: %v", err)
+	}
+	if len(entries) == 0 {
+		t.Fatalf("expected root entries")
+	}
+	for _, entry := range entries {
+		if !filepath.IsAbs(entry.Path) {
+			t.Fatalf("entry path should be absolute: %+v", entry)
+		}
+	}
+}
+
 func TestSplitCommaOrNewline(t *testing.T) {
 	cases := []struct {
 		in  string

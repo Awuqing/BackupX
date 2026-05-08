@@ -116,12 +116,15 @@ jobs:
           fi
           cp deploy/nginx.conf "${ARCHIVE_NAME}/nginx.conf" 2>/dev/null || true
           tar czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
+          cp "${ARCHIVE_NAME}.tar.gz" "backupx-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.VERSION }}
-          files: backupx-${{ env.VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+          files: |
+            backupx-${{ env.VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+            backupx-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
           generate_release_notes: true
 
   # ─── Job 3: Docker 多架构 → Docker Hub ───

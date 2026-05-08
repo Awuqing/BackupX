@@ -50,7 +50,7 @@ func TestLoadConfigDefaults(t *testing.T) {
 	if cfg.HeartbeatInterval != "15s" || cfg.PollInterval != "5s" {
 		t.Errorf("default intervals not applied: %+v", cfg)
 	}
-	if cfg.TempDir != "/tmp/backupx-agent" {
+	if cfg.TempDir != "/var/lib/backupx-agent/tmp" {
 		t.Errorf("default tempdir: %q", cfg.TempDir)
 	}
 }

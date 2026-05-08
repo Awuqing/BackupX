@@ -62,6 +62,8 @@ curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-lin
 tar xzf backupx-*.tar.gz && cd backupx-* && sudo ./install.sh
 ```
 
+For ARM64 hosts, use `backupx-linux-arm64.tar.gz`. The archive contains `backupx`, `web/`, `config.example.yaml`, and `install.sh`; run `install.sh` from the extracted directory.
+
 Open `http://your-server:8340`, create the admin account, then follow the [5-minute Quick Start](https://awuqing.github.io/BackupX/docs/getting-started/quick-start).
 
 ## Documentation
