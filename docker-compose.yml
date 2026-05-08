@@ -22,6 +22,8 @@ services:
       # - /home/user/data:/mnt/data:ro
     environment:
       - TZ=Asia/Shanghai
+      # 远程 Agent 需要通过公网或可路由地址连接 Master 时，取消注释并改成真实 URL：
+      # - BACKUPX_SERVER_EXTERNAL_URL=https://backup.example.com
       # 通过 BACKUPX_ 前缀环境变量覆盖配置：
       # - BACKUPX_LOG_LEVEL=debug
       # - BACKUPX_BACKUP_MAX_CONCURRENT=4

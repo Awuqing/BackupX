@@ -25,6 +25,8 @@ services:
       - /etc/nginx:/mnt/nginx-conf:ro
     environment:
       - TZ=Asia/Shanghai
+      # Required when remote Agents must connect through a public or routed URL:
+      # - BACKUPX_SERVER_EXTERNAL_URL=https://backup.example.com
       - BACKUPX_LOG_LEVEL=info
       - BACKUPX_BACKUP_MAX_CONCURRENT=2
 
@@ -41,6 +43,17 @@ docker compose up -d
 ## Host-directory backup
 
 To back up files from the host, mount them into the container. When creating a file-type task in the web UI, point the source path at the mount location (e.g. `/mnt/www`). Make sure the directory is visible inside the container.
+
+## Multi-node clusters
+
+When deploying Agents on other machines, set `BACKUPX_SERVER_EXTERNAL_URL` on the Master container to the URL that those Agents can reach:
+
+```yaml
+environment:
+  - BACKUPX_SERVER_EXTERNAL_URL=https://backup.example.com
+```
+
+Use an HTTPS URL if Agents cross untrusted networks. The generated one-click install scripts and docker-compose snippets use this value as `BACKUPX_AGENT_MASTER`.
 
 ## Environment variables
 

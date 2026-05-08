@@ -25,6 +25,19 @@ sudo ./install.sh
 4. 安装并启用 `backupx.service` systemd 单元
 5. （可选）生成 Nginx 站点配置 — 参见 [Nginx 反向代理](./nginx)
 
+如果要部署多节点集群，安装后请编辑 `/etc/backupx/config.yaml`，设置远程 Agent 可访问到的 Master URL：
+
+```yaml
+server:
+  external_url: "https://backup.example.com"
+```
+
+修改后重启 BackupX：
+
+```bash
+sudo systemctl restart backupx
+```
+
 ## 从源码构建
 
 ```bash
