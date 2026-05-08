@@ -28,6 +28,19 @@ BackupX supports Master-Agent mode: backup tasks can be routed to specific nodes
 
 ## Walkthrough
 
+### 0. Set the Master URL for production clusters
+
+Before generating Agent install commands, make sure the Master URL shown to Agents is stable and reachable from every target host.
+
+If BackupX runs behind Docker, Nginx, a load balancer, or an outer reverse proxy, configure `server.external_url` or `BACKUPX_SERVER_EXTERNAL_URL` on the Master:
+
+```yaml title="config.yaml"
+server:
+  external_url: "https://backup.example.com"
+```
+
+This URL is baked into systemd units, foreground commands, and docker-compose snippets. If it is wrong, Agents will install successfully but stay offline because they keep polling an internal or browser-only address.
+
 ### 1. Open the install wizard
 
 In the Web Console → **Node Management** → **Add Node**. You'll see a three-step wizard.

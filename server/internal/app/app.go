@@ -276,7 +276,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 		UserRepository:           userRepo,
 		SystemConfigRepo:         systemConfigRepo,
 		InstallTokenService:      installTokenService,
-		MasterExternalURL:        "", // 如需覆盖 URL，可扩展 cfg.Server 增字段；目前留空依赖 X-Forwarded-* / Request.Host
+		MasterExternalURL:        cfg.Server.ExternalURL,
 		DB:                       db,
 		Metrics:                  appMetrics,
 	})

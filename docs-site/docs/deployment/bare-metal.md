@@ -25,6 +25,19 @@ The installer performs these steps automatically:
 4. Installs `backupx.service` (systemd), enabled at boot
 5. (Optional) installs an Nginx site file — see [Nginx Reverse Proxy](./nginx)
 
+For multi-node clusters, edit `/etc/backupx/config.yaml` after installation and set the Master URL that remote Agents can reach:
+
+```yaml
+server:
+  external_url: "https://backup.example.com"
+```
+
+Restart BackupX after changing it:
+
+```bash
+sudo systemctl restart backupx
+```
+
 ## From source
 
 ```bash

@@ -17,9 +17,10 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Host string `mapstructure:"host"`
-	Port int    `mapstructure:"port"`
-	Mode string `mapstructure:"mode"`
+	Host        string `mapstructure:"host"`
+	Port        int    `mapstructure:"port"`
+	Mode        string `mapstructure:"mode"`
+	ExternalURL string `mapstructure:"external_url"`
 }
 
 type DatabaseConfig struct {
@@ -136,6 +137,7 @@ func applyDefaults(v *viper.Viper) {
 	v.SetDefault("server.host", "0.0.0.0")
 	v.SetDefault("server.port", 8340)
 	v.SetDefault("server.mode", "release")
+	v.SetDefault("server.external_url", "")
 	v.SetDefault("database.path", "./data/backupx.db")
 	v.SetDefault("security.jwt_expire", "24h")
 	v.SetDefault("backup.temp_dir", "/tmp/backupx")
