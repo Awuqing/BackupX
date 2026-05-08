@@ -47,30 +47,10 @@ else
 fi
 tar xzf "$TMPDIR/pkg.tar.gz" -C "$TMPDIR"
 
-# 4. 安装二进制 + 用户
+# 4. 安装二进制 + 数据目录
 echo "[2/4] 安装到 ${INSTALL_PREFIX}"
-if ! getent group backupx >/dev/null 2>&1; then
-    if command -v groupadd >/dev/null 2>&1; then
-        groupadd --system backupx
-    elif command -v addgroup >/dev/null 2>&1; then
-        addgroup --system backupx
-    else
-        echo "需要 groupadd 或 addgroup 来创建 backupx 组" >&2
-        exit 1
-    fi
-fi
-if ! id backupx >/dev/null 2>&1; then
-    if command -v useradd >/dev/null 2>&1; then
-        useradd --system --gid backupx --home-dir "$INSTALL_PREFIX" --shell /usr/sbin/nologin backupx
-    elif command -v adduser >/dev/null 2>&1; then
-        adduser --system --ingroup backupx --home "$INSTALL_PREFIX" --shell /usr/sbin/nologin backupx
-    else
-        echo "需要 useradd 或 adduser 来创建 backupx 用户" >&2
-        exit 1
-    fi
-fi
-id backupx >/dev/null 2>&1 || { echo "backupx 用户创建失败" >&2; exit 1; }
-install -d -o backupx -g backupx "$INSTALL_PREFIX" /var/lib/backupx-agent
+install -d -m 0755 "$INSTALL_PREFIX"
+install -d -m 0700 /var/lib/backupx-agent /var/lib/backupx-agent/tmp
 install -m 0755 "$TMPDIR/backupx-${AGENT_VERSION}-linux-${ARCH}/backupx" "$INSTALL_PREFIX/backupx"
 {{end}}
 
@@ -85,14 +65,11 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=backupx
-Group=backupx
 Environment="BACKUPX_AGENT_MASTER=${MASTER_URL}"
 Environment="BACKUPX_AGENT_TOKEN=${AGENT_TOKEN}"
-ExecStart=${INSTALL_PREFIX}/backupx agent --temp-dir /var/lib/backupx-agent
+ExecStart=${INSTALL_PREFIX}/backupx agent --temp-dir /var/lib/backupx-agent/tmp
 Restart=on-failure
 RestartSec=10s
-NoNewPrivileges=true
 
 [Install]
 WantedBy=multi-user.target
@@ -111,6 +88,7 @@ for i in $(seq 1 15); do
     fi
 done
 echo "⚠ 30s 内未收到上线心跳，请检查防火墙或 journalctl -u backupx-agent"
+echo "提示：systemd 服务名是 backupx-agent，可执行 systemctl status backupx-agent 查看状态。"
 exit 2
 {{end}}
 
@@ -119,7 +97,7 @@ exit 2
 echo "[3/3] 前台启动 agent（Ctrl+C 退出）"
 export BACKUPX_AGENT_MASTER="${MASTER_URL}"
 export BACKUPX_AGENT_TOKEN="${AGENT_TOKEN}"
-exec "${INSTALL_PREFIX}/backupx" agent --temp-dir /var/lib/backupx-agent
+exec "${INSTALL_PREFIX}/backupx" agent --temp-dir /var/lib/backupx-agent/tmp
 {{end}}
 
 {{if eq .Mode "docker"}}
@@ -131,7 +109,7 @@ docker rm -f backupx-agent >/dev/null 2>&1 || true
 docker run -d --name backupx-agent --restart=unless-stopped \
     -e "BACKUPX_AGENT_MASTER=${MASTER_URL}" \
     -e "BACKUPX_AGENT_TOKEN=${AGENT_TOKEN}" \
-    -v /var/lib/backupx-agent:/tmp/backupx-agent \
+    -v /var/lib/backupx-agent:/var/lib/backupx-agent \
     "awuqing/backupx:${AGENT_VERSION}" agent
 echo "✓ 容器已启动"
 {{end}}

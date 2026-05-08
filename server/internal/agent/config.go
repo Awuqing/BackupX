@@ -26,7 +26,7 @@ type Config struct {
 	HeartbeatInterval string `yaml:"heartbeatInterval"`
 	// PollInterval 命令轮询间隔，默认 5s
 	PollInterval string `yaml:"pollInterval"`
-	// TempDir 备份临时目录，默认 /tmp/backupx-agent
+	// TempDir 备份临时目录，默认 /var/lib/backupx-agent/tmp
 	TempDir string `yaml:"tempDir"`
 	// InsecureSkipTLSVerify 测试环境允许跳过 TLS 证书校验
 	InsecureSkipTLSVerify bool `yaml:"insecureSkipTlsVerify"`
@@ -98,7 +98,7 @@ func applyConfigDefaults(cfg *Config) (*Config, error) {
 		cfg.PollInterval = "5s"
 	}
 	if cfg.TempDir == "" {
-		cfg.TempDir = "/tmp/backupx-agent"
+		cfg.TempDir = "/var/lib/backupx-agent/tmp"
 	}
 	cfg.Master = strings.TrimRight(strings.TrimSpace(cfg.Master), "/")
 	return cfg, nil

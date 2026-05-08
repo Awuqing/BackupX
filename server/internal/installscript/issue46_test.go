@@ -37,19 +37,22 @@ func TestRenderScriptBashBootstrap(t *testing.T) {
 	}
 }
 
-func TestRenderScriptCreatesBackupXUserAndGroup(t *testing.T) {
+func TestRenderScriptUsesRootForBareMetalBackups(t *testing.T) {
 	got, err := RenderScript(testCtx)
 	if err != nil {
 		t.Fatalf("render err: %v", err)
 	}
 	for _, want := range []string{
-		"getent group backupx",
-		"groupadd --system backupx",
-		"useradd --system --gid backupx",
-		"Group=backupx",
+		"/var/lib/backupx-agent/tmp",
+		"install -d -m 0700 /var/lib/backupx-agent /var/lib/backupx-agent/tmp",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("script missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"User=backupx", "Group=backupx", "NoNewPrivileges=true"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("script should not contain %q for bare-metal backups:\n%s", forbidden, got)
 		}
 	}
 }

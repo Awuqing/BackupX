@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 )
 
 // DirEntry Agent 返回给 Master 的目录项。
@@ -17,8 +18,8 @@ type DirEntry struct {
 
 // listLocalDir 列出 Agent 所在机器的指定路径。
 func listLocalDir(path string) ([]DirEntry, error) {
-	cleaned := filepath.Clean(path)
-	if cleaned == "" {
+	cleaned := filepath.Clean(strings.TrimSpace(path))
+	if strings.TrimSpace(path) == "" || cleaned == "." {
 		cleaned = "/"
 	}
 	entries, err := os.ReadDir(cleaned)

@@ -27,8 +27,10 @@ func TestRenderScriptSystemd(t *testing.T) {
 	mustContain := []string{
 		"BACKUPX_AGENT_MASTER=${MASTER_URL}",
 		`Environment="BACKUPX_AGENT_TOKEN=${AGENT_TOKEN}"`,
+		"/var/lib/backupx-agent/tmp",
 		"systemctl daemon-reload",
 		"systemctl enable --now backupx-agent",
+		"systemctl status backupx-agent",
 		"X-Agent-Token: ${AGENT_TOKEN}",
 		"MASTER_URL=\"https://master.example.com\"",
 		"AGENT_TOKEN=\"deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcdef\"",
@@ -56,6 +58,9 @@ func TestRenderScriptForeground(t *testing.T) {
 	if !strings.Contains(got, `exec "${INSTALL_PREFIX}/backupx" agent`) {
 		t.Errorf("foreground script missing exec line:\n%s", got)
 	}
+	if !strings.Contains(got, "/var/lib/backupx-agent/tmp") {
+		t.Errorf("foreground script missing dedicated temp dir:\n%s", got)
+	}
 	if strings.Contains(got, "systemctl daemon-reload") {
 		t.Errorf("foreground script should not reference systemctl:\n%s", got)
 	}
@@ -73,6 +78,9 @@ func TestRenderScriptDocker(t *testing.T) {
 	}
 	if !strings.Contains(got, "docker run") {
 		t.Errorf("docker script missing `docker run`:\n%s", got)
+	}
+	if !strings.Contains(got, "/var/lib/backupx-agent:/var/lib/backupx-agent") {
+		t.Errorf("docker script missing agent data volume:\n%s", got)
 	}
 	if !strings.Contains(got, "awuqing/backupx:${AGENT_VERSION}") {
 		t.Errorf("docker script missing image tag reference:\n%s", got)
@@ -95,14 +103,17 @@ func TestRenderComposeYaml(t *testing.T) {
 	if !strings.Contains(got, `BACKUPX_AGENT_TOKEN: "deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcdef"`) {
 		t.Errorf("compose missing token env:\n%s", got)
 	}
+	if !strings.Contains(got, "/var/lib/backupx-agent:/var/lib/backupx-agent") {
+		t.Errorf("compose missing agent data volume:\n%s", got)
+	}
 }
 
 func TestRenderScriptRejectsInjectedMasterURL(t *testing.T) {
 	bad := []string{
 		"https://example.com\" other: inject", // 含引号和空格
-		"javascript:alert(1)",                  // scheme 非法
-		"https://example.com\n- privileged",    // 含换行，YAML 注入经典 payload
-		"",                                     // 空
+		"javascript:alert(1)",                 // scheme 非法
+		"https://example.com\n- privileged",   // 含换行，YAML 注入经典 payload
+		"",                                    // 空
 	}
 	for _, u := range bad {
 		ctx := testCtx
@@ -161,8 +172,8 @@ func TestDownloadBaseMapping(t *testing.T) {
 
 func TestRenderScriptDefaultsApplied(t *testing.T) {
 	ctx := testCtx
-	ctx.InstallPrefix = ""   // 应被默认为 /opt/backupx-agent
-	ctx.DownloadBase = ""    // 应被默认为 github
+	ctx.InstallPrefix = "" // 应被默认为 /opt/backupx-agent
+	ctx.DownloadBase = ""  // 应被默认为 github
 	got, err := RenderScript(ctx)
 	if err != nil {
 		t.Fatalf("render err: %v", err)
