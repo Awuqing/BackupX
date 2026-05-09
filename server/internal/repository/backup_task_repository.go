@@ -226,7 +226,7 @@ func (r *GormBackupTaskRepository) Create(ctx context.Context, item *model.Backu
 }
 
 func (r *GormBackupTaskRepository) Update(ctx context.Context, item *model.BackupTask) error {
-	if err := r.db.WithContext(ctx).Save(item).Error; err != nil {
+	if err := r.db.WithContext(ctx).Omit("StorageTarget", "StorageTargets", "Node").Save(item).Error; err != nil {
 		return err
 	}
 	if len(item.StorageTargets) > 0 {

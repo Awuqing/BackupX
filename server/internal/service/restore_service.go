@@ -141,10 +141,11 @@ func (s *RestoreService) Start(ctx context.Context, backupRecordID uint, trigger
 	}
 
 	startedAt := s.now()
+	restoreNodeID := s.resolveRestoreNodeID(record, task)
 	restore := &model.RestoreRecord{
 		BackupRecordID: backupRecordID,
 		TaskID:         record.TaskID,
-		NodeID:         task.NodeID,
+		NodeID:         restoreNodeID,
 		Status:         model.RestoreRecordStatusRunning,
 		StartedAt:      startedAt,
 		TriggeredBy:    strings.TrimSpace(triggeredBy),
@@ -154,7 +155,7 @@ func (s *RestoreService) Start(ctx context.Context, backupRecordID uint, trigger
 	}
 
 	// 远程节点路由
-	if remoteNode := s.resolveRemoteNode(ctx, task.NodeID); remoteNode != nil {
+	if remoteNode := s.resolveRemoteNode(ctx, restoreNodeID); remoteNode != nil {
 		if s.dispatcher == nil {
 			return nil, apperror.Internal("RESTORE_DISPATCH_UNAVAILABLE", "Agent 下发通道未就绪", nil)
 		}
@@ -166,14 +167,14 @@ func (s *RestoreService) Start(ctx context.Context, backupRecordID uint, trigger
 			s.logHub.Complete(restore.ID, model.RestoreRecordStatusFailed)
 			return nil, apperror.BadRequest("NODE_OFFLINE", offlineMsg, nil)
 		}
-		if _, dispatchErr := s.dispatcher.EnqueueCommand(ctx, task.NodeID, model.AgentCommandTypeRestoreRecord, map[string]any{
+		if _, dispatchErr := s.dispatcher.EnqueueCommand(ctx, restoreNodeID, model.AgentCommandTypeRestoreRecord, map[string]any{
 			"restoreRecordId": restore.ID,
 		}); dispatchErr != nil {
 			_ = s.finalize(ctx, restore.ID, model.RestoreRecordStatusFailed,
 				"下发恢复任务到远程节点失败: "+dispatchErr.Error())
 			return nil, apperror.Internal("AGENT_COMMAND_ENQUEUE_FAILED", "无法下发恢复任务到远程节点", dispatchErr)
 		}
-		s.logHub.Append(restore.ID, "info", fmt.Sprintf("已下发恢复任务到节点 %s（#%d），等待 Agent 执行", remoteNode.Name, task.NodeID))
+		s.logHub.Append(restore.ID, "info", fmt.Sprintf("已下发恢复任务到节点 %s（#%d），等待 Agent 执行", remoteNode.Name, restoreNodeID))
 		return s.getDetail(ctx, restore.ID)
 	}
 
@@ -183,6 +184,16 @@ func (s *RestoreService) Start(ctx context.Context, backupRecordID uint, trigger
 	}
 	s.async(run)
 	return s.getDetail(ctx, restore.ID)
+}
+
+func (s *RestoreService) resolveRestoreNodeID(record *model.BackupRecord, task *model.BackupTask) uint {
+	if record != nil && record.NodeID != 0 {
+		return record.NodeID
+	}
+	if task != nil {
+		return task.NodeID
+	}
+	return 0
 }
 
 // isRemoteNode 判断 NodeID 是否指向有效的远程节点。

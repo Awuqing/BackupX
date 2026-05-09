@@ -92,3 +92,49 @@ func TestBackupTaskRepositoryCRUD(t *testing.T) {
 		t.Fatalf("expected task deleted, got %#v", deleted)
 	}
 }
+
+func TestBackupTaskRepositoryUpdateCanClearNodeIDAfterPreload(t *testing.T) {
+	ctx := context.Background()
+	repo := newBackupTaskTestRepository(t)
+	remoteNode := &model.Node{Name: "edge-1", Token: "edge-token", Status: model.NodeStatusOnline, IsLocal: false}
+	if err := repo.db.WithContext(ctx).Create(remoteNode).Error; err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	task := &model.BackupTask{
+		Name:            "pooled-source",
+		Type:            "file",
+		Enabled:         true,
+		SourcePath:      "/srv/www/site",
+		StorageTargetID: 1,
+		NodeID:          remoteNode.ID,
+		RetentionDays:   30,
+		Compression:     "gzip",
+		MaxBackups:      10,
+		LastStatus:      "idle",
+	}
+	if err := repo.Create(ctx, task); err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	loaded, err := repo.FindByID(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if loaded == nil || loaded.Node.ID != remoteNode.ID {
+		t.Fatalf("expected preloaded node %d, got %#v", remoteNode.ID, loaded)
+	}
+	loaded.NodeID = 0
+	loaded.NodePoolTag = "db"
+	if err := repo.Update(ctx, loaded); err != nil {
+		t.Fatalf("Update returned error: %v", err)
+	}
+	stored, err := repo.FindByID(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("FindByID after update returned error: %v", err)
+	}
+	if stored.NodeID != 0 {
+		t.Fatalf("expected NodeID to be cleared, got %d", stored.NodeID)
+	}
+	if stored.NodePoolTag != "db" {
+		t.Fatalf("expected NodePoolTag db, got %q", stored.NodePoolTag)
+	}
+}

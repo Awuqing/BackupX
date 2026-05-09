@@ -51,15 +51,15 @@ func (f *fakeDispatcher) snapshot() []dispatcherCall {
 }
 
 type restoreTestHarness struct {
-	service     *RestoreService
-	execution   *BackupExecutionService
-	records     repository.BackupRecordRepository
-	restores    repository.RestoreRecordRepository
-	tasks       repository.BackupTaskRepository
-	nodes       repository.NodeRepository
-	dispatcher  *fakeDispatcher
-	sourceDir   string
-	storageDir  string
+	service    *RestoreService
+	execution  *BackupExecutionService
+	records    repository.BackupRecordRepository
+	restores   repository.RestoreRecordRepository
+	tasks      repository.BackupTaskRepository
+	nodes      repository.NodeRepository
+	dispatcher *fakeDispatcher
+	sourceDir  string
+	storageDir string
 }
 
 func newRestoreTestHarness(t *testing.T, remoteNode bool) *restoreTestHarness {
@@ -225,6 +225,131 @@ func TestRestoreServiceStart_RemoteNodeEnqueuesCommand(t *testing.T) {
 	}
 	if rid, ok := calls[0].Payload["restoreRecordId"].(float64); !ok || uint(rid) != detail.ID {
 		t.Fatalf("expected restoreRecordId=%d in payload, got %#v", detail.ID, calls[0].Payload)
+	}
+}
+
+func TestRestoreServiceStart_UsesBackupRecordNodeForPooledTask(t *testing.T) {
+	h := newRestoreTestHarness(t, true)
+	ctx := context.Background()
+
+	task, err := h.tasks.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID task: %v", err)
+	}
+	remoteNodeID := task.NodeID
+	task.NodeID = 0
+	task.NodePoolTag = "db"
+	if err := h.tasks.Update(ctx, task); err != nil {
+		t.Fatalf("Update task: %v", err)
+	}
+	storedTask, err := h.tasks.FindByID(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("FindByID stored task: %v", err)
+	}
+	if storedTask.NodeID != 0 {
+		t.Fatalf("expected stored task NodeID to be reset to 0, got %d", storedTask.NodeID)
+	}
+
+	startedAt := time.Now().UTC()
+	completedAt := startedAt.Add(time.Second)
+	backupRecord := &model.BackupRecord{
+		TaskID:          task.ID,
+		StorageTargetID: task.StorageTargetID,
+		NodeID:          remoteNodeID,
+		Status:          model.BackupRecordStatusSuccess,
+		FileName:        "pooled.tar.gz",
+		StoragePath:     "file/2026/05/09/pooled.tar.gz",
+		StartedAt:       startedAt,
+		CompletedAt:     &completedAt,
+	}
+	if err := h.records.Create(ctx, backupRecord); err != nil {
+		t.Fatalf("Create backup record: %v", err)
+	}
+
+	detail, err := h.service.Start(ctx, backupRecord.ID, "tester-pool")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if detail.NodeID != remoteNodeID {
+		t.Fatalf("expected restore node %d, got %d", remoteNodeID, detail.NodeID)
+	}
+	calls := h.dispatcher.snapshot()
+	if len(calls) != 1 {
+		t.Fatalf("expected exactly 1 dispatcher call, got %d", len(calls))
+	}
+	if calls[0].NodeID != remoteNodeID {
+		t.Fatalf("expected dispatch to node %d, got %d", remoteNodeID, calls[0].NodeID)
+	}
+}
+
+func TestRestoreServiceAgentRestoreAccessUsesRestoreRecordNode(t *testing.T) {
+	h := newRestoreTestHarness(t, true)
+	ctx := context.Background()
+
+	task, err := h.tasks.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID task: %v", err)
+	}
+	owner, err := h.nodes.FindByID(ctx, task.NodeID)
+	if err != nil {
+		t.Fatalf("FindByID owner node: %v", err)
+	}
+	other := &model.Node{Name: "edge-2", Token: "other-token", Status: model.NodeStatusOnline, IsLocal: false, LastSeen: time.Now().UTC()}
+	if err := h.nodes.Create(ctx, other); err != nil {
+		t.Fatalf("Create other node: %v", err)
+	}
+	startedAt := time.Now().UTC()
+	completedAt := startedAt.Add(time.Second)
+	backupRecord := &model.BackupRecord{
+		TaskID:          task.ID,
+		StorageTargetID: task.StorageTargetID,
+		NodeID:          owner.ID,
+		Status:          model.BackupRecordStatusSuccess,
+		FileName:        "remote.tar.gz",
+		StoragePath:     "file/2026/05/09/remote.tar.gz",
+		StartedAt:       startedAt,
+		CompletedAt:     &completedAt,
+	}
+	if err := h.records.Create(ctx, backupRecord); err != nil {
+		t.Fatalf("Create backup record: %v", err)
+	}
+	restore := &model.RestoreRecord{
+		BackupRecordID: backupRecord.ID,
+		TaskID:         task.ID,
+		NodeID:         owner.ID,
+		Status:         model.RestoreRecordStatusRunning,
+		StartedAt:      startedAt,
+		TriggeredBy:    "agent-test",
+	}
+	if err := h.restores.Create(ctx, restore); err != nil {
+		t.Fatalf("Create restore record: %v", err)
+	}
+
+	spec, err := h.service.GetAgentRestoreSpec(ctx, owner, restore.ID)
+	if err != nil {
+		t.Fatalf("owner GetAgentRestoreSpec returned error: %v", err)
+	}
+	if spec.RestoreRecordID != restore.ID || spec.StoragePath != backupRecord.StoragePath {
+		t.Fatalf("unexpected restore spec: %#v", spec)
+	}
+	if _, err := h.service.GetAgentRestoreSpec(ctx, other, restore.ID); err == nil {
+		t.Fatal("expected non-owner node to be forbidden from restore spec")
+	}
+	if err := h.service.UpdateAgentRestore(ctx, owner, restore.ID, AgentRestoreUpdate{
+		Status:    model.RestoreRecordStatusSuccess,
+		LogAppend: "done\n",
+	}); err != nil {
+		t.Fatalf("owner UpdateAgentRestore returned error: %v", err)
+	}
+	updated, err := h.restores.FindByID(ctx, restore.ID)
+	if err != nil {
+		t.Fatalf("FindByID restore returned error: %v", err)
+	}
+	if updated.Status != model.RestoreRecordStatusSuccess || updated.NodeID != owner.ID {
+		t.Fatalf("unexpected updated restore record: %#v", updated)
+	}
+	if err := h.service.UpdateAgentRestore(ctx, other, restore.ID, AgentRestoreUpdate{LogAppend: "bad\n"}); err == nil {
+		t.Fatal("expected non-owner node to be forbidden from restore update")
 	}
 }
 
