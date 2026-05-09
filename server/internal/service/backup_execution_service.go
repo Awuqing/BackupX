@@ -73,28 +73,28 @@ func collectTargetIDs(task *model.BackupTask) []uint {
 }
 
 type BackupExecutionService struct {
-	tasks           repository.BackupTaskRepository
-	records         repository.BackupRecordRepository
-	targets         repository.StorageTargetRepository
-	nodeRepo        repository.NodeRepository
-	storageRegistry *storage.Registry
-	runnerRegistry  *backup.Registry
-	logHub          *backup.LogHub
-	retention       *backupretention.Service
-	cipher          *codec.ConfigCipher
+	tasks              repository.BackupTaskRepository
+	records            repository.BackupRecordRepository
+	targets            repository.StorageTargetRepository
+	nodeRepo           repository.NodeRepository
+	storageRegistry    *storage.Registry
+	runnerRegistry     *backup.Registry
+	logHub             *backup.LogHub
+	retention          *backupretention.Service
+	cipher             *codec.ConfigCipher
 	notifier           BackupResultNotifier
 	agentDispatcher    AgentDispatcher
 	replicationHook    ReplicationTrigger
 	dependentsResolver DependentsResolver
-	async           func(func())
-	now             func() time.Time
-	tempDir         string
-	semaphore       chan struct{}
+	async              func(func())
+	now                func() time.Time
+	tempDir            string
+	semaphore          chan struct{}
 	// nodeSemaphores 节点级并发限制（按 NodeID 映射）。
 	// 没命中的 NodeID 走全局 semaphore，节点配置 MaxConcurrent>0 时按该节点独立排队。
 	nodeSemaphores sync.Map
-	retries        int           // rclone 底层重试次数
-	bandwidthLimit string        // rclone 带宽限制（全局默认，节点配置可覆盖）
+	retries        int    // rclone 底层重试次数
+	bandwidthLimit string // rclone 带宽限制（全局默认，节点配置可覆盖）
 	metrics        *metrics.Metrics
 }
 
@@ -356,8 +356,8 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 	if err := s.records.Create(ctx, record); err != nil {
 		return nil, apperror.Internal("BACKUP_RECORD_CREATE_FAILED", "无法创建备份记录", err)
 	}
-	// 用池选出的节点 ID 复写 task 副本，使后续路由/执行沿用
-	task.NodeID = resolvedNodeID
+	runTask := *task
+	runTask.NodeID = resolvedNodeID
 	task.LastRunAt = &startedAt
 	task.LastStatus = "running"
 	if err := s.tasks.Update(ctx, task); err != nil {
@@ -365,27 +365,27 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 	}
 	// 多节点路由：task.NodeID 指向远程节点时，把执行任务入队给 Agent；
 	// NodeID=0 或本机节点时由 Master 直接执行。
-	if remoteNode := s.resolveRemoteNode(ctx, task.NodeID); remoteNode != nil {
+	if remoteNode := s.resolveRemoteNode(ctx, resolvedNodeID); remoteNode != nil {
 		// 节点离线 → 立即把刚创建的 running 记录标记 failed，返回明确错误
 		if remoteNode.Status != model.NodeStatusOnline {
 			offlineMsg := fmt.Sprintf("节点 %s 当前离线，无法执行备份任务", remoteNode.Name)
-			_ = s.finalizeRecord(ctx, task, record.ID, startedAt, model.BackupRecordStatusFailed,
+			_ = s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecordStatusFailed,
 				offlineMsg, "", "", 0, "", "")
 			return nil, apperror.BadRequest("NODE_OFFLINE", offlineMsg, nil)
 		}
-		if _, enqueueErr := s.agentDispatcher.EnqueueCommand(ctx, task.NodeID, model.AgentCommandTypeRunTask, map[string]any{
+		if _, enqueueErr := s.agentDispatcher.EnqueueCommand(ctx, resolvedNodeID, model.AgentCommandTypeRunTask, map[string]any{
 			"taskId":   task.ID,
 			"recordId": record.ID,
 		}); enqueueErr != nil {
 			// 入队失败 → 在记录中标记失败，继续返回详情
-			_ = s.finalizeRecord(ctx, task, record.ID, startedAt, model.BackupRecordStatusFailed,
+			_ = s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecordStatusFailed,
 				"无法下发任务到远程节点: "+enqueueErr.Error(), "", "", 0, "", "")
 			return nil, apperror.Internal("AGENT_COMMAND_ENQUEUE_FAILED", "无法下发任务到远程节点", enqueueErr)
 		}
 		return s.getRecordDetail(ctx, record.ID)
 	}
 	run := func() {
-		s.executeTask(context.Background(), task, record.ID, startedAt)
+		s.executeTask(context.Background(), &runTask, record.ID, startedAt)
 	}
 	if async {
 		s.async(run)

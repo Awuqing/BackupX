@@ -85,6 +85,54 @@ func TestBackupExecutionServiceRunTaskByIDSync(t *testing.T) {
 	}
 }
 
+func TestBackupExecutionServiceNodePoolSelectionDoesNotPersistTaskNodeID(t *testing.T) {
+	executionService, _, tasks, _, records, _, _ := newExecutionTestServices(t)
+	ctx := context.Background()
+
+	nodeRepo := &nodeRepoStub{nodes: []model.Node{
+		{ID: 10, Name: "edge-a", Token: "edge-a-token", Status: model.NodeStatusOnline, Labels: "prod,db"},
+		{ID: 11, Name: "edge-b", Token: "edge-b-token", Status: model.NodeStatusOnline, Labels: "prod,db"},
+	}}
+	dispatcher := &fakeDispatcher{}
+	executionService.SetClusterDependencies(nodeRepo, dispatcher)
+
+	task, err := tasks.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	task.NodeID = 0
+	task.NodePoolTag = "db"
+	if err := tasks.Update(ctx, task); err != nil {
+		t.Fatalf("Update task returned error: %v", err)
+	}
+
+	detail, err := executionService.RunTaskByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("RunTaskByID returned error: %v", err)
+	}
+	storedTask, err := tasks.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID after run returned error: %v", err)
+	}
+	if storedTask.NodeID != 0 {
+		t.Fatalf("expected pooled task NodeID to remain 0, got %d", storedTask.NodeID)
+	}
+	if storedTask.NodePoolTag != "db" {
+		t.Fatalf("expected pooled task tag to remain db, got %q", storedTask.NodePoolTag)
+	}
+	storedRecord, err := records.FindByID(ctx, detail.ID)
+	if err != nil {
+		t.Fatalf("FindByID record returned error: %v", err)
+	}
+	if storedRecord == nil || storedRecord.NodeID != 10 {
+		t.Fatalf("expected record to keep selected node 10, got %#v", storedRecord)
+	}
+	calls := dispatcher.snapshot()
+	if len(calls) != 1 || calls[0].NodeID != 10 || calls[0].CmdType != model.AgentCommandTypeRunTask {
+		t.Fatalf("unexpected dispatcher calls: %#v", calls)
+	}
+}
+
 func TestBackupRecordServiceRestore(t *testing.T) {
 	executionService, recordService, _, _, _, sourceDir, _ := newExecutionTestServices(t)
 	detail, err := executionService.RunTaskByIDSync(context.Background(), 1)

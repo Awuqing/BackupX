@@ -159,8 +159,8 @@ func (s *AgentService) GetTaskSpec(ctx context.Context, node *model.Node, taskID
 	if task == nil {
 		return nil, apperror.New(404, "BACKUP_TASK_NOT_FOUND", "任务不存在", nil)
 	}
-	if task.NodeID != node.ID {
-		return nil, apperror.Unauthorized("BACKUP_TASK_FORBIDDEN", "任务不属于当前节点", nil)
+	if err := s.ensureTaskSpecAccess(ctx, node, task); err != nil {
+		return nil, err
 	}
 	// 解密数据库密码（若有）
 	dbPassword := ""
@@ -213,6 +213,20 @@ func (s *AgentService) GetTaskSpec(ctx context.Context, node *model.Node, taskID
 	}, nil
 }
 
+func (s *AgentService) ensureTaskSpecAccess(ctx context.Context, node *model.Node, task *model.BackupTask) error {
+	if task.NodeID == node.ID {
+		return nil
+	}
+	record, err := s.recordRepo.FindRunningByTaskAndNode(ctx, task.ID, node.ID)
+	if err != nil {
+		return err
+	}
+	if record == nil {
+		return apperror.Unauthorized("BACKUP_TASK_FORBIDDEN", "任务不属于当前节点", nil)
+	}
+	return nil
+}
+
 // AgentRecordUpdate Agent 上报备份记录的最终状态。
 type AgentRecordUpdate struct {
 	Status       string `json:"status"` // running | success | failed
@@ -233,12 +247,11 @@ func (s *AgentService) UpdateRecord(ctx context.Context, node *model.Node, recor
 	if record == nil {
 		return apperror.New(404, "BACKUP_RECORD_NOT_FOUND", "记录不存在", nil)
 	}
-	// 通过 task.NodeID 判断是否属于当前 agent
 	task, err := s.taskRepo.FindByID(ctx, record.TaskID)
 	if err != nil {
 		return err
 	}
-	if task == nil || task.NodeID != node.ID {
+	if task == nil || !recordBelongsToNode(record, task, node.ID) {
 		return apperror.Unauthorized("BACKUP_RECORD_FORBIDDEN", "记录不属于当前节点", nil)
 	}
 	if update.Status != "" {
@@ -280,6 +293,13 @@ func (s *AgentService) UpdateRecord(ctx context.Context, node *model.Node, recor
 		_ = s.taskRepo.Update(ctx, task)
 	}
 	return nil
+}
+
+func recordBelongsToNode(record *model.BackupRecord, task *model.BackupTask, nodeID uint) bool {
+	if record.NodeID != 0 {
+		return record.NodeID == nodeID
+	}
+	return task.NodeID == nodeID
 }
 
 // EnqueueCommand Master 端调用：给指定节点插入一条待执行命令。
