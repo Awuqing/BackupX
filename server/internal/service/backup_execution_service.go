@@ -270,11 +270,9 @@ func (s *BackupExecutionService) DeleteRecord(ctx context.Context, recordID uint
 	if record == nil {
 		return apperror.New(404, "BACKUP_RECORD_NOT_FOUND", "备份记录不存在", fmt.Errorf("backup record %d not found", recordID))
 	}
-	// 集群场景保护：跨节点 local_disk 文件 Master 无法远程删除，拒绝操作以避免存储泄漏的错觉
-	if err := s.validateClusterAccessible(ctx, record); err != nil {
+	if remote, err := s.deleteRemoteLocalDiskObject(ctx, record); err != nil {
 		return err
-	}
-	if strings.TrimSpace(record.StoragePath) != "" {
+	} else if !remote && strings.TrimSpace(record.StoragePath) != "" {
 		provider, err := s.resolveProvider(ctx, record.StorageTargetID)
 		if err != nil {
 			return err
@@ -287,6 +285,40 @@ func (s *BackupExecutionService) DeleteRecord(ctx context.Context, recordID uint
 		return apperror.Internal("BACKUP_RECORD_DELETE_FAILED", "无法删除备份记录", err)
 	}
 	return nil
+}
+
+func (s *BackupExecutionService) deleteRemoteLocalDiskObject(ctx context.Context, record *model.BackupRecord) (bool, error) {
+	if strings.TrimSpace(record.StoragePath) == "" || s.nodeRepo == nil {
+		return false, nil
+	}
+	node, err := s.nodeRepo.FindByID(ctx, record.NodeID)
+	if err != nil || node == nil || node.IsLocal {
+		return false, nil
+	}
+	target, err := s.targets.FindByID(ctx, record.StorageTargetID)
+	if err != nil {
+		return false, apperror.Internal("BACKUP_STORAGE_TARGET_GET_FAILED", "无法获取存储目标详情", err)
+	}
+	if target == nil || !strings.EqualFold(target.Type, "local_disk") {
+		return false, nil
+	}
+	if s.agentDispatcher == nil {
+		return true, apperror.BadRequest("BACKUP_RECORD_CROSS_NODE_LOCAL_DISK",
+			fmt.Sprintf("该备份位于节点 %s 的本地磁盘（local_disk），Master 无法跨节点删除。请确保 Agent 在线后再操作。", node.Name),
+			nil)
+	}
+	configMap := map[string]any{}
+	if err := s.cipher.DecryptJSON(target.ConfigCiphertext, &configMap); err != nil {
+		return true, apperror.Internal("BACKUP_STORAGE_TARGET_DECRYPT_FAILED", "无法解密存储目标配置", err)
+	}
+	if _, err := s.agentDispatcher.EnqueueCommand(ctx, record.NodeID, model.AgentCommandTypeDeleteStorageObject, map[string]any{
+		"targetType":   target.Type,
+		"targetConfig": configMap,
+		"storagePath":  record.StoragePath,
+	}); err != nil {
+		return true, apperror.Internal("AGENT_COMMAND_ENQUEUE_FAILED", "无法下发远程备份文件删除命令", err)
+	}
+	return true, nil
 }
 
 // validateClusterAccessible 在跨节点 + local_disk 场景下拒绝 Master 端直接访问。
@@ -370,7 +402,7 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 		if remoteNode.Status != model.NodeStatusOnline {
 			offlineMsg := fmt.Sprintf("节点 %s 当前离线，无法执行备份任务", remoteNode.Name)
 			_ = s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecordStatusFailed,
-				offlineMsg, "", "", 0, "", "")
+				offlineMsg, "", "", 0, "", "", primaryTargetID)
 			return nil, apperror.BadRequest("NODE_OFFLINE", offlineMsg, nil)
 		}
 		if _, enqueueErr := s.agentDispatcher.EnqueueCommand(ctx, resolvedNodeID, model.AgentCommandTypeRunTask, map[string]any{
@@ -379,7 +411,7 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 		}); enqueueErr != nil {
 			// 入队失败 → 在记录中标记失败，继续返回详情
 			_ = s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecordStatusFailed,
-				"无法下发任务到远程节点: "+enqueueErr.Error(), "", "", 0, "", "")
+				"无法下发任务到远程节点: "+enqueueErr.Error(), "", "", 0, "", "", primaryTargetID)
 			return nil, apperror.Internal("AGENT_COMMAND_ENQUEUE_FAILED", "无法下发任务到远程节点", enqueueErr)
 		}
 		return s.getRecordDetail(ctx, record.ID)
@@ -561,9 +593,10 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	var fileSize int64
 	var checksum string
 	var storagePath string
+	selectedStorageTargetID := task.StorageTargetID
 	var uploadResults []StorageUploadResultItem
 	completeRecord := func() {
-		if finalizeErr := s.finalizeRecord(ctx, task, recordID, startedAt, status, errMessage, logger.String(), fileName, fileSize, checksum, storagePath); finalizeErr != nil {
+		if finalizeErr := s.finalizeRecord(ctx, task, recordID, startedAt, status, errMessage, logger.String(), fileName, fileSize, checksum, storagePath, selectedStorageTargetID); finalizeErr != nil {
 			logger.Errorf("写回备份记录失败：%v", finalizeErr)
 		}
 		// 采集任务执行结果到 Prometheus（耗时 + 产出字节 + 状态计数）
@@ -759,6 +792,9 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	for _, r := range uploadResults {
 		if r.Status == "success" {
 			anySuccess = true
+			if selectedStorageTargetID == task.StorageTargetID {
+				selectedStorageTargetID = r.StorageTargetID
+			}
 		} else if r.Error != "" {
 			failedMessages = append(failedMessages, fmt.Sprintf("%s: %s", r.StorageTargetName, r.Error))
 		}
@@ -791,7 +827,7 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 			record := &model.BackupRecord{
 				ID:              recordID,
 				TaskID:          task.ID,
-				StorageTargetID: task.StorageTargetID,
+				StorageTargetID: selectedStorageTargetID,
 				NodeID:          task.NodeID,
 				Status:          "success",
 				FileName:        fileName,
@@ -816,7 +852,7 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	}
 }
 
-func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time, status string, errorMessage string, logContent string, fileName string, fileSize int64, checksum string, storagePath string) error {
+func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time, status string, errorMessage string, logContent string, fileName string, fileSize int64, checksum string, storagePath string, storageTargetID uint) error {
 	record, err := s.records.FindByID(ctx, recordID)
 	if err != nil {
 		return err
@@ -826,6 +862,9 @@ func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model
 	}
 	completedAt := s.now()
 	record.Status = status
+	if storageTargetID > 0 {
+		record.StorageTargetID = storageTargetID
+	}
 	record.FileName = fileName
 	record.FileSize = fileSize
 	record.Checksum = checksum
@@ -956,6 +995,9 @@ func (s *BackupExecutionService) loadRecordProvider(ctx context.Context, recordI
 	}
 	if record == nil {
 		return nil, nil, apperror.New(404, "BACKUP_RECORD_NOT_FOUND", "备份记录不存在", fmt.Errorf("backup record %d not found", recordID))
+	}
+	if err := s.validateClusterAccessible(ctx, record); err != nil {
+		return nil, nil, err
 	}
 	provider, err := s.resolveProvider(ctx, record.StorageTargetID)
 	if err != nil {

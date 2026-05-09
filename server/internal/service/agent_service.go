@@ -118,7 +118,8 @@ func (s *AgentService) SubmitCommandResult(ctx context.Context, node *model.Node
 		cmd.Result = string(result.Result)
 	}
 	cmd.CompletedAt = &now
-	return s.cmdRepo.Update(ctx, cmd)
+	_, err = s.cmdRepo.CompleteDispatched(ctx, cmd)
+	return err
 }
 
 // AgentTaskSpec 给 Agent 返回的任务规格，包含解密后的存储配置，供 Agent 直接执行。
@@ -254,6 +255,9 @@ func (s *AgentService) UpdateRecord(ctx context.Context, node *model.Node, recor
 	if task == nil || !recordBelongsToNode(record, task, node.ID) {
 		return apperror.Unauthorized("BACKUP_RECORD_FORBIDDEN", "记录不属于当前节点", nil)
 	}
+	if isBackupRecordTerminal(record.Status) {
+		return nil
+	}
 	if update.Status != "" {
 		record.Status = update.Status
 	}
@@ -300,6 +304,10 @@ func recordBelongsToNode(record *model.BackupRecord, task *model.BackupTask, nod
 		return record.NodeID == nodeID
 	}
 	return task.NodeID == nodeID
+}
+
+func isBackupRecordTerminal(status string) bool {
+	return status == model.BackupRecordStatusSuccess || status == model.BackupRecordStatusFailed
 }
 
 // EnqueueCommand Master 端调用：给指定节点插入一条待执行命令。
@@ -376,23 +384,82 @@ func (s *AgentService) StartCommandTimeoutMonitor(ctx context.Context, interval 
 	}()
 }
 
-// processStaleCommands 扫描已超时的 dispatched 命令并联动关联记录。
-// 流程：先取超时候选 → 对每条联动 backup/restore 记录 → 把命令置为 timeout。
+// processStaleCommands 扫描已超时的 pending/dispatched 命令并联动关联记录。
+// 流程：先取超时候选 → 条件式把命令置为 timeout → 对抢到的命令联动 backup/restore 记录。
 // 单条失败不影响后续处理。
 func (s *AgentService) processStaleCommands(ctx context.Context, threshold time.Time) {
-	commands, err := s.cmdRepo.ListStaleDispatched(ctx, threshold)
+	commands, err := s.cmdRepo.ListStaleActive(ctx, threshold)
 	if err != nil || len(commands) == 0 {
 		return
 	}
 	for i := range commands {
 		cmd := commands[i]
-		s.failLinkedRecord(ctx, &cmd)
+		if s.commandStillActive(ctx, &cmd, threshold) {
+			continue
+		}
 		now := time.Now().UTC()
 		cmd.Status = model.AgentCommandStatusTimeout
 		cmd.ErrorMessage = "agent did not report result before timeout"
 		cmd.CompletedAt = &now
-		_ = s.cmdRepo.Update(ctx, &cmd)
+		timedOut, err := s.cmdRepo.TimeoutActive(ctx, &cmd)
+		if err != nil || !timedOut {
+			continue
+		}
+		s.failLinkedRecord(ctx, &cmd)
 	}
+}
+
+// commandStillActive 用关联记录状态、记录更新时间和节点心跳作为长任务续租信号。
+// 仅 run_task / restore_record 允许续租，避免短 RPC 命令被在线节点长期保留。
+func (s *AgentService) commandStillActive(ctx context.Context, cmd *model.AgentCommand, threshold time.Time) bool {
+	if cmd.Status != model.AgentCommandStatusDispatched {
+		return false
+	}
+	switch cmd.Type {
+	case model.AgentCommandTypeRunTask:
+		var payload struct {
+			RecordID uint `json:"recordId"`
+		}
+		if err := json.Unmarshal([]byte(cmd.Payload), &payload); err != nil || payload.RecordID == 0 {
+			return false
+		}
+		record, err := s.recordRepo.FindByID(ctx, payload.RecordID)
+		if err != nil || record == nil || record.Status != model.BackupRecordStatusRunning {
+			return false
+		}
+		if s.nodeRecentlySeen(ctx, cmd.NodeID, threshold) {
+			return true
+		}
+		return record.UpdatedAt.After(threshold)
+	case model.AgentCommandTypeRestoreRecord:
+		if s.restoreRepo == nil {
+			return false
+		}
+		var payload struct {
+			RestoreRecordID uint `json:"restoreRecordId"`
+		}
+		if err := json.Unmarshal([]byte(cmd.Payload), &payload); err != nil || payload.RestoreRecordID == 0 {
+			return false
+		}
+		restore, err := s.restoreRepo.FindByID(ctx, payload.RestoreRecordID)
+		if err != nil || restore == nil || restore.Status != model.RestoreRecordStatusRunning {
+			return false
+		}
+		if s.nodeRecentlySeen(ctx, cmd.NodeID, threshold) {
+			return true
+		}
+		return restore.UpdatedAt.After(threshold)
+	default:
+		return false
+	}
+}
+
+func (s *AgentService) nodeRecentlySeen(ctx context.Context, nodeID uint, threshold time.Time) bool {
+	node, err := s.nodeRepo.FindByID(ctx, nodeID)
+	if err != nil || node == nil {
+		return false
+	}
+	return node.Status == model.NodeStatusOnline && node.LastSeen.After(threshold)
 }
 
 // failLinkedRecord 根据命令类型把关联记录标记为 failed。

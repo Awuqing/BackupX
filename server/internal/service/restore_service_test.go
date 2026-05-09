@@ -353,6 +353,54 @@ func TestRestoreServiceAgentRestoreAccessUsesRestoreRecordNode(t *testing.T) {
 	}
 }
 
+func TestRestoreServiceUpdateAgentRestoreDoesNotOverwriteTerminalRecord(t *testing.T) {
+	h := newRestoreTestHarness(t, true)
+	ctx := context.Background()
+
+	task, err := h.tasks.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID task: %v", err)
+	}
+	owner, err := h.nodes.FindByID(ctx, task.NodeID)
+	if err != nil {
+		t.Fatalf("FindByID owner node: %v", err)
+	}
+	startedAt := time.Now().UTC().Add(-time.Hour)
+	completedAt := time.Now().UTC().Add(-time.Minute)
+	restore := &model.RestoreRecord{
+		BackupRecordID: 1,
+		TaskID:         task.ID,
+		NodeID:         owner.ID,
+		Status:         model.RestoreRecordStatusFailed,
+		ErrorMessage:   "timeout",
+		StartedAt:      startedAt,
+		CompletedAt:    &completedAt,
+		TriggeredBy:    "agent-test",
+	}
+	if err := h.restores.Create(ctx, restore); err != nil {
+		t.Fatalf("Create restore record: %v", err)
+	}
+
+	if err := h.service.UpdateAgentRestore(ctx, owner, restore.ID, AgentRestoreUpdate{
+		Status:       model.RestoreRecordStatusSuccess,
+		ErrorMessage: "late success",
+		LogAppend:    "late log\n",
+	}); err != nil {
+		t.Fatalf("UpdateAgentRestore returned error: %v", err)
+	}
+
+	updated, err := h.restores.FindByID(ctx, restore.ID)
+	if err != nil {
+		t.Fatalf("FindByID restore returned error: %v", err)
+	}
+	if updated.Status != model.RestoreRecordStatusFailed {
+		t.Fatalf("expected terminal restore status to remain failed, got %#v", updated)
+	}
+	if updated.ErrorMessage != "timeout" {
+		t.Fatalf("expected terminal restore error to remain unchanged, got %q", updated.ErrorMessage)
+	}
+}
+
 func TestRestoreServiceStart_FailsOnNonSuccessBackup(t *testing.T) {
 	h := newRestoreTestHarness(t, false)
 	ctx := context.Background()

@@ -90,6 +90,78 @@ func TestAgentCommandRepository_Update(t *testing.T) {
 	}
 }
 
+func TestAgentCommandRepository_CompleteDispatchedOnlyUpdatesDispatchedCommand(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewAgentCommandRepository(db)
+	ctx := context.Background()
+	dispatched := &model.AgentCommand{NodeID: 1, Type: "run_task", Status: model.AgentCommandStatusDispatched}
+	timeout := &model.AgentCommand{NodeID: 1, Type: "run_task", Status: model.AgentCommandStatusTimeout, ErrorMessage: "timeout"}
+	if err := repo.Create(ctx, dispatched); err != nil {
+		t.Fatalf("Create dispatched returned error: %v", err)
+	}
+	if err := repo.Create(ctx, timeout); err != nil {
+		t.Fatalf("Create timeout returned error: %v", err)
+	}
+
+	now := time.Now().UTC()
+	dispatched.Status = model.AgentCommandStatusSucceeded
+	dispatched.Result = `{"ok":true}`
+	dispatched.CompletedAt = &now
+	updated, err := repo.CompleteDispatched(ctx, dispatched)
+	if err != nil {
+		t.Fatalf("CompleteDispatched returned error: %v", err)
+	}
+	if !updated {
+		t.Fatal("expected dispatched command to be updated")
+	}
+
+	timeout.Status = model.AgentCommandStatusSucceeded
+	timeout.Result = `{"late":true}`
+	timeout.CompletedAt = &now
+	updated, err = repo.CompleteDispatched(ctx, timeout)
+	if err != nil {
+		t.Fatalf("CompleteDispatched terminal returned error: %v", err)
+	}
+	if updated {
+		t.Fatal("expected terminal command not to be updated")
+	}
+	gotTimeout, err := repo.FindByID(ctx, timeout.ID)
+	if err != nil {
+		t.Fatalf("FindByID timeout returned error: %v", err)
+	}
+	if gotTimeout.Status != model.AgentCommandStatusTimeout || gotTimeout.Result != "" {
+		t.Fatalf("expected timeout command unchanged, got %#v", gotTimeout)
+	}
+}
+
+func TestAgentCommandRepository_TimeoutActiveDoesNotOverwriteTerminalCommand(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewAgentCommandRepository(db)
+	ctx := context.Background()
+	succeeded := &model.AgentCommand{NodeID: 1, Type: "run_task", Status: model.AgentCommandStatusSucceeded, Result: `{"ok":true}`}
+	if err := repo.Create(ctx, succeeded); err != nil {
+		t.Fatalf("Create succeeded returned error: %v", err)
+	}
+
+	now := time.Now().UTC()
+	succeeded.ErrorMessage = "timeout"
+	succeeded.CompletedAt = &now
+	updated, err := repo.TimeoutActive(ctx, succeeded)
+	if err != nil {
+		t.Fatalf("TimeoutActive returned error: %v", err)
+	}
+	if updated {
+		t.Fatal("expected terminal command not to be timed out")
+	}
+	got, err := repo.FindByID(ctx, succeeded.ID)
+	if err != nil {
+		t.Fatalf("FindByID returned error: %v", err)
+	}
+	if got.Status != model.AgentCommandStatusSucceeded || got.ErrorMessage != "" || got.Result != `{"ok":true}` {
+		t.Fatalf("expected succeeded command unchanged, got %#v", got)
+	}
+}
+
 func TestAgentCommandRepository_MarkStaleTimeout(t *testing.T) {
 	db := newTestDB(t)
 	repo := NewAgentCommandRepository(db)
@@ -116,5 +188,33 @@ func TestAgentCommandRepository_MarkStaleTimeout(t *testing.T) {
 	}
 	if newGot.Status != model.AgentCommandStatusDispatched {
 		t.Errorf("new should stay dispatched: %+v", newGot)
+	}
+}
+
+func TestAgentCommandRepository_ListStaleActiveIncludesPendingAndDispatched(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewAgentCommandRepository(db)
+	ctx := context.Background()
+	old := time.Now().Add(-time.Hour)
+	recent := time.Now()
+	oldPending := &model.AgentCommand{NodeID: 1, Type: "run_task", Status: model.AgentCommandStatusPending, CreatedAt: old}
+	oldDispatched := &model.AgentCommand{NodeID: 1, Type: "restore_record", Status: model.AgentCommandStatusDispatched, DispatchedAt: &old}
+	recentPending := &model.AgentCommand{NodeID: 1, Type: "run_task", Status: model.AgentCommandStatusPending, CreatedAt: recent}
+	succeeded := &model.AgentCommand{NodeID: 1, Type: "run_task", Status: model.AgentCommandStatusSucceeded, CreatedAt: old}
+	for _, cmd := range []*model.AgentCommand{oldPending, oldDispatched, recentPending, succeeded} {
+		if err := repo.Create(ctx, cmd); err != nil {
+			t.Fatalf("Create returned error: %v", err)
+		}
+	}
+
+	items, err := repo.ListStaleActive(ctx, time.Now().Add(-30*time.Minute))
+	if err != nil {
+		t.Fatalf("ListStaleActive returned error: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("expected 2 stale active commands, got %#v", items)
+	}
+	if items[0].ID != oldPending.ID || items[1].ID != oldDispatched.ID {
+		t.Fatalf("unexpected stale active order/items: %#v", items)
 	}
 }

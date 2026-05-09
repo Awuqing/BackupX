@@ -640,6 +640,9 @@ func (s *RestoreService) UpdateAgentRestore(ctx context.Context, node *model.Nod
 	if restore.NodeID != node.ID {
 		return apperror.Unauthorized("RESTORE_RECORD_FORBIDDEN", "恢复记录不属于当前节点", nil)
 	}
+	if isRestoreRecordTerminal(restore.Status) {
+		return nil
+	}
 	// 追加日志到 LogHub + DB
 	if strings.TrimSpace(update.LogAppend) != "" {
 		for _, line := range strings.Split(update.LogAppend, "\n") {
@@ -676,6 +679,10 @@ func (s *RestoreService) UpdateAgentRestore(ctx context.Context, node *model.Nod
 		s.logHub.Complete(restoreID, update.Status)
 	}
 	return nil
+}
+
+func isRestoreRecordTerminal(status string) bool {
+	return status == model.RestoreRecordStatusSuccess || status == model.RestoreRecordStatusFailed
 }
 
 // --- 内部辅助 ---

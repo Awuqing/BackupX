@@ -12,9 +12,10 @@ import (
 	"backupx/server/internal/model"
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage/codec"
+	"gorm.io/gorm"
 )
 
-func newAgentServicePoolTestHarness(t *testing.T) (*AgentService, repository.BackupRecordRepository, *model.Node, *model.Node) {
+func newAgentServicePoolTestHarness(t *testing.T) (*AgentService, *gorm.DB, repository.BackupRecordRepository, repository.AgentCommandRepository, *model.Node, *model.Node) {
 	t.Helper()
 	log, err := logger.New(config.LogConfig{Level: "error"})
 	if err != nil {
@@ -73,11 +74,11 @@ func newAgentServicePoolTestHarness(t *testing.T) (*AgentService, repository.Bac
 	if err := recordRepo.Create(context.Background(), record); err != nil {
 		t.Fatalf("create record: %v", err)
 	}
-	return NewAgentService(nodeRepo, taskRepo, recordRepo, storageRepo, cmdRepo, cipher), recordRepo, owner, other
+	return NewAgentService(nodeRepo, taskRepo, recordRepo, storageRepo, cmdRepo, cipher), db, recordRepo, cmdRepo, owner, other
 }
 
 func TestAgentServicePooledTaskUsesRecordNodeForSpecAndRecordUpdates(t *testing.T) {
-	svc, records, owner, other := newAgentServicePoolTestHarness(t)
+	svc, _, records, _, owner, other := newAgentServicePoolTestHarness(t)
 	ctx := context.Background()
 
 	spec, err := svc.GetTaskSpec(ctx, owner, 1)
@@ -109,4 +110,480 @@ func TestAgentServicePooledTaskUsesRecordNodeForSpecAndRecordUpdates(t *testing.
 	if err := svc.UpdateRecord(ctx, other, 1, AgentRecordUpdate{LogAppend: "bad"}); err == nil {
 		t.Fatal("expected non-owner node to be forbidden from record update")
 	}
+}
+
+func TestAgentServiceProcessStaleCommandsFailsPendingRunTaskRecord(t *testing.T) {
+	svc, _, records, commands, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	oldCommand := &model.AgentCommand{
+		NodeID:    owner.ID,
+		Type:      model.AgentCommandTypeRunTask,
+		Status:    model.AgentCommandStatusPending,
+		Payload:   `{"recordId":1}`,
+		CreatedAt: time.Now().UTC().Add(-time.Hour),
+	}
+	if err := commands.Create(ctx, oldCommand); err != nil {
+		t.Fatalf("Create command returned error: %v", err)
+	}
+
+	svc.processStaleCommands(ctx, time.Now().UTC().Add(-30*time.Minute))
+
+	updatedCommand, err := commands.FindByID(ctx, oldCommand.ID)
+	if err != nil {
+		t.Fatalf("FindByID command returned error: %v", err)
+	}
+	if updatedCommand.Status != model.AgentCommandStatusTimeout {
+		t.Fatalf("expected command timeout, got %#v", updatedCommand)
+	}
+	updatedRecord, err := records.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID record returned error: %v", err)
+	}
+	if updatedRecord.Status != model.BackupRecordStatusFailed {
+		t.Fatalf("expected record failed, got %#v", updatedRecord)
+	}
+	if updatedRecord.CompletedAt == nil {
+		t.Fatal("expected failed record completedAt to be set")
+	}
+}
+
+func TestAgentServiceProcessStaleCommandsFailsPendingRestoreRecord(t *testing.T) {
+	svc, db, _, commands, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	restoreRepo := repository.NewRestoreRecordRepository(db)
+	restore := &model.RestoreRecord{
+		BackupRecordID: 1,
+		TaskID:         1,
+		NodeID:         owner.ID,
+		Status:         model.RestoreRecordStatusRunning,
+		StartedAt:      time.Now().UTC().Add(-time.Hour),
+	}
+	if err := restoreRepo.Create(ctx, restore); err != nil {
+		t.Fatalf("Create restore returned error: %v", err)
+	}
+	svc.SetRestoreRepository(restoreRepo)
+	oldCommand := &model.AgentCommand{
+		NodeID:    owner.ID,
+		Type:      model.AgentCommandTypeRestoreRecord,
+		Status:    model.AgentCommandStatusPending,
+		Payload:   `{"restoreRecordId":1}`,
+		CreatedAt: time.Now().UTC().Add(-time.Hour),
+	}
+	if err := commands.Create(ctx, oldCommand); err != nil {
+		t.Fatalf("Create command returned error: %v", err)
+	}
+
+	svc.processStaleCommands(ctx, time.Now().UTC().Add(-30*time.Minute))
+
+	updatedCommand, err := commands.FindByID(ctx, oldCommand.ID)
+	if err != nil {
+		t.Fatalf("FindByID command returned error: %v", err)
+	}
+	if updatedCommand.Status != model.AgentCommandStatusTimeout {
+		t.Fatalf("expected command timeout, got %#v", updatedCommand)
+	}
+	updatedRestore, err := restoreRepo.FindByID(ctx, restore.ID)
+	if err != nil {
+		t.Fatalf("FindByID restore returned error: %v", err)
+	}
+	if updatedRestore.Status != model.RestoreRecordStatusFailed {
+		t.Fatalf("expected restore failed, got %#v", updatedRestore)
+	}
+	if updatedRestore.CompletedAt == nil {
+		t.Fatal("expected failed restore completedAt to be set")
+	}
+}
+
+func TestAgentServiceProcessStaleCommandsKeepsActiveDispatchedRunTaskRecord(t *testing.T) {
+	svc, _, records, commands, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	dispatchedAt := time.Now().UTC().Add(-time.Hour)
+	oldCommand := &model.AgentCommand{
+		NodeID:       owner.ID,
+		Type:         model.AgentCommandTypeRunTask,
+		Status:       model.AgentCommandStatusDispatched,
+		Payload:      `{"recordId":1}`,
+		CreatedAt:    dispatchedAt,
+		DispatchedAt: &dispatchedAt,
+	}
+	if err := commands.Create(ctx, oldCommand); err != nil {
+		t.Fatalf("Create command returned error: %v", err)
+	}
+
+	svc.processStaleCommands(ctx, time.Now().UTC().Add(-30*time.Minute))
+
+	updatedCommand, err := commands.FindByID(ctx, oldCommand.ID)
+	if err != nil {
+		t.Fatalf("FindByID command returned error: %v", err)
+	}
+	if updatedCommand.Status != model.AgentCommandStatusDispatched {
+		t.Fatalf("expected active command to remain dispatched, got %#v", updatedCommand)
+	}
+	updatedRecord, err := records.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID record returned error: %v", err)
+	}
+	if updatedRecord.Status != model.BackupRecordStatusRunning {
+		t.Fatalf("expected active record to remain running, got %#v", updatedRecord)
+	}
+}
+
+func TestAgentServiceProcessStaleCommandsKeepsDispatchedRunTaskWhenNodeHeartbeatIsFresh(t *testing.T) {
+	svc, db, records, commands, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	dispatchedAt := time.Now().UTC().Add(-time.Hour)
+	if err := setBackupRecordUpdatedAt(db, 1, dispatchedAt); err != nil {
+		t.Fatalf("set backup record updated_at: %v", err)
+	}
+	if err := db.Model(&model.Node{}).Where("id = ?", owner.ID).UpdateColumn("last_seen", time.Now().UTC()).Error; err != nil {
+		t.Fatalf("set owner last_seen: %v", err)
+	}
+	oldCommand := &model.AgentCommand{
+		NodeID:       owner.ID,
+		Type:         model.AgentCommandTypeRunTask,
+		Status:       model.AgentCommandStatusDispatched,
+		Payload:      `{"recordId":1}`,
+		CreatedAt:    dispatchedAt,
+		DispatchedAt: &dispatchedAt,
+	}
+	if err := commands.Create(ctx, oldCommand); err != nil {
+		t.Fatalf("Create command returned error: %v", err)
+	}
+
+	svc.processStaleCommands(ctx, time.Now().UTC().Add(-30*time.Minute))
+
+	updatedCommand, err := commands.FindByID(ctx, oldCommand.ID)
+	if err != nil {
+		t.Fatalf("FindByID command returned error: %v", err)
+	}
+	if updatedCommand.Status != model.AgentCommandStatusDispatched {
+		t.Fatalf("expected command to remain dispatched while node heartbeat is fresh, got %#v", updatedCommand)
+	}
+	updatedRecord, err := records.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID record returned error: %v", err)
+	}
+	if updatedRecord.Status != model.BackupRecordStatusRunning {
+		t.Fatalf("expected record to remain running while node heartbeat is fresh, got %#v", updatedRecord)
+	}
+}
+
+func TestAgentServiceProcessStaleCommandsTimesOutShortCommandEvenWhenNodeHeartbeatIsFresh(t *testing.T) {
+	svc, db, _, commands, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	dispatchedAt := time.Now().UTC().Add(-time.Hour)
+	if err := db.Model(&model.Node{}).Where("id = ?", owner.ID).UpdateColumn("last_seen", time.Now().UTC()).Error; err != nil {
+		t.Fatalf("set owner last_seen: %v", err)
+	}
+	oldCommand := &model.AgentCommand{
+		NodeID:       owner.ID,
+		Type:         model.AgentCommandTypeListDir,
+		Status:       model.AgentCommandStatusDispatched,
+		Payload:      `{"path":"/srv"}`,
+		CreatedAt:    dispatchedAt,
+		DispatchedAt: &dispatchedAt,
+	}
+	if err := commands.Create(ctx, oldCommand); err != nil {
+		t.Fatalf("Create command returned error: %v", err)
+	}
+
+	svc.processStaleCommands(ctx, time.Now().UTC().Add(-30*time.Minute))
+
+	updatedCommand, err := commands.FindByID(ctx, oldCommand.ID)
+	if err != nil {
+		t.Fatalf("FindByID command returned error: %v", err)
+	}
+	if updatedCommand.Status != model.AgentCommandStatusTimeout {
+		t.Fatalf("expected stale short command timeout, got %#v", updatedCommand)
+	}
+}
+
+func TestAgentServiceProcessStaleCommandsTimesOutDispatchedRunTaskWhenRecordIsTerminalEvenWithFreshHeartbeat(t *testing.T) {
+	svc, db, records, commands, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	dispatchedAt := time.Now().UTC().Add(-time.Hour)
+	if err := db.Model(&model.Node{}).Where("id = ?", owner.ID).UpdateColumn("last_seen", time.Now().UTC()).Error; err != nil {
+		t.Fatalf("set owner last_seen: %v", err)
+	}
+	record, err := records.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID record returned error: %v", err)
+	}
+	completedAt := time.Now().UTC().Add(-time.Minute)
+	record.Status = model.BackupRecordStatusFailed
+	record.CompletedAt = &completedAt
+	if err := records.Update(ctx, record); err != nil {
+		t.Fatalf("Update terminal record returned error: %v", err)
+	}
+	oldCommand := &model.AgentCommand{
+		NodeID:       owner.ID,
+		Type:         model.AgentCommandTypeRunTask,
+		Status:       model.AgentCommandStatusDispatched,
+		Payload:      `{"recordId":1}`,
+		CreatedAt:    dispatchedAt,
+		DispatchedAt: &dispatchedAt,
+	}
+	if err := commands.Create(ctx, oldCommand); err != nil {
+		t.Fatalf("Create command returned error: %v", err)
+	}
+
+	svc.processStaleCommands(ctx, time.Now().UTC().Add(-30*time.Minute))
+
+	updatedCommand, err := commands.FindByID(ctx, oldCommand.ID)
+	if err != nil {
+		t.Fatalf("FindByID command returned error: %v", err)
+	}
+	if updatedCommand.Status != model.AgentCommandStatusTimeout {
+		t.Fatalf("expected command timeout when linked record is terminal, got %#v", updatedCommand)
+	}
+}
+
+func TestAgentServiceProcessStaleCommandsTimesOutInactiveDispatchedRunTaskRecord(t *testing.T) {
+	svc, db, records, commands, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	dispatchedAt := time.Now().UTC().Add(-time.Hour)
+	if err := setBackupRecordUpdatedAt(db, 1, dispatchedAt); err != nil {
+		t.Fatalf("set backup record updated_at: %v", err)
+	}
+	if err := db.Model(&model.Node{}).Where("id = ?", owner.ID).UpdateColumn("last_seen", dispatchedAt).Error; err != nil {
+		t.Fatalf("set owner last_seen: %v", err)
+	}
+	oldCommand := &model.AgentCommand{
+		NodeID:       owner.ID,
+		Type:         model.AgentCommandTypeRunTask,
+		Status:       model.AgentCommandStatusDispatched,
+		Payload:      `{"recordId":1}`,
+		CreatedAt:    dispatchedAt,
+		DispatchedAt: &dispatchedAt,
+	}
+	if err := commands.Create(ctx, oldCommand); err != nil {
+		t.Fatalf("Create command returned error: %v", err)
+	}
+
+	svc.processStaleCommands(ctx, time.Now().UTC().Add(-30*time.Minute))
+
+	updatedCommand, err := commands.FindByID(ctx, oldCommand.ID)
+	if err != nil {
+		t.Fatalf("FindByID command returned error: %v", err)
+	}
+	if updatedCommand.Status != model.AgentCommandStatusTimeout {
+		t.Fatalf("expected inactive command timeout, got %#v", updatedCommand)
+	}
+	updatedRecord, err := records.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID record returned error: %v", err)
+	}
+	if updatedRecord.Status != model.BackupRecordStatusFailed {
+		t.Fatalf("expected inactive record failed, got %#v", updatedRecord)
+	}
+}
+
+func TestAgentServiceProcessStaleCommandsKeepsActiveDispatchedRestoreRecord(t *testing.T) {
+	svc, db, _, commands, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	restoreRepo := repository.NewRestoreRecordRepository(db)
+	restore := createAgentServiceRestoreRecord(t, restoreRepo, owner.ID)
+	svc.SetRestoreRepository(restoreRepo)
+	dispatchedAt := time.Now().UTC().Add(-time.Hour)
+	oldCommand := &model.AgentCommand{
+		NodeID:       owner.ID,
+		Type:         model.AgentCommandTypeRestoreRecord,
+		Status:       model.AgentCommandStatusDispatched,
+		Payload:      `{"restoreRecordId":1}`,
+		CreatedAt:    dispatchedAt,
+		DispatchedAt: &dispatchedAt,
+	}
+	if err := commands.Create(ctx, oldCommand); err != nil {
+		t.Fatalf("Create command returned error: %v", err)
+	}
+
+	svc.processStaleCommands(ctx, time.Now().UTC().Add(-30*time.Minute))
+
+	updatedCommand, err := commands.FindByID(ctx, oldCommand.ID)
+	if err != nil {
+		t.Fatalf("FindByID command returned error: %v", err)
+	}
+	if updatedCommand.Status != model.AgentCommandStatusDispatched {
+		t.Fatalf("expected active restore command to remain dispatched, got %#v", updatedCommand)
+	}
+	updatedRestore, err := restoreRepo.FindByID(ctx, restore.ID)
+	if err != nil {
+		t.Fatalf("FindByID restore returned error: %v", err)
+	}
+	if updatedRestore.Status != model.RestoreRecordStatusRunning {
+		t.Fatalf("expected active restore to remain running, got %#v", updatedRestore)
+	}
+}
+
+func TestAgentServiceProcessStaleCommandsKeepsDispatchedRestoreWhenNodeHeartbeatIsFresh(t *testing.T) {
+	svc, db, _, commands, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	restoreRepo := repository.NewRestoreRecordRepository(db)
+	restore := createAgentServiceRestoreRecord(t, restoreRepo, owner.ID)
+	svc.SetRestoreRepository(restoreRepo)
+	dispatchedAt := time.Now().UTC().Add(-time.Hour)
+	if err := setRestoreRecordUpdatedAt(db, restore.ID, dispatchedAt); err != nil {
+		t.Fatalf("set restore record updated_at: %v", err)
+	}
+	if err := db.Model(&model.Node{}).Where("id = ?", owner.ID).UpdateColumn("last_seen", time.Now().UTC()).Error; err != nil {
+		t.Fatalf("set owner last_seen: %v", err)
+	}
+	oldCommand := &model.AgentCommand{
+		NodeID:       owner.ID,
+		Type:         model.AgentCommandTypeRestoreRecord,
+		Status:       model.AgentCommandStatusDispatched,
+		Payload:      `{"restoreRecordId":1}`,
+		CreatedAt:    dispatchedAt,
+		DispatchedAt: &dispatchedAt,
+	}
+	if err := commands.Create(ctx, oldCommand); err != nil {
+		t.Fatalf("Create command returned error: %v", err)
+	}
+
+	svc.processStaleCommands(ctx, time.Now().UTC().Add(-30*time.Minute))
+
+	updatedCommand, err := commands.FindByID(ctx, oldCommand.ID)
+	if err != nil {
+		t.Fatalf("FindByID command returned error: %v", err)
+	}
+	if updatedCommand.Status != model.AgentCommandStatusDispatched {
+		t.Fatalf("expected restore command to remain dispatched while node heartbeat is fresh, got %#v", updatedCommand)
+	}
+}
+
+func TestAgentServiceProcessStaleCommandsTimesOutInactiveDispatchedRestoreRecord(t *testing.T) {
+	svc, db, _, commands, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	restoreRepo := repository.NewRestoreRecordRepository(db)
+	restore := createAgentServiceRestoreRecord(t, restoreRepo, owner.ID)
+	svc.SetRestoreRepository(restoreRepo)
+	dispatchedAt := time.Now().UTC().Add(-time.Hour)
+	if err := setRestoreRecordUpdatedAt(db, restore.ID, dispatchedAt); err != nil {
+		t.Fatalf("set restore record updated_at: %v", err)
+	}
+	if err := db.Model(&model.Node{}).Where("id = ?", owner.ID).UpdateColumn("last_seen", dispatchedAt).Error; err != nil {
+		t.Fatalf("set owner last_seen: %v", err)
+	}
+	oldCommand := &model.AgentCommand{
+		NodeID:       owner.ID,
+		Type:         model.AgentCommandTypeRestoreRecord,
+		Status:       model.AgentCommandStatusDispatched,
+		Payload:      `{"restoreRecordId":1}`,
+		CreatedAt:    dispatchedAt,
+		DispatchedAt: &dispatchedAt,
+	}
+	if err := commands.Create(ctx, oldCommand); err != nil {
+		t.Fatalf("Create command returned error: %v", err)
+	}
+
+	svc.processStaleCommands(ctx, time.Now().UTC().Add(-30*time.Minute))
+
+	updatedCommand, err := commands.FindByID(ctx, oldCommand.ID)
+	if err != nil {
+		t.Fatalf("FindByID command returned error: %v", err)
+	}
+	if updatedCommand.Status != model.AgentCommandStatusTimeout {
+		t.Fatalf("expected inactive restore command timeout, got %#v", updatedCommand)
+	}
+	updatedRestore, err := restoreRepo.FindByID(ctx, restore.ID)
+	if err != nil {
+		t.Fatalf("FindByID restore returned error: %v", err)
+	}
+	if updatedRestore.Status != model.RestoreRecordStatusFailed {
+		t.Fatalf("expected inactive restore failed, got %#v", updatedRestore)
+	}
+}
+
+func TestAgentServiceSubmitCommandResultDoesNotOverwriteTerminalCommand(t *testing.T) {
+	svc, _, _, commands, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	completedAt := time.Now().UTC().Add(-time.Minute)
+	command := &model.AgentCommand{
+		NodeID:       owner.ID,
+		Type:         model.AgentCommandTypeRunTask,
+		Status:       model.AgentCommandStatusTimeout,
+		Payload:      `{"recordId":1}`,
+		ErrorMessage: "timeout",
+		CompletedAt:  &completedAt,
+	}
+	if err := commands.Create(ctx, command); err != nil {
+		t.Fatalf("Create command returned error: %v", err)
+	}
+
+	if err := svc.SubmitCommandResult(ctx, owner, command.ID, AgentCommandResult{Success: true, Result: []byte(`{"ok":true}`)}); err != nil {
+		t.Fatalf("SubmitCommandResult returned error: %v", err)
+	}
+
+	updatedCommand, err := commands.FindByID(ctx, command.ID)
+	if err != nil {
+		t.Fatalf("FindByID command returned error: %v", err)
+	}
+	if updatedCommand.Status != model.AgentCommandStatusTimeout {
+		t.Fatalf("expected terminal command status to remain timeout, got %#v", updatedCommand)
+	}
+	if updatedCommand.Result != "" {
+		t.Fatalf("expected terminal command result to remain empty, got %q", updatedCommand.Result)
+	}
+}
+
+func TestAgentServiceUpdateRecordDoesNotOverwriteTerminalRecord(t *testing.T) {
+	svc, _, records, _, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	record, err := records.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID record returned error: %v", err)
+	}
+	completedAt := time.Now().UTC().Add(-time.Minute)
+	record.Status = model.BackupRecordStatusFailed
+	record.ErrorMessage = "timeout"
+	record.CompletedAt = &completedAt
+	if err := records.Update(ctx, record); err != nil {
+		t.Fatalf("Update record returned error: %v", err)
+	}
+
+	if err := svc.UpdateRecord(ctx, owner, record.ID, AgentRecordUpdate{
+		Status:       model.BackupRecordStatusSuccess,
+		FileName:     "late.tar.gz",
+		FileSize:     42,
+		Checksum:     "late",
+		StoragePath:  "late/path",
+		ErrorMessage: "late success",
+		LogAppend:    "late log\n",
+	}); err != nil {
+		t.Fatalf("UpdateRecord returned error: %v", err)
+	}
+
+	updatedRecord, err := records.FindByID(ctx, record.ID)
+	if err != nil {
+		t.Fatalf("FindByID updated record returned error: %v", err)
+	}
+	if updatedRecord.Status != model.BackupRecordStatusFailed {
+		t.Fatalf("expected terminal record status to remain failed, got %#v", updatedRecord)
+	}
+	if updatedRecord.FileName != "" || updatedRecord.StoragePath != "" || updatedRecord.ErrorMessage != "timeout" {
+		t.Fatalf("expected terminal record fields to remain unchanged, got %#v", updatedRecord)
+	}
+}
+
+func createAgentServiceRestoreRecord(t *testing.T, repo repository.RestoreRecordRepository, nodeID uint) *model.RestoreRecord {
+	t.Helper()
+	restore := &model.RestoreRecord{
+		BackupRecordID: 1,
+		TaskID:         1,
+		NodeID:         nodeID,
+		Status:         model.RestoreRecordStatusRunning,
+		StartedAt:      time.Now().UTC().Add(-time.Hour),
+	}
+	if err := repo.Create(context.Background(), restore); err != nil {
+		t.Fatalf("Create restore returned error: %v", err)
+	}
+	return restore
+}
+
+func setBackupRecordUpdatedAt(db *gorm.DB, id uint, updatedAt time.Time) error {
+	return db.Model(&model.BackupRecord{}).Where("id = ?", id).UpdateColumn("updated_at", updatedAt).Error
+}
+
+func setRestoreRecordUpdatedAt(db *gorm.DB, id uint, updatedAt time.Time) error {
+	return db.Model(&model.RestoreRecord{}).Where("id = ?", id).UpdateColumn("updated_at", updatedAt).Error
 }
