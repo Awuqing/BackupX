@@ -1,12 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Modal, Steps, Button, Space, Message, Spin, Progress } from '@arco-design/web-react'
+import { Modal, Steps, Button, Space, Message, Spin } from '@arco-design/web-react'
 import { Step1NodeName, type Mode } from './wizard/Step1NodeName'
 import { Step2DeployOptions, type DeployOptions } from './wizard/Step2DeployOptions'
 import { Step3CommandPreview } from './wizard/Step3CommandPreview'
 import { BatchCommandTable, type BatchCommandRow } from './BatchCommandTable'
-import { batchCreateNodes, createInstallToken } from '../../services/nodes'
 import type { InstallTokenResult } from '../../types/nodes'
-import { buildAgentInstallCommand } from './installCommands'
+import { useAgentDeployFlow, type AgentDeployRow } from './useAgentDeployFlow'
 
 const Step = Steps.Step
 
@@ -25,9 +24,7 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
   const [mode, setMode] = useState<Mode>('single')
   const [singleName, setSingleName] = useState('')
   const [batchText, setBatchText] = useState('')
-
-  // 批量进度（已生成 / 总数）
-  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number } | null>(null)
+  const deployFlow = useAgentDeployFlow()
 
   const [deploy, setDeploy] = useState<DeployOptions>({
     mode: 'systemd',
@@ -66,7 +63,6 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
     setSingleToken(null)
     setSingleNodeInfo(null)
     setBatchRows([])
-    setBatchProgress(null)
   }
 
   const handleClose = () => {
@@ -102,71 +98,21 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
       Message.warning('请填写 Agent 版本号（形如 v1.7.0）')
       return
     }
-    // 步骤 1 的批次内去重在前端先提示一次，再由后端最终校验
-    if (mode === 'batch' && !fixedNode) {
-      const names = parseBatchNames()
-      const seen = new Set<string>()
-      const dups: string[] = []
-      for (const n of names) {
-        if (seen.has(n)) dups.push(n)
-        seen.add(n)
-      }
-      if (dups.length > 0) {
-        Message.warning(`批次内有重复节点名：${Array.from(new Set(dups)).join(', ')}`)
-        return
-      }
-    }
     setSubmitting(true)
     try {
       if (fixedNode) {
-        const tok = await createInstallToken(fixedNode.id, {
-          mode: deploy.mode,
-          arch: deploy.arch,
-          agentVersion: deploy.agentVersion,
-          downloadSrc: deploy.downloadSrc,
-          ttlSeconds: deploy.ttlSeconds,
-        })
-        setSingleNodeInfo(fixedNode)
-        setSingleToken(tok)
+        const result = await deployFlow.submitExistingNode(fixedNode, deploy)
+        applySingleOrTableResult(result.rows, fixedNode)
       } else if (mode === 'single') {
-        const created = await batchCreateNodes([singleName.trim()])
-        const one = created[0]
-        const tok = await createInstallToken(one.id, {
-          mode: deploy.mode,
-          arch: deploy.arch,
-          agentVersion: deploy.agentVersion,
-          downloadSrc: deploy.downloadSrc,
-          ttlSeconds: deploy.ttlSeconds,
-        })
-        setSingleNodeInfo({ id: one.id, name: one.name })
-        setSingleToken(tok)
+        const result = await deployFlow.submitNewNodes([singleName.trim()], deploy)
+        applySingleOrTableResult(result.rows)
       } else {
         const names = parseBatchNames()
-        const created = await batchCreateNodes(names)
-        setBatchProgress({ done: 0, total: created.length })
-        // 并发生成 install token（Promise.all），每完成一个递增 done 计数
-        let done = 0
-        const tokens = await Promise.all(
-          created.map(async (c) => {
-            const tok = await createInstallToken(c.id, {
-              mode: deploy.mode,
-              arch: deploy.arch,
-              agentVersion: deploy.agentVersion,
-              downloadSrc: deploy.downloadSrc,
-              ttlSeconds: deploy.ttlSeconds,
-            })
-            done += 1
-            if (mountedRef.current) setBatchProgress({ done, total: created.length })
-            return { c, tok }
-          }),
-        )
-        const rows: BatchCommandRow[] = tokens.map(({ c, tok }) => ({
-          nodeId: c.id,
-          nodeName: c.name,
-          command: buildAgentInstallCommand(tok.url, tok.fallbackUrl, tok.scriptBase64),
-          expiresAt: tok.expiresAt,
-        }))
-        if (mountedRef.current) setBatchRows(rows)
+        const result = await deployFlow.submitNewNodes(names, deploy)
+        if (mountedRef.current) setBatchRows(toBatchRows(result.rows))
+        if (result.status === 'partialFailed') {
+          Message.warning('部分节点安装命令生成失败，可在结果表中查看')
+        }
       }
       setStep(2)
       onSuccess()
@@ -181,16 +127,33 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
     if (!singleNodeInfo) return
     setSubmitting(true)
     try {
-      const tok = await createInstallToken(singleNodeInfo.id, {
-        mode: deploy.mode,
-        arch: deploy.arch,
-        agentVersion: deploy.agentVersion,
-        downloadSrc: deploy.downloadSrc,
-        ttlSeconds: deploy.ttlSeconds,
-      })
-      setSingleToken(tok)
+      const row = await deployFlow.regenerateNode(singleNodeInfo, deploy)
+      if (row.status === 'ready' && row.installToken) {
+        setSingleToken(row.installToken)
+      } else {
+        Message.error(row.errorMessage || '重新生成失败')
+      }
     } catch (e: any) {
       Message.error(e?.message || '重新生成失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  const retryBatchNode = async (row: BatchCommandRow) => {
+    setSubmitting(true)
+    try {
+      const next = await deployFlow.regenerateNode({ id: row.nodeId, name: row.nodeName }, deploy)
+      setBatchRows((rows) => rows.map((item) => (
+        item.nodeId === row.nodeId ? toBatchRows([next])[0] : item
+      )))
+      if (next.status === 'ready') {
+        Message.success(`节点「${row.nodeName}」安装命令已重新生成`)
+      } else {
+        Message.error(next.errorMessage || '重试失败')
+      }
+    } catch (e: any) {
+      Message.error(e?.message || '重试失败')
     } finally {
       setSubmitting(false)
     }
@@ -225,17 +188,6 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
       {submitting && (
         <div style={{ textAlign: 'center', padding: 32 }}>
           <Spin />
-          {batchProgress && (
-            <div style={{ marginTop: 16, maxWidth: 360, marginLeft: 'auto', marginRight: 'auto' }}>
-              <div style={{ fontSize: 13, marginBottom: 6 }}>
-                正在生成安装命令 {batchProgress.done} / {batchProgress.total}
-              </div>
-              <Progress
-                percent={Math.round((batchProgress.done / batchProgress.total) * 100)}
-                showText
-              />
-            </div>
-          )}
         </div>
       )}
 
@@ -289,7 +241,7 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
               onRegenerate={regenerateSingle}
             />
           )}
-          {batchRows.length > 0 && <BatchCommandTable rows={batchRows} />}
+          {batchRows.length > 0 && <BatchCommandTable rows={batchRows} onRetryNode={retryBatchNode} />}
           <div style={{ marginTop: 24, textAlign: 'right' }}>
             <Button type="primary" onClick={handleClose}>
               完成
@@ -299,4 +251,31 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
       )}
     </Modal>
   )
+
+  function applySingleOrTableResult(rows: AgentDeployRow[], fallbackNode?: { id: number; name: string }) {
+    const row = rows[0]
+    if (!row) return
+    if (row.status === 'ready' && row.installToken) {
+      setSingleNodeInfo({ id: row.nodeId || fallbackNode?.id || 0, name: row.nodeName || fallbackNode?.name || '' })
+      setSingleToken(row.installToken)
+      setBatchRows([])
+      return
+    }
+    setSingleNodeInfo(null)
+    setSingleToken(null)
+    setBatchRows(toBatchRows(rows))
+    Message.error(row.errorMessage || '安装命令生成失败')
+  }
+}
+
+function toBatchRows(rows: AgentDeployRow[]): BatchCommandRow[] {
+  return rows.map((row) => ({
+    nodeId: row.nodeId,
+    nodeName: row.nodeName,
+    status: row.status,
+    command: row.command,
+    expiresAt: row.expiresAt,
+    errorMessage: row.errorMessage,
+    embeddedCommand: row.embeddedCommand,
+  }))
 }

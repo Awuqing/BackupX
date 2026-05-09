@@ -3,7 +3,7 @@ import { Typography, Button, Space, Collapse, Spin, Message, Tag } from '@arco-d
 import { IconCopy, IconRefresh } from '@arco-design/web-react/icon'
 import { fetchScriptPreview } from '../../../services/nodes'
 import type { InstallTokenResult, InstallMode } from '../../../types/nodes'
-import { buildAgentDownloadCommand, buildAgentInstallCommand } from '../installCommands'
+import { buildAgentDownloadCommand, buildAgentInstallCommand, buildEmbeddedAgentInstallCommand } from '../installCommands'
 
 const { Text } = Typography
 
@@ -30,8 +30,9 @@ export function Step3CommandPreview({ nodeId, nodeName, token, mode, previewPara
   }, [token.expiresAt])
 
   const expired = remaining === 0
-  const command = buildAgentInstallCommand(token.url, token.fallbackUrl, token.scriptBase64)
-  const fallbackCommand = buildAgentDownloadCommand(token.url, token.fallbackUrl, token.scriptBase64)
+  const command = buildAgentInstallCommand(token.url, token.fallbackUrl)
+  const fallbackCommand = buildAgentDownloadCommand(token.url, token.fallbackUrl)
+  const embeddedCommand = token.scriptBase64 ? buildEmbeddedAgentInstallCommand(token.scriptBase64) : null
   const dockerComposeCmd = mode === 'docker' && token.composeUrl
     ? `curl -fsSL ${token.composeUrl} -o docker-compose.yml && docker-compose up -d`
     : null
@@ -107,8 +108,22 @@ export function Step3CommandPreview({ nodeId, nodeName, token, mode, previewPara
         </div>
       )}
 
+      {embeddedCommand && (
+        <div style={{ background: 'var(--color-fill-2)', padding: '12px 14px', borderRadius: 6, marginBottom: 12 }}>
+          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
+            代理异常时使用嵌入式备用命令：
+          </Text>
+          <Text style={{ fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all', userSelect: 'all' }}>
+            {embeddedCommand}
+          </Text>
+          <div style={{ marginTop: 8 }}>
+            <Button size="small" icon={<IconCopy />} onClick={() => copy(embeddedCommand)}>复制</Button>
+          </div>
+        </div>
+      )}
+
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-        安装命令包含节点 token，请仅在目标机执行并妥善保存；公开安装链接会在 TTL 到期或首次消费后作废。
+        主安装命令包含公开 install token，会在 TTL 到期或首次消费后作废；嵌入式备用命令包含完整节点 token，不依赖公开链接消费状态，请仅在目标机执行并妥善保存。
       </Text>
 
       <Collapse bordered={false} onChange={(_key, keys) => {
