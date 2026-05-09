@@ -24,6 +24,9 @@ func (r *fakeRecordRepository) List(context.Context, repository.BackupRecordList
 func (r *fakeRecordRepository) FindByID(context.Context, uint) (*model.BackupRecord, error) {
 	return nil, nil
 }
+func (r *fakeRecordRepository) FindRunningByTaskAndNode(context.Context, uint, uint) (*model.BackupRecord, error) {
+	return nil, nil
+}
 func (r *fakeRecordRepository) Create(context.Context, *model.BackupRecord) error { return nil }
 func (r *fakeRecordRepository) Update(context.Context, *model.BackupRecord) error { return nil }
 func (r *fakeRecordRepository) Delete(_ context.Context, id uint) error {

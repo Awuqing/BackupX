@@ -33,6 +33,7 @@ type BackupStorageUsageItem struct {
 type BackupRecordRepository interface {
 	List(context.Context, BackupRecordListOptions) ([]model.BackupRecord, error)
 	FindByID(context.Context, uint) (*model.BackupRecord, error)
+	FindRunningByTaskAndNode(context.Context, uint, uint) (*model.BackupRecord, error)
 	Create(context.Context, *model.BackupRecord) error
 	Update(context.Context, *model.BackupRecord) error
 	Delete(context.Context, uint) error
@@ -85,6 +86,20 @@ func (r *GormBackupRecordRepository) List(ctx context.Context, options BackupRec
 func (r *GormBackupRecordRepository) FindByID(ctx context.Context, id uint) (*model.BackupRecord, error) {
 	var item model.BackupRecord
 	if err := r.db.WithContext(ctx).Preload("Task").Preload("Task.StorageTarget").First(&item, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (r *GormBackupRecordRepository) FindRunningByTaskAndNode(ctx context.Context, taskID uint, nodeID uint) (*model.BackupRecord, error) {
+	var item model.BackupRecord
+	if err := r.db.WithContext(ctx).
+		Where("task_id = ? AND node_id = ? AND status = ?", taskID, nodeID, model.BackupRecordStatusRunning).
+		Order("id desc").
+		First(&item).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}

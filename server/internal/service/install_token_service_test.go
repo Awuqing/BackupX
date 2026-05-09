@@ -131,6 +131,79 @@ func TestInstallTokenServiceValidatesInput(t *testing.T) {
 	}
 }
 
+func TestInstallTokenServiceRejectsInvalidAgentVersionBeforeCreate(t *testing.T) {
+	db := openInstallTokenTestDB(t)
+	nodeRepo := repository.NewNodeRepository(db)
+	node := &model.Node{Name: "invalid-version", Token: "feedface"}
+	if err := nodeRepo.Create(context.Background(), node); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	tokenRepo := repository.NewAgentInstallTokenRepository(db)
+	svc := NewInstallTokenService(tokenRepo, nodeRepo)
+
+	_, err := svc.Create(context.Background(), InstallTokenInput{
+		NodeID:       node.ID,
+		Mode:         model.InstallModeSystemd,
+		Arch:         model.InstallArchAuto,
+		AgentVersion: "v1 && rm -rf /",
+		DownloadSrc:  model.InstallSourceGitHub,
+		TTLSeconds:   900,
+		CreatedByID:  1,
+	})
+	if err == nil {
+		t.Fatalf("expected invalid version error")
+	}
+	count, err := tokenRepo.CountCreatedSince(context.Background(), node.ID, time.Now().UTC().Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("invalid request created %d token records", count)
+	}
+}
+
+func TestInstallTokenServiceCreateCommandBuildsURLsAndScript(t *testing.T) {
+	db := openInstallTokenTestDB(t)
+	nodeRepo := repository.NewNodeRepository(db)
+	node := &model.Node{
+		Name:  "command-node",
+		Token: "deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcdef",
+	}
+	if err := nodeRepo.Create(context.Background(), node); err != nil {
+		t.Fatalf("create node: %v", err)
+	}
+	tokenRepo := repository.NewAgentInstallTokenRepository(db)
+	svc := NewInstallTokenService(tokenRepo, nodeRepo)
+
+	out, err := svc.CreateCommand(context.Background(), InstallCommandInput{
+		InstallTokenInput: InstallTokenInput{
+			NodeID:       node.ID,
+			Mode:         model.InstallModeDocker,
+			Arch:         model.InstallArchAuto,
+			AgentVersion: "v1.7.0",
+			DownloadSrc:  model.InstallSourceGitHub,
+			TTLSeconds:   900,
+			CreatedByID:  1,
+		},
+		MasterURL: "https://public.example.com/base",
+	})
+	if err != nil {
+		t.Fatalf("create command: %v", err)
+	}
+	if out.Token == "" || out.ScriptBase64 == "" {
+		t.Fatalf("missing token or script: %+v", out)
+	}
+	if out.URL != "https://public.example.com/base/api/install/"+out.Token {
+		t.Fatalf("bad url: %s", out.URL)
+	}
+	if out.FallbackURL != "https://public.example.com/base/install/"+out.Token {
+		t.Fatalf("bad fallback url: %s", out.FallbackURL)
+	}
+	if out.ComposeURL != "https://public.example.com/base/api/install/"+out.Token+"/compose.yml" {
+		t.Fatalf("bad compose url: %s", out.ComposeURL)
+	}
+}
+
 func TestInstallTokenServiceRateLimit(t *testing.T) {
 	db := openInstallTokenTestDB(t)
 	nodeRepo := repository.NewNodeRepository(db)

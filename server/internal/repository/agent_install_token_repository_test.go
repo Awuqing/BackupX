@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -80,6 +81,59 @@ func TestInstallTokenConsumeExpired(t *testing.T) {
 	}
 	if got != nil {
 		t.Fatalf("expected nil on expired, got %+v", got)
+	}
+}
+
+func TestInstallTokenConsumeConcurrentOnlyOneWins(t *testing.T) {
+	db := openTestInstallTokenDB(t)
+	repo := NewAgentInstallTokenRepository(db)
+	ctx := context.Background()
+
+	tok := &model.AgentInstallToken{
+		Token: "concurrent", NodeID: 1, Mode: model.InstallModeSystemd,
+		Arch: model.InstallArchAuto, AgentVer: "v1.7.0",
+		DownloadSrc: model.InstallSourceGitHub,
+		ExpiresAt:   time.Now().UTC().Add(15 * time.Minute),
+		CreatedByID: 1,
+	}
+	if err := repo.Create(ctx, tok); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	const workers = 8
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	results := make(chan *model.AgentInstallToken, workers)
+	errs := make(chan error, workers)
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			got, err := repo.ConsumeByToken(ctx, "concurrent")
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- got
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	for err := range errs {
+		t.Fatalf("consume err: %v", err)
+	}
+	success := 0
+	for got := range results {
+		if got != nil {
+			success++
+		}
+	}
+	if success != 1 {
+		t.Fatalf("expected exactly one successful consume, got %d", success)
 	}
 }
 

@@ -25,10 +25,14 @@ import (
 // setupInstallFlowRouter 构造一个 Node + Agent + InstallToken 全量依赖的 router，
 // 并返回已登录管理员 JWT。
 func setupInstallFlowRouter(t *testing.T) (http.Handler, string) {
+	return setupInstallFlowRouterWithExternalURL(t, "")
+}
+
+func setupInstallFlowRouterWithExternalURL(t *testing.T, externalURL string) (http.Handler, string) {
 	t.Helper()
 	tempDir := t.TempDir()
 	cfg := config.Config{
-		Server:   config.ServerConfig{Host: "127.0.0.1", Port: 8340, Mode: "test"},
+		Server:   config.ServerConfig{Host: "127.0.0.1", Port: 8340, Mode: "test", ExternalURL: externalURL},
 		Database: config.DatabaseConfig{Path: filepath.Join(tempDir, "backupx.db")},
 		Security: config.SecurityConfig{JWTExpire: "24h"},
 		Log:      config.LogConfig{Level: "error"},
@@ -68,9 +72,6 @@ func setupInstallFlowRouter(t *testing.T) (http.Handler, string) {
 	installTokenRepo := repository.NewAgentInstallTokenRepository(db)
 	installTokenSvc := service.NewInstallTokenService(installTokenRepo, nodeRepo)
 
-	auditLogRepo := repository.NewAuditLogRepository(db)
-	auditSvc := service.NewAuditService(auditLogRepo)
-
 	// 用 cancelable ctx，测试结束时停掉 handler 启动的后台 GC 协程，
 	// 避免 goroutine 持有 map 导致 tempdir 清理失败。
 	ctx, cancel := context.WithCancel(context.Background())
@@ -85,7 +86,7 @@ func setupInstallFlowRouter(t *testing.T) (http.Handler, string) {
 		SystemService:       systemSvc,
 		NodeService:         nodeSvc,
 		InstallTokenService: installTokenSvc,
-		AuditService:        auditSvc,
+		MasterExternalURL:   cfg.Server.ExternalURL,
 		JWTManager:          jwtMgr,
 		UserRepository:      userRepo,
 		SystemConfigRepo:    systemConfigRepo,
@@ -112,6 +113,73 @@ func setupInstallFlowRouter(t *testing.T) (http.Handler, string) {
 	}
 
 	return router, setupResp.Data.Token
+}
+
+func TestInstallTokenUsesConfiguredExternalURL(t *testing.T) {
+	const externalURL = "https://public.example.com/base"
+	router, jwt := setupInstallFlowRouterWithExternalURL(t, externalURL)
+
+	batchBody, _ := json.Marshal(map[string][]string{"names": {"external-url-node"}})
+	batchReq := httptest.NewRequest(http.MethodPost, "/api/nodes/batch", bytes.NewBuffer(batchBody))
+	batchReq.Header.Set("Content-Type", "application/json")
+	batchReq.Header.Set("Authorization", "Bearer "+jwt)
+	batchRec := httptest.NewRecorder()
+	router.ServeHTTP(batchRec, batchReq)
+	if batchRec.Code != 200 {
+		t.Fatalf("batch create failed: %d %s", batchRec.Code, batchRec.Body.String())
+	}
+	var batchResp struct {
+		Data []struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(batchRec.Body.Bytes(), &batchResp); err != nil {
+		t.Fatalf("unmarshal batch: %v", err)
+	}
+	if len(batchResp.Data) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(batchResp.Data))
+	}
+
+	genBody, _ := json.Marshal(map[string]any{
+		"mode":         "systemd",
+		"arch":         "auto",
+		"agentVersion": "v1.7.0",
+		"downloadSrc":  "github",
+		"ttlSeconds":   900,
+	})
+	genReq := httptest.NewRequest(http.MethodPost,
+		"/api/nodes/"+formatUint(batchResp.Data[0].ID)+"/install-tokens", bytes.NewBuffer(genBody))
+	genReq.Header.Set("Content-Type", "application/json")
+	genReq.Header.Set("Authorization", "Bearer "+jwt)
+	genRec := httptest.NewRecorder()
+	router.ServeHTTP(genRec, genReq)
+	if genRec.Code != 200 {
+		t.Fatalf("install-tokens failed: %d %s", genRec.Code, genRec.Body.String())
+	}
+	var genResp struct {
+		Data struct {
+			InstallToken string `json:"installToken"`
+			URL          string `json:"url"`
+			FallbackURL  string `json:"fallbackUrl"`
+			ScriptBase64 string `json:"scriptBase64"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(genRec.Body.Bytes(), &genResp); err != nil {
+		t.Fatalf("unmarshal gen: %v", err)
+	}
+	if genResp.Data.URL != externalURL+"/api/install/"+genResp.Data.InstallToken {
+		t.Fatalf("url should use external URL, got %q", genResp.Data.URL)
+	}
+	if genResp.Data.FallbackURL != externalURL+"/install/"+genResp.Data.InstallToken {
+		t.Fatalf("fallbackUrl should use external URL, got %q", genResp.Data.FallbackURL)
+	}
+	decodedScript, err := base64.StdEncoding.DecodeString(genResp.Data.ScriptBase64)
+	if err != nil {
+		t.Fatalf("scriptBase64 should be valid base64: %v", err)
+	}
+	if !strings.Contains(string(decodedScript), `MASTER_URL="`+externalURL+`"`) {
+		t.Fatalf("script should use external MASTER_URL:\n%s", string(decodedScript))
+	}
 }
 
 func TestOneClickInstallFlow(t *testing.T) {
@@ -425,6 +493,76 @@ func TestInstallFlowComposeModeMismatch(t *testing.T) {
 	router.ServeHTTP(rec2, req2)
 	if rec2.Code != 200 {
 		t.Fatalf("original script fetch should still work: %d %s", rec2.Code, rec2.Body.String())
+	}
+}
+
+func TestInstallFlowComposeSuccessConsumesToken(t *testing.T) {
+	router, jwt := setupInstallFlowRouter(t)
+
+	batchBody, _ := json.Marshal(map[string][]string{"names": {"compose-ok"}})
+	batchReq := httptest.NewRequest(http.MethodPost, "/api/nodes/batch", bytes.NewBuffer(batchBody))
+	batchReq.Header.Set("Content-Type", "application/json")
+	batchReq.Header.Set("Authorization", "Bearer "+jwt)
+	batchRec := httptest.NewRecorder()
+	router.ServeHTTP(batchRec, batchReq)
+	if batchRec.Code != 200 {
+		t.Fatalf("batch create failed: %d %s", batchRec.Code, batchRec.Body.String())
+	}
+	var batchResp struct {
+		Data []struct {
+			ID uint `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(batchRec.Body.Bytes(), &batchResp); err != nil {
+		t.Fatalf("unmarshal batch: %v", err)
+	}
+	if len(batchResp.Data) != 1 {
+		t.Fatalf("expected 1 node, got %d", len(batchResp.Data))
+	}
+
+	genBody, _ := json.Marshal(map[string]any{
+		"mode":         "docker",
+		"arch":         "auto",
+		"agentVersion": "v1.7.0",
+		"downloadSrc":  "github",
+		"ttlSeconds":   900,
+	})
+	genReq := httptest.NewRequest(http.MethodPost,
+		"/api/nodes/"+formatUint(batchResp.Data[0].ID)+"/install-tokens", bytes.NewBuffer(genBody))
+	genReq.Header.Set("Content-Type", "application/json")
+	genReq.Header.Set("Authorization", "Bearer "+jwt)
+	genRec := httptest.NewRecorder()
+	router.ServeHTTP(genRec, genReq)
+	if genRec.Code != 200 {
+		t.Fatalf("install-tokens failed: %d %s", genRec.Code, genRec.Body.String())
+	}
+	var genResp struct {
+		Data struct {
+			InstallToken string `json:"installToken"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(genRec.Body.Bytes(), &genResp); err != nil {
+		t.Fatalf("unmarshal gen: %v", err)
+	}
+	if genResp.Data.InstallToken == "" {
+		t.Fatalf("missing installToken")
+	}
+
+	composeReq := httptest.NewRequest(http.MethodGet, "/api/install/"+genResp.Data.InstallToken+"/compose.yml", nil)
+	composeRec := httptest.NewRecorder()
+	router.ServeHTTP(composeRec, composeReq)
+	if composeRec.Code != 200 {
+		t.Fatalf("compose fetch failed: %d %s", composeRec.Code, composeRec.Body.String())
+	}
+	if !strings.Contains(composeRec.Body.String(), "BACKUPX_AGENT_TOKEN") {
+		t.Fatalf("compose missing token env:\n%s", composeRec.Body.String())
+	}
+
+	scriptReq := httptest.NewRequest(http.MethodGet, "/api/install/"+genResp.Data.InstallToken, nil)
+	scriptRec := httptest.NewRecorder()
+	router.ServeHTTP(scriptRec, scriptReq)
+	if scriptRec.Code != http.StatusGone {
+		t.Fatalf("script after compose should be 410, got %d: %s", scriptRec.Code, scriptRec.Body.String())
 	}
 }
 

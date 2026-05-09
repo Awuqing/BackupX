@@ -3,12 +3,14 @@ package service
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
 
 	"backupx/server/internal/apperror"
+	"backupx/server/internal/installscript"
 	"backupx/server/internal/model"
 	"backupx/server/internal/repository"
 )
@@ -40,6 +42,25 @@ type InstallTokenOutput struct {
 	ExpiresAt time.Time
 	Node      *model.Node
 	Record    *model.AgentInstallToken
+}
+
+// InstallCommandInput 生成可展示安装命令所需的完整业务输入。
+type InstallCommandInput struct {
+	InstallTokenInput
+	MasterURL string
+}
+
+// InstallCommandOutput 是 UI 生成安装命令所需的完整业务输出。
+type InstallCommandOutput struct {
+	Token              string
+	ExpiresAt          time.Time
+	Node               *model.Node
+	Record             *model.AgentInstallToken
+	URL                string
+	FallbackURL        string
+	ComposeURL         string
+	FallbackComposeURL string
+	ScriptBase64       string
 }
 
 // ConsumedInstallToken 消费成功后返回给 handler 的组合体。
@@ -106,6 +127,67 @@ func (s *InstallTokenService) Create(ctx context.Context, in InstallTokenInput) 
 	return &InstallTokenOutput{Token: token, ExpiresAt: expiresAt, Node: node, Record: record}, nil
 }
 
+// CreateCommand 创建 install token，并返回 UI 展示安装命令所需的 URL 与嵌入式脚本。
+func (s *InstallTokenService) CreateCommand(ctx context.Context, in InstallCommandInput) (*InstallCommandOutput, error) {
+	masterURL := strings.TrimRight(strings.TrimSpace(in.MasterURL), "/")
+	if masterURL == "" {
+		return nil, apperror.BadRequest("INSTALL_TOKEN_INVALID", "masterURL 必填", nil)
+	}
+	if err := s.validate(in.InstallTokenInput); err != nil {
+		return nil, err
+	}
+	node, err := s.nodeRepo.FindByID(ctx, in.NodeID)
+	if err != nil {
+		return nil, err
+	}
+	if node == nil {
+		return nil, apperror.New(404, "NODE_NOT_FOUND", "节点不存在", nil)
+	}
+	if _, err := renderInstallCommandScript(masterURL, node, &model.AgentInstallToken{
+		Mode:        in.Mode,
+		Arch:        in.Arch,
+		AgentVer:    in.AgentVersion,
+		DownloadSrc: in.DownloadSrc,
+	}); err != nil {
+		return nil, err
+	}
+	out, err := s.Create(ctx, in.InstallTokenInput)
+	if err != nil {
+		return nil, err
+	}
+	script, err := renderInstallCommandScript(masterURL, out.Node, out.Record)
+	if err != nil {
+		return nil, err
+	}
+	result := &InstallCommandOutput{
+		Token:        out.Token,
+		ExpiresAt:    out.ExpiresAt,
+		Node:         out.Node,
+		Record:       out.Record,
+		URL:          masterURL + "/api/install/" + out.Token,
+		FallbackURL:  masterURL + "/install/" + out.Token,
+		ScriptBase64: base64.StdEncoding.EncodeToString([]byte(script)),
+	}
+	if out.Record.Mode == model.InstallModeDocker {
+		result.ComposeURL = masterURL + "/api/install/" + out.Token + "/compose.yml"
+		result.FallbackComposeURL = masterURL + "/install/" + out.Token + "/compose.yml"
+	}
+	return result, nil
+}
+
+func renderInstallCommandScript(masterURL string, node *model.Node, record *model.AgentInstallToken) (string, error) {
+	return installscript.RenderScript(installscript.Context{
+		MasterURL:     masterURL,
+		AgentToken:    node.Token,
+		AgentVersion:  record.AgentVer,
+		Mode:          record.Mode,
+		Arch:          record.Arch,
+		DownloadBase:  installscript.DownloadBaseFor(record.DownloadSrc),
+		InstallPrefix: "/opt/backupx-agent",
+		NodeID:        node.ID,
+	})
+}
+
 // Consume 原子消费令牌。未命中/已过期/已消费均返回 (nil, nil)。
 func (s *InstallTokenService) Consume(ctx context.Context, token string) (*ConsumedInstallToken, error) {
 	if strings.TrimSpace(token) == "" {
@@ -170,12 +252,33 @@ func (s *InstallTokenService) validate(in InstallTokenInput) error {
 	if !validInstallSources[in.DownloadSrc] {
 		return apperror.BadRequest("INSTALL_TOKEN_INVALID", "downloadSrc 非法", nil)
 	}
-	if strings.TrimSpace(in.AgentVersion) == "" {
-		return apperror.BadRequest("INSTALL_TOKEN_INVALID", "agentVersion 必填", nil)
+	if err := validateInstallAgentVersion(in.AgentVersion); err != nil {
+		return err
 	}
 	if in.TTLSeconds < InstallTokenMinTTL || in.TTLSeconds > InstallTokenMaxTTL {
 		return apperror.BadRequest("INSTALL_TOKEN_INVALID",
 			fmt.Sprintf("ttlSeconds 需在 %d-%d", InstallTokenMinTTL, InstallTokenMaxTTL), nil)
+	}
+	return nil
+}
+
+func validateInstallAgentVersion(v string) error {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return apperror.BadRequest("INSTALL_TOKEN_INVALID", "agentVersion 必填", nil)
+	}
+	if len(v) > 64 {
+		return apperror.BadRequest("INSTALL_TOKEN_INVALID", "agentVersion 不能超过 64 字符", nil)
+	}
+	for _, c := range v {
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c == '.' || c == '-' || c == '_' || c == '+':
+		default:
+			return apperror.BadRequest("INSTALL_TOKEN_INVALID", "agentVersion 包含非法字符", nil)
+		}
 	}
 	return nil
 }

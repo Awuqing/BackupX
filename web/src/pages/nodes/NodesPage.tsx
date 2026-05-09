@@ -10,12 +10,21 @@ import type { NodeSummary } from '../../types/nodes'
 import { listNodes, deleteNode, updateNode, rotateNodeToken } from '../../services/nodes'
 import { fetchSystemInfo } from '../../services/system'
 import { AgentInstallWizard } from './AgentInstallWizard'
+import { useAuthStore } from '../../stores/auth'
+import { isAdmin } from '../../utils/permissions'
+import type { UserInfo } from '../../services/auth'
 
 const { Text } = Typography
+
+export function canManageNodes(user: UserInfo | null | undefined): boolean {
+  return isAdmin(user)
+}
 
 export default function NodesPage() {
   const [nodes, setNodes] = useState<NodeSummary[]>([])
   const [loading, setLoading] = useState(false)
+  const currentUser = useAuthStore((state) => state.user)
+  const manageable = canManageNodes(currentUser)
 
   const [wizardVisible, setWizardVisible] = useState(false)
   const [wizardFixedNode, setWizardFixedNode] = useState<{ id: number; name: string } | undefined>()
@@ -143,38 +152,43 @@ export default function NodesPage() {
     },
     {
       title: '操作', width: 180,
-      render: (_: unknown, record: NodeSummary) => (
-        <Space>
-          <Button type="text" icon={<IconEdit />} size="small"
-            onClick={() => {
-              setEditNode(record); setEditName(record.name)
-              setEditLabels(record.labels || '')
-              setEditMaxConcurrent(record.maxConcurrent || 0)
-              setEditBandwidthLimit(record.bandwidthLimit || '')
-              setEditVisible(true)
-            }} />
-          {!record.isLocal && (
-            <>
-              <Dropdown trigger="click" droplist={(
-                <Menu>
-                  <Menu.Item key="install"
-                    onClick={() => { setWizardFixedNode({ id: record.id, name: record.name }); setWizardVisible(true) }}>
-                    生成安装命令
-                  </Menu.Item>
-                  <Menu.Item key="rotate" onClick={() => handleRotate(record)}>
-                    重新生成 Token
-                  </Menu.Item>
-                </Menu>
-              )}>
-                <Button type="text" icon={<IconMore />} size="small" />
-              </Dropdown>
-              <Popconfirm title="确定删除该节点？" onOk={() => handleDelete(record.id)}>
-                <Button type="text" status="danger" icon={<IconDelete />} size="small" />
-              </Popconfirm>
-            </>
-          )}
-        </Space>
-      ),
+      render: (_: unknown, record: NodeSummary) => {
+        if (!manageable) {
+          return <Text type="secondary">-</Text>
+        }
+        return (
+          <Space>
+            <Button type="text" icon={<IconEdit />} size="small"
+              onClick={() => {
+                setEditNode(record); setEditName(record.name)
+                setEditLabels(record.labels || '')
+                setEditMaxConcurrent(record.maxConcurrent || 0)
+                setEditBandwidthLimit(record.bandwidthLimit || '')
+                setEditVisible(true)
+              }} />
+            {!record.isLocal && (
+              <>
+                <Dropdown trigger="click" droplist={(
+                  <Menu>
+                    <Menu.Item key="install"
+                      onClick={() => { setWizardFixedNode({ id: record.id, name: record.name }); setWizardVisible(true) }}>
+                      生成安装命令
+                    </Menu.Item>
+                    <Menu.Item key="rotate" onClick={() => handleRotate(record)}>
+                      重新生成 Token
+                    </Menu.Item>
+                  </Menu>
+                )}>
+                  <Button type="text" icon={<IconMore />} size="small" />
+                </Dropdown>
+                <Popconfirm title="确定删除该节点？" onOk={() => handleDelete(record.id)}>
+                  <Button type="text" status="danger" icon={<IconDelete />} size="small" />
+                </Popconfirm>
+              </>
+            )}
+          </Space>
+        )
+      },
     },
   ]
 
@@ -183,12 +197,12 @@ export default function NodesPage() {
       <PageHeader
         title="节点管理"
         subTitle="管理集群中的服务器节点"
-        extra={
+        extra={manageable ? (
           <Button type="primary" icon={<IconPlus />}
             onClick={() => { setWizardFixedNode(undefined); setWizardVisible(true) }}>
             添加节点
           </Button>
-        }
+        ) : undefined}
       />
 
       <Card style={{ marginTop: 16 }}>

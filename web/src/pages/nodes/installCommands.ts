@@ -12,19 +12,7 @@ function runScriptCommand(path: string) {
   return `if [ "$(id -u)" -eq 0 ]; then sh ${path}; else sudo sh ${path}; fi`
 }
 
-export function buildAgentInstallCommand(url: string, fallbackUrl?: string, scriptBase64?: string) {
-  if (scriptBase64?.trim()) {
-    const marker = shellQuote(INSTALL_MAGIC_MARKER)
-    return [
-      'enc=$(mktemp)',
-      'tmp=$(mktemp)',
-      `printf %s ${shellQuote(scriptBase64.trim())} > "$enc"`,
-      '(base64 -d < "$enc" > "$tmp" 2>/dev/null || base64 -D < "$enc" > "$tmp")',
-      `{ grep -q ${marker} "$tmp" || { echo 'BackupX embedded installer is invalid.' >&2; head -5 "$tmp" >&2; false; }; }`,
-      runScriptCommand('"$tmp"'),
-    ].join(' && ') + '; rc=$?; rm -f "$enc" "$tmp"; test $rc -eq 0'
-  }
-
+export function buildAgentInstallCommand(url: string, fallbackUrl?: string, _scriptBase64?: string) {
   const primary = url.trim()
   const fallback = (fallbackUrl || legacyInstallUrl(primary)).trim()
   const urls = fallback && fallback !== primary ? [primary, fallback] : [primary]
@@ -41,17 +29,7 @@ export function buildAgentInstallCommand(url: string, fallbackUrl?: string, scri
   ].join(' && ') + '; rc=$?; rm -f "$tmp"; test $rc -eq 0'
 }
 
-export function buildAgentDownloadCommand(url: string, fallbackUrl?: string, scriptBase64?: string) {
-  if (scriptBase64?.trim()) {
-    const marker = shellQuote(INSTALL_MAGIC_MARKER)
-    return [
-      `printf %s ${shellQuote(scriptBase64.trim())} > /tmp/bx-agent-install.b64`,
-      '(base64 -d < /tmp/bx-agent-install.b64 > /tmp/bx-agent-install.sh 2>/dev/null || base64 -D < /tmp/bx-agent-install.b64 > /tmp/bx-agent-install.sh)',
-      `{ grep -q ${marker} /tmp/bx-agent-install.sh || { echo 'BackupX embedded installer is invalid.' >&2; head -5 /tmp/bx-agent-install.sh >&2; false; }; }`,
-      runScriptCommand('/tmp/bx-agent-install.sh'),
-    ].join(' && ')
-  }
-
+export function buildAgentDownloadCommand(url: string, fallbackUrl?: string, _scriptBase64?: string) {
   const primary = url.trim()
   const fallback = (fallbackUrl || legacyInstallUrl(primary)).trim()
   const marker = shellQuote(INSTALL_MAGIC_MARKER)
@@ -64,4 +42,16 @@ export function buildAgentDownloadCommand(url: string, fallbackUrl?: string, scr
     `{ grep -q ${marker} /tmp/bx-agent-install.sh || { echo 'BackupX install endpoint returned non-script content; check reverse proxy /api/install or /install forwarding.' >&2; head -5 /tmp/bx-agent-install.sh >&2; false; }; }`,
     runScriptCommand('/tmp/bx-agent-install.sh'),
   ].join(' && ')
+}
+
+export function buildEmbeddedAgentInstallCommand(scriptBase64: string) {
+  const marker = shellQuote(INSTALL_MAGIC_MARKER)
+  return [
+    'enc=$(mktemp)',
+    'tmp=$(mktemp)',
+    `printf %s ${shellQuote(scriptBase64.trim())} > "$enc"`,
+    '(base64 -d < "$enc" > "$tmp" 2>/dev/null || base64 -D < "$enc" > "$tmp")',
+    `{ grep -q ${marker} "$tmp" || { echo 'BackupX embedded installer is invalid.' >&2; head -5 "$tmp" >&2; false; }; }`,
+    runScriptCommand('"$tmp"'),
+  ].join(' && ') + '; rc=$?; rm -f "$enc" "$tmp"; test $rc -eq 0'
 }
