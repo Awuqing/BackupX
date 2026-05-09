@@ -72,9 +72,6 @@ func setupInstallFlowRouterWithExternalURL(t *testing.T, externalURL string) (ht
 	installTokenRepo := repository.NewAgentInstallTokenRepository(db)
 	installTokenSvc := service.NewInstallTokenService(installTokenRepo, nodeRepo)
 
-	auditLogRepo := repository.NewAuditLogRepository(db)
-	auditSvc := service.NewAuditService(auditLogRepo)
-
 	// 用 cancelable ctx，测试结束时停掉 handler 启动的后台 GC 协程，
 	// 避免 goroutine 持有 map 导致 tempdir 清理失败。
 	ctx, cancel := context.WithCancel(context.Background())
@@ -90,7 +87,6 @@ func setupInstallFlowRouterWithExternalURL(t *testing.T, externalURL string) (ht
 		NodeService:         nodeSvc,
 		InstallTokenService: installTokenSvc,
 		MasterExternalURL:   cfg.Server.ExternalURL,
-		AuditService:        auditSvc,
 		JWTManager:          jwtMgr,
 		UserRepository:      userRepo,
 		SystemConfigRepo:    systemConfigRepo,
