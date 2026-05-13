@@ -218,3 +218,44 @@ func TestAgentCommandRepository_ListStaleActiveIncludesPendingAndDispatched(t *t
 		t.Fatalf("unexpected stale active order/items: %#v", items)
 	}
 }
+
+func TestAgentCommandRepository_NodeQueueSummaries(t *testing.T) {
+	db := newTestDB(t)
+	repo := NewAgentCommandRepository(db)
+	ctx := context.Background()
+	old := time.Now().UTC().Add(-20 * time.Minute)
+	recent := time.Now().UTC().Add(-2 * time.Minute)
+	dispatchedAt := time.Now().UTC().Add(-5 * time.Minute)
+	completedAt := time.Now().UTC().Add(-1 * time.Minute)
+	commands := []*model.AgentCommand{
+		{NodeID: 1, Type: model.AgentCommandTypeRunTask, Status: model.AgentCommandStatusPending, CreatedAt: old},
+		{NodeID: 1, Type: model.AgentCommandTypeRestoreRecord, Status: model.AgentCommandStatusPending, CreatedAt: recent},
+		{NodeID: 1, Type: model.AgentCommandTypeRunTask, Status: model.AgentCommandStatusDispatched, DispatchedAt: &dispatchedAt},
+		{NodeID: 1, Type: model.AgentCommandTypeRunTask, Status: model.AgentCommandStatusFailed, ErrorMessage: "boom", CompletedAt: &completedAt},
+		{NodeID: 1, Type: model.AgentCommandTypeRunTask, Status: model.AgentCommandStatusTimeout, ErrorMessage: "late", CompletedAt: &recent},
+		{NodeID: 2, Type: model.AgentCommandTypeRunTask, Status: model.AgentCommandStatusPending, CreatedAt: old},
+	}
+	for _, cmd := range commands {
+		if err := repo.Create(ctx, cmd); err != nil {
+			t.Fatalf("Create returned error: %v", err)
+		}
+	}
+
+	summaries, err := repo.NodeQueueSummaries(ctx)
+	if err != nil {
+		t.Fatalf("NodeQueueSummaries returned error: %v", err)
+	}
+	nodeOne := summaries[1]
+	if nodeOne.Pending != 2 || nodeOne.Dispatched != 1 || nodeOne.Running != 1 || nodeOne.Depth != 3 {
+		t.Fatalf("unexpected node 1 summary: %#v", nodeOne)
+	}
+	if nodeOne.Timeouts != 1 || nodeOne.LastError != "boom" {
+		t.Fatalf("expected terminal timeout and latest error in summary, got %#v", nodeOne)
+	}
+	if nodeOne.OldestActiveAt == nil || !nodeOne.OldestActiveAt.Equal(old) {
+		t.Fatalf("expected oldest active at %s, got %#v", old, nodeOne.OldestActiveAt)
+	}
+	if nodeTwo := summaries[2]; nodeTwo.Pending != 1 || nodeTwo.Depth != 1 || nodeTwo.Timeouts != 0 || nodeTwo.LastError != "" {
+		t.Fatalf("unexpected node 2 summary: %#v", nodeTwo)
+	}
+}

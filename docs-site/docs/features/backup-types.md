@@ -8,6 +8,8 @@ description: File, MySQL, PostgreSQL, SQLite and SAP HANA — what they back up 
 
 BackupX supports five built-in backup types. Type determines which runner executes the job.
 
+When a task is routed to a remote Agent, the source tools and paths are resolved on that Agent host. Multi-target uploads are still tracked per storage target; if at least one target succeeds, the backup record is marked successful and the per-target result table shows partial failures.
+
 ## File / Directory
 
 Tars (and optionally gzips) one or more filesystem paths.

@@ -41,9 +41,11 @@ func TestObserveTaskRun_NilReceiverIsSafe(t *testing.T) {
 	m.DecTaskRunning()
 	m.SetStorageUsed("a", "s3", 1)
 	m.SetNodeOnline("n1", "master", true)
+	m.SetAgentQueue("n1", "agent", 2, 1, 3)
 	m.SetSLABreach(3)
 	m.ResetNodeOnline()
 	m.ResetStorageUsed()
+	m.ResetAgentQueue()
 	// no panic -> pass
 }
 
@@ -51,6 +53,7 @@ func TestHandler_ExposesBackupxMetrics(t *testing.T) {
 	m := New("0.0.0-test")
 	m.ObserveTaskRun("file", "success", 1.0, 2048)
 	m.SetNodeOnline("n1", "master", true)
+	m.SetAgentQueue("edge-a", "agent", 3, 1, 2)
 	m.SetSLABreach(1)
 
 	recorder := httptest.NewRecorder()
@@ -66,6 +69,9 @@ func TestHandler_ExposesBackupxMetrics(t *testing.T) {
 		"backupx_task_run_total",
 		"backupx_task_run_duration_seconds",
 		"backupx_node_online",
+		"backupx_agent_command_queue_depth",
+		"backupx_agent_command_running",
+		"backupx_agent_command_timeout_total",
 		"backupx_sla_breach_tasks",
 		"backupx_app_info",
 	} {

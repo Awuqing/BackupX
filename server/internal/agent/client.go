@@ -143,13 +143,24 @@ func (c *MasterClient) GetTaskSpec(ctx context.Context, taskID uint) (*TaskSpec,
 
 // RecordUpdate 与 service.AgentRecordUpdate 对齐
 type RecordUpdate struct {
-	Status       string `json:"status,omitempty"`
-	FileName     string `json:"fileName,omitempty"`
-	FileSize     int64  `json:"fileSize,omitempty"`
-	Checksum     string `json:"checksum,omitempty"`
-	StoragePath  string `json:"storagePath,omitempty"`
-	ErrorMessage string `json:"errorMessage,omitempty"`
-	LogAppend    string `json:"logAppend,omitempty"`
+	Status               string              `json:"status,omitempty"`
+	FileName             string              `json:"fileName,omitempty"`
+	FileSize             int64               `json:"fileSize,omitempty"`
+	Checksum             string              `json:"checksum,omitempty"`
+	StoragePath          string              `json:"storagePath,omitempty"`
+	StorageTargetID      uint                `json:"storageTargetId,omitempty"`
+	StorageUploadResults []StorageResultItem `json:"storageUploadResults,omitempty"`
+	ErrorMessage         string              `json:"errorMessage,omitempty"`
+	LogAppend            string              `json:"logAppend,omitempty"`
+}
+
+type StorageResultItem struct {
+	StorageTargetID   uint   `json:"storageTargetId"`
+	StorageTargetName string `json:"storageTargetName"`
+	Status            string `json:"status"`
+	StoragePath       string `json:"storagePath,omitempty"`
+	FileSize          int64  `json:"fileSize,omitempty"`
+	Error             string `json:"error,omitempty"`
 }
 
 // UpdateRecord 上报备份记录的状态/日志

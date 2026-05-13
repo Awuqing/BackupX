@@ -35,6 +35,28 @@ type AgentCommandRepository interface {
 	// ListPendingByNode 列出某节点下的所有 pending/dispatched 命令。
 	// 用于删除节点或节点离线时的清理。
 	ListPendingByNode(ctx context.Context, nodeID uint) ([]model.AgentCommand, error)
+	NodeQueueSummaries(ctx context.Context) (map[uint]AgentCommandQueueSummary, error)
+}
+
+type AgentCommandQueueSummary struct {
+	NodeID         uint       `json:"nodeId"`
+	Pending        int        `json:"pending"`
+	Dispatched     int        `json:"dispatched"`
+	Running        int        `json:"running"`
+	Depth          int        `json:"depth"`
+	Timeouts       int        `json:"timeouts"`
+	LastError      string     `json:"lastError,omitempty"`
+	OldestActiveAt *time.Time `json:"oldestActiveAt,omitempty"`
+}
+
+type agentCommandTimeoutCount struct {
+	NodeID uint
+	Count  int
+}
+
+type agentCommandLastError struct {
+	NodeID       uint
+	ErrorMessage string
 }
 
 type GormAgentCommandRepository struct {
@@ -185,4 +207,115 @@ func (r *GormAgentCommandRepository) ListPendingByNode(ctx context.Context, node
 		return nil, err
 	}
 	return items, nil
+}
+
+func (r *GormAgentCommandRepository) NodeQueueSummaries(ctx context.Context) (map[uint]AgentCommandQueueSummary, error) {
+	summaries, err := r.activeQueueSummaries(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.applyTerminalQueueStats(ctx, summaries); err != nil {
+		return nil, err
+	}
+	return summaries, nil
+}
+
+func (r *GormAgentCommandRepository) activeQueueSummaries(ctx context.Context) (map[uint]AgentCommandQueueSummary, error) {
+	var items []model.AgentCommand
+	if err := r.db.WithContext(ctx).
+		Where("status IN ?", []string{
+			model.AgentCommandStatusPending,
+			model.AgentCommandStatusDispatched,
+		}).
+		Order("node_id asc, id asc").
+		Find(&items).Error; err != nil {
+		return nil, err
+	}
+	summaries := make(map[uint]AgentCommandQueueSummary)
+	for i := range items {
+		cmd := &items[i]
+		summary := summaries[cmd.NodeID]
+		summary.NodeID = cmd.NodeID
+		switch cmd.Status {
+		case model.AgentCommandStatusPending:
+			summary.Pending++
+			summary.Depth++
+			summary.OldestActiveAt = oldestTime(summary.OldestActiveAt, &cmd.CreatedAt)
+		case model.AgentCommandStatusDispatched:
+			summary.Dispatched++
+			summary.Depth++
+			if isLongRunningAgentCommand(cmd.Type) {
+				summary.Running++
+			}
+			summary.OldestActiveAt = oldestTime(summary.OldestActiveAt, cmd.DispatchedAt)
+		}
+		summaries[cmd.NodeID] = summary
+	}
+	return summaries, nil
+}
+
+func (r *GormAgentCommandRepository) applyTerminalQueueStats(ctx context.Context, summaries map[uint]AgentCommandQueueSummary) error {
+	var timeoutCounts []agentCommandTimeoutCount
+	if err := r.db.WithContext(ctx).
+		Model(&model.AgentCommand{}).
+		Select("node_id, COUNT(*) AS count").
+		Where("status = ?", model.AgentCommandStatusTimeout).
+		Group("node_id").
+		Scan(&timeoutCounts).Error; err != nil {
+		return err
+	}
+	for _, item := range timeoutCounts {
+		summary := summaries[item.NodeID]
+		summary.NodeID = item.NodeID
+		summary.Timeouts = item.Count
+		summaries[item.NodeID] = summary
+	}
+
+	terminalStatuses := []string{
+		model.AgentCommandStatusFailed,
+		model.AgentCommandStatusTimeout,
+	}
+	latestByNode := r.db.WithContext(ctx).
+		Model(&model.AgentCommand{}).
+		Select("node_id, MAX(COALESCE(completed_at, updated_at, created_at)) AS last_error_at").
+		Where("status IN ? AND error_message <> ''", terminalStatuses).
+		Group("node_id")
+
+	var lastErrors []agentCommandLastError
+	if err := r.db.WithContext(ctx).
+		Table("agent_commands AS cmd").
+		Select("cmd.node_id, cmd.error_message").
+		Joins("JOIN (?) latest ON latest.node_id = cmd.node_id AND latest.last_error_at = COALESCE(cmd.completed_at, cmd.updated_at, cmd.created_at)", latestByNode).
+		Where("cmd.status IN ? AND cmd.error_message <> ''", terminalStatuses).
+		Order("cmd.node_id asc, cmd.id desc").
+		Scan(&lastErrors).Error; err != nil {
+		return err
+	}
+	seenLastError := make(map[uint]struct{}, len(lastErrors))
+	for _, item := range lastErrors {
+		if _, ok := seenLastError[item.NodeID]; ok {
+			continue
+		}
+		summary := summaries[item.NodeID]
+		summary.NodeID = item.NodeID
+		summary.LastError = item.ErrorMessage
+		summaries[item.NodeID] = summary
+		seenLastError[item.NodeID] = struct{}{}
+	}
+	return nil
+}
+
+func oldestTime(current *time.Time, candidate *time.Time) *time.Time {
+	if candidate == nil {
+		return current
+	}
+	if current == nil || candidate.Before(*current) {
+		value := *candidate
+		return &value
+	}
+	return current
+}
+
+func isLongRunningAgentCommand(commandType string) bool {
+	return commandType == model.AgentCommandTypeRunTask || commandType == model.AgentCommandTypeRestoreRecord
 }

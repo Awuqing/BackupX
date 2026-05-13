@@ -33,16 +33,16 @@ type BackupTaskUpsertInput struct {
 	DBPassword       string   `json:"dbPassword" binding:"max=255"`
 	DBName           string   `json:"dbName" binding:"max=255"`
 	DBPath           string   `json:"dbPath" binding:"max=500"`
-	StorageTargetID  uint     `json:"storageTargetId"`                       // deprecated: 向后兼容
-	StorageTargetIDs []uint   `json:"storageTargetIds"`                      // 新增：多存储目标
-	NodeID           uint     `json:"nodeId"`                                // 执行节点（0 = 本机 Master 或节点池）
+	StorageTargetID  uint     `json:"storageTargetId"`  // deprecated: 向后兼容
+	StorageTargetIDs []uint   `json:"storageTargetIds"` // 新增：多存储目标
+	NodeID           uint     `json:"nodeId"`           // 执行节点（0 = 本机 Master 或节点池）
 	// NodePoolTag 节点池标签。NodeID=0 且本字段非空时，调度器动态从 Labels 命中的在线节点中选负载最低者。
-	NodePoolTag      string   `json:"nodePoolTag" binding:"max=64"`
-	Tags             string   `json:"tags" binding:"max=500"`                // 逗号分隔标签
-	RetentionDays    int      `json:"retentionDays"`
-	Compression      string   `json:"compression" binding:"omitempty,oneof=gzip none"`
-	Encrypt          bool     `json:"encrypt"`
-	MaxBackups       int      `json:"maxBackups"`
+	NodePoolTag   string `json:"nodePoolTag" binding:"max=64"`
+	Tags          string `json:"tags" binding:"max=500"` // 逗号分隔标签
+	RetentionDays int    `json:"retentionDays"`
+	Compression   string `json:"compression" binding:"omitempty,oneof=gzip none"`
+	Encrypt       bool   `json:"encrypt"`
+	MaxBackups    int    `json:"maxBackups"`
 	// ExtraConfig 类型特有扩展配置（如 SAP HANA 的 backupLevel/backupChannels）
 	ExtraConfig map[string]any `json:"extraConfig"`
 	// 验证（恢复演练）配置
@@ -70,8 +70,8 @@ type BackupTaskSummary struct {
 	Type               string     `json:"type"`
 	Enabled            bool       `json:"enabled"`
 	CronExpr           string     `json:"cronExpr"`
-	StorageTargetID    uint       `json:"storageTargetId"`              // deprecated: 取第一个
-	StorageTargetName  string     `json:"storageTargetName"`            // deprecated: 取第一个
+	StorageTargetID    uint       `json:"storageTargetId"`   // deprecated: 取第一个
+	StorageTargetName  string     `json:"storageTargetName"` // deprecated: 取第一个
 	StorageTargetIDs   []uint     `json:"storageTargetIds"`
 	StorageTargetNames []string   `json:"storageTargetNames"`
 	NodeID             uint       `json:"nodeId"`
@@ -91,10 +91,10 @@ type BackupTaskSummary struct {
 	SLAHoursRPO             int    `json:"slaHoursRpo"`
 	AlertOnConsecutiveFails int    `json:"alertOnConsecutiveFails"`
 	// 备份复制目标（3-2-1）
-	ReplicationTargetIDs []uint `json:"replicationTargetIds"`
-	MaintenanceWindows   string `json:"maintenanceWindows"`
-	DependsOnTaskIDs     []uint `json:"dependsOnTaskIds"`
-	UpdatedAt          time.Time  `json:"updatedAt"`
+	ReplicationTargetIDs []uint    `json:"replicationTargetIds"`
+	MaintenanceWindows   string    `json:"maintenanceWindows"`
+	DependsOnTaskIDs     []uint    `json:"dependsOnTaskIds"`
+	UpdatedAt            time.Time `json:"updatedAt"`
 }
 
 type BackupTaskDetail struct {
@@ -488,6 +488,7 @@ func (s *BackupTaskService) validateInput(ctx context.Context, existing *model.B
 			return apperror.BadRequest("BACKUP_STORAGE_TARGET_INVALID", fmt.Sprintf("关联的存储目标 %d 不存在", tid), nil)
 		}
 	}
+	var fixedNode *model.Node
 	if input.NodeID > 0 && s.nodes != nil {
 		node, err := s.nodes.FindByID(ctx, input.NodeID)
 		if err != nil {
@@ -496,11 +497,16 @@ func (s *BackupTaskService) validateInput(ctx context.Context, existing *model.B
 		if node == nil {
 			return apperror.BadRequest("BACKUP_TASK_INVALID", "所选执行节点不存在", nil)
 		}
+		fixedNode = node
 	}
 	// 节点池与固定节点互斥：固定节点已确定执行位置，不再动态调度
 	if input.NodeID > 0 && strings.TrimSpace(input.NodePoolTag) != "" {
 		return apperror.BadRequest("BACKUP_TASK_INVALID",
 			"固定执行节点与节点池标签只能选其一", nil)
+	}
+	if input.Encrypt && (strings.TrimSpace(input.NodePoolTag) != "" || (fixedNode != nil && !fixedNode.IsLocal)) {
+		return apperror.BadRequest("BACKUP_TASK_REMOTE_ENCRYPT_UNSUPPORTED",
+			"远程节点暂不支持加密备份。请关闭加密，或将任务固定在 Master 本机执行。", nil)
 	}
 	if input.RetentionDays < 0 {
 		return apperror.BadRequest("BACKUP_TASK_INVALID", "保留天数不能小于 0", nil)
@@ -639,38 +645,38 @@ func (s *BackupTaskService) buildTask(existing *model.BackupTask, input BackupTa
 		return nil, apperror.BadRequest("BACKUP_TASK_INVALID", "扩展配置格式不合法", err)
 	}
 	item := &model.BackupTask{
-		Name:                 strings.TrimSpace(input.Name),
-		Type:                 normalizeBackupTaskType(input.Type),
-		Enabled:              input.Enabled,
-		CronExpr:             strings.TrimSpace(input.CronExpr),
-		SourcePath:           primarySourcePath,
-		SourcePaths:          sourcePathsJSON,
-		ExcludePatterns:      excludePatterns,
-		DBHost:               strings.TrimSpace(input.DBHost),
-		DBPort:               input.DBPort,
-		DBUser:               strings.TrimSpace(input.DBUser),
-		DBPasswordCiphertext: passwordCiphertext,
-		DBName:               strings.TrimSpace(input.DBName),
-		DBPath:               strings.TrimSpace(input.DBPath),
-		ExtraConfig:          extraConfigJSON,
-		StorageTargetID:      primaryTargetID,
-		StorageTargets:       storageTargets,
-		NodeID:               input.NodeID,
-		NodePoolTag:          strings.TrimSpace(input.NodePoolTag),
-		Tags:                 strings.TrimSpace(input.Tags),
-		RetentionDays:        input.RetentionDays,
-		Compression:          compression,
-		Encrypt:              input.Encrypt,
-		MaxBackups:           maxBackups,
-		LastStatus:           "idle",
-		VerifyEnabled:        input.VerifyEnabled,
-		VerifyCronExpr:       strings.TrimSpace(input.VerifyCronExpr),
-		VerifyMode:           normalizeVerifyMode(input.VerifyMode),
-		SLAHoursRPO:          maxInt(0, input.SLAHoursRPO),
+		Name:                    strings.TrimSpace(input.Name),
+		Type:                    normalizeBackupTaskType(input.Type),
+		Enabled:                 input.Enabled,
+		CronExpr:                strings.TrimSpace(input.CronExpr),
+		SourcePath:              primarySourcePath,
+		SourcePaths:             sourcePathsJSON,
+		ExcludePatterns:         excludePatterns,
+		DBHost:                  strings.TrimSpace(input.DBHost),
+		DBPort:                  input.DBPort,
+		DBUser:                  strings.TrimSpace(input.DBUser),
+		DBPasswordCiphertext:    passwordCiphertext,
+		DBName:                  strings.TrimSpace(input.DBName),
+		DBPath:                  strings.TrimSpace(input.DBPath),
+		ExtraConfig:             extraConfigJSON,
+		StorageTargetID:         primaryTargetID,
+		StorageTargets:          storageTargets,
+		NodeID:                  input.NodeID,
+		NodePoolTag:             strings.TrimSpace(input.NodePoolTag),
+		Tags:                    strings.TrimSpace(input.Tags),
+		RetentionDays:           input.RetentionDays,
+		Compression:             compression,
+		Encrypt:                 input.Encrypt,
+		MaxBackups:              maxBackups,
+		LastStatus:              "idle",
+		VerifyEnabled:           input.VerifyEnabled,
+		VerifyCronExpr:          strings.TrimSpace(input.VerifyCronExpr),
+		VerifyMode:              normalizeVerifyMode(input.VerifyMode),
+		SLAHoursRPO:             maxInt(0, input.SLAHoursRPO),
 		AlertOnConsecutiveFails: alertThreshold(input.AlertOnConsecutiveFails),
-		ReplicationTargetIDs: encodeUintCSV(input.ReplicationTargetIDs),
-		MaintenanceWindows:   strings.TrimSpace(input.MaintenanceWindows),
-		DependsOnTaskIDs:     encodeUintCSV(input.DependsOnTaskIDs),
+		ReplicationTargetIDs:    encodeUintCSV(input.ReplicationTargetIDs),
+		MaintenanceWindows:      strings.TrimSpace(input.MaintenanceWindows),
+		DependsOnTaskIDs:        encodeUintCSV(input.DependsOnTaskIDs),
 	}
 	if existing != nil {
 		item.LastRunAt = existing.LastRunAt
@@ -736,25 +742,25 @@ func toBackupTaskSummary(item *model.BackupTask) BackupTaskSummary {
 		primaryName = targetNames[0]
 	}
 	return BackupTaskSummary{
-		ID:                 item.ID,
-		Name:               item.Name,
-		Type:               normalizeBackupTaskType(item.Type),
-		Enabled:            item.Enabled,
-		CronExpr:           item.CronExpr,
-		StorageTargetID:    primaryID,
-		StorageTargetName:  primaryName,
-		StorageTargetIDs:   targetIDs,
-		StorageTargetNames: targetNames,
-		NodeID:             item.NodeID,
-		NodeName:           item.Node.Name,
-		NodePoolTag:        item.NodePoolTag,
-		Tags:               item.Tags,
-		RetentionDays:      item.RetentionDays,
-		Compression:        item.Compression,
-		Encrypt:            item.Encrypt,
-		MaxBackups:         item.MaxBackups,
-		LastRunAt:          item.LastRunAt,
-		LastStatus:         item.LastStatus,
+		ID:                      item.ID,
+		Name:                    item.Name,
+		Type:                    normalizeBackupTaskType(item.Type),
+		Enabled:                 item.Enabled,
+		CronExpr:                item.CronExpr,
+		StorageTargetID:         primaryID,
+		StorageTargetName:       primaryName,
+		StorageTargetIDs:        targetIDs,
+		StorageTargetNames:      targetNames,
+		NodeID:                  item.NodeID,
+		NodeName:                item.Node.Name,
+		NodePoolTag:             item.NodePoolTag,
+		Tags:                    item.Tags,
+		RetentionDays:           item.RetentionDays,
+		Compression:             item.Compression,
+		Encrypt:                 item.Encrypt,
+		MaxBackups:              item.MaxBackups,
+		LastRunAt:               item.LastRunAt,
+		LastStatus:              item.LastStatus,
 		VerifyEnabled:           item.VerifyEnabled,
 		VerifyCronExpr:          item.VerifyCronExpr,
 		VerifyMode:              item.VerifyMode,
@@ -763,7 +769,7 @@ func toBackupTaskSummary(item *model.BackupTask) BackupTaskSummary {
 		ReplicationTargetIDs:    parseUintCSV(item.ReplicationTargetIDs),
 		MaintenanceWindows:      item.MaintenanceWindows,
 		DependsOnTaskIDs:        parseUintCSV(item.DependsOnTaskIDs),
-		UpdatedAt:          item.UpdatedAt,
+		UpdatedAt:               item.UpdatedAt,
 	}
 }
 

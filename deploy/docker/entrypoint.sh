@@ -1,6 +1,10 @@
 #!/bin/sh
 set -e
 
+if [ "${1:-}" = "agent" ]; then
+    exec /app/bin/backupx "$@"
+fi
+
 # Backend listens on internal port 8341, Nginx exposes 8340
 export BACKUPX_SERVER_PORT="${BACKUPX_SERVER_PORT_INTERNAL:-8341}"
 

@@ -2,11 +2,13 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,9 +42,11 @@ func (f *testStorageFactory) New(_ context.Context, config map[string]any) (stor
 }
 
 type testStorageProvider struct {
-	name       string
-	failUpload bool
-	objects    map[string][]byte
+	name        string
+	failUpload  bool
+	blockUpload <-chan struct{}
+	onUpload    func()
+	objects     map[string][]byte
 }
 
 func (p *testStorageProvider) Type() storage.ProviderType { return "test_storage" }
@@ -50,6 +54,12 @@ func (p *testStorageProvider) TestConnection(context.Context) error {
 	return nil
 }
 func (p *testStorageProvider) Upload(_ context.Context, objectKey string, reader io.Reader, _ int64, _ map[string]string) error {
+	if p.blockUpload != nil {
+		<-p.blockUpload
+	}
+	if p.onUpload != nil {
+		p.onUpload()
+	}
 	if p.failUpload {
 		return fmt.Errorf("upload failed for %s", p.name)
 	}
@@ -190,6 +200,39 @@ func TestBackupExecutionServiceNodePoolSelectionDoesNotPersistTaskNodeID(t *test
 	calls := dispatcher.snapshot()
 	if len(calls) != 1 || calls[0].NodeID != 10 || calls[0].CmdType != model.AgentCommandTypeRunTask {
 		t.Fatalf("unexpected dispatcher calls: %#v", calls)
+	}
+}
+
+func TestBackupExecutionServiceRejectsDuplicateRunningTask(t *testing.T) {
+	executionService, _, tasks, _, records, _, _ := newExecutionTestServices(t)
+	ctx := context.Background()
+
+	task, err := tasks.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID task returned error: %v", err)
+	}
+	startedAt := time.Now().UTC()
+	running := &model.BackupRecord{
+		TaskID:          task.ID,
+		StorageTargetID: task.StorageTargetID,
+		NodeID:          0,
+		Status:          model.BackupRecordStatusRunning,
+		StartedAt:       startedAt,
+	}
+	if err := records.Create(ctx, running); err != nil {
+		t.Fatalf("Create running record returned error: %v", err)
+	}
+
+	_, err = executionService.RunTaskByIDSync(ctx, task.ID)
+	if err == nil || !strings.Contains(err.Error(), "正在运行") {
+		t.Fatalf("expected duplicate running task to be rejected, got %v", err)
+	}
+	items, err := records.List(ctx, repository.BackupRecordListOptions{Status: model.BackupRecordStatusRunning})
+	if err != nil {
+		t.Fatalf("List running records returned error: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != running.ID {
+		t.Fatalf("expected only the original running record, got %#v", items)
 	}
 }
 
@@ -334,6 +377,155 @@ func TestBackupExecutionServiceRecordsFirstSuccessfulStorageTarget(t *testing.T)
 	}
 }
 
+func TestBackupExecutionServiceUploadRetryStopsWhenContextCancelled(t *testing.T) {
+	executionService, _, tasks, targets, records, _, _ := newExecutionTestServices(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	var cancelOnce sync.Once
+	failing := &testStorageProvider{
+		name:       "failing",
+		failUpload: true,
+		onUpload: func() {
+			cancelOnce.Do(cancel)
+		},
+	}
+	executionService.storageRegistry = storage.NewRegistry(&testStorageFactory{providers: map[string]*testStorageProvider{
+		"failing": failing,
+	}})
+	cipher := codec.NewConfigCipher("execution-secret")
+	failingConfig, err := cipher.EncryptJSON(map[string]any{"name": "failing"})
+	if err != nil {
+		t.Fatalf("EncryptJSON returned error: %v", err)
+	}
+	if err := targets.Update(ctx, &model.StorageTarget{
+		ID:               1,
+		Name:             "local",
+		Type:             "test_storage",
+		Enabled:          true,
+		ConfigCiphertext: failingConfig,
+		ConfigVersion:    1,
+		LastTestStatus:   "unknown",
+	}); err != nil {
+		t.Fatalf("Update target returned error: %v", err)
+	}
+	task, err := tasks.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID task returned error: %v", err)
+	}
+	startedAt := time.Now().UTC()
+	record := &model.BackupRecord{
+		TaskID:          task.ID,
+		StorageTargetID: task.StorageTargetID,
+		Status:          model.BackupRecordStatusRunning,
+		StartedAt:       startedAt,
+	}
+	if err := records.Create(ctx, record); err != nil {
+		t.Fatalf("Create record returned error: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		executionService.executeTask(ctx, task, record.ID, startedAt)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected cancelled upload retry to stop without waiting for backoff sleep")
+	}
+}
+
+func TestBackupExecutionServiceReadsStorageUsageOnceForMultiTargetQuotaChecks(t *testing.T) {
+	executionService, _, tasks, targets, records, _, _ := newExecutionTestServices(t)
+	ctx := context.Background()
+	first := &testStorageProvider{name: "first", objects: map[string][]byte{}}
+	second := &testStorageProvider{name: "second", objects: map[string][]byte{}}
+	executionService.storageRegistry = storage.NewRegistry(&testStorageFactory{providers: map[string]*testStorageProvider{
+		"first":  first,
+		"second": second,
+	}})
+	cipher := codec.NewConfigCipher("execution-secret")
+	firstConfig, err := cipher.EncryptJSON(map[string]any{"name": "first"})
+	if err != nil {
+		t.Fatalf("EncryptJSON first returned error: %v", err)
+	}
+	secondConfig, err := cipher.EncryptJSON(map[string]any{"name": "second"})
+	if err != nil {
+		t.Fatalf("EncryptJSON second returned error: %v", err)
+	}
+	if err := targets.Update(ctx, &model.StorageTarget{ID: 1, Name: "local", Type: "test_storage", Enabled: true, ConfigCiphertext: firstConfig, ConfigVersion: 1, LastTestStatus: "unknown", QuotaBytes: 1 << 30}); err != nil {
+		t.Fatalf("Update first target returned error: %v", err)
+	}
+	if err := targets.Create(ctx, &model.StorageTarget{Name: "second", Type: "test_storage", Enabled: true, ConfigCiphertext: secondConfig, ConfigVersion: 1, LastTestStatus: "unknown", QuotaBytes: 1 << 30}); err != nil {
+		t.Fatalf("Create second target returned error: %v", err)
+	}
+	task, err := tasks.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID task returned error: %v", err)
+	}
+	task.StorageTargets = []model.StorageTarget{{ID: 1}, {ID: 2}}
+	if err := tasks.Update(ctx, task); err != nil {
+		t.Fatalf("Update task returned error: %v", err)
+	}
+	executionService.records = &storageUsageCountingRecordRepo{BackupRecordRepository: records}
+
+	detail, err := executionService.RunTaskByIDSync(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("RunTaskByIDSync returned error: %v", err)
+	}
+	if detail.Status != model.BackupRecordStatusSuccess {
+		t.Fatalf("expected success, got %#v", detail)
+	}
+	countingRepo := executionService.records.(*storageUsageCountingRecordRepo)
+	if countingRepo.usageCalls != 1 {
+		t.Fatalf("expected StorageUsage to be called once for quota snapshot, got %d", countingRepo.usageCalls)
+	}
+	if len(first.objects) != 1 || len(second.objects) != 1 {
+		t.Fatalf("expected both targets to receive upload, got first=%d second=%d", len(first.objects), len(second.objects))
+	}
+}
+
+func TestBackupExecutionServiceContinuesWhenStorageUsageSnapshotFails(t *testing.T) {
+	executionService, _, _, targets, records, _, _ := newExecutionTestServices(t)
+	ctx := context.Background()
+	provider := &testStorageProvider{name: "primary", objects: map[string][]byte{}}
+	executionService.storageRegistry = storage.NewRegistry(&testStorageFactory{providers: map[string]*testStorageProvider{
+		"primary": provider,
+	}})
+	cipher := codec.NewConfigCipher("execution-secret")
+	configCiphertext, err := cipher.EncryptJSON(map[string]any{"name": "primary"})
+	if err != nil {
+		t.Fatalf("EncryptJSON returned error: %v", err)
+	}
+	if err := targets.Update(ctx, &model.StorageTarget{
+		ID:               1,
+		Name:             "local",
+		Type:             "test_storage",
+		Enabled:          true,
+		ConfigCiphertext: configCiphertext,
+		ConfigVersion:    1,
+		LastTestStatus:   "unknown",
+		QuotaBytes:       1 << 30,
+	}); err != nil {
+		t.Fatalf("Update target returned error: %v", err)
+	}
+	executionService.records = &storageUsageFailingRecordRepo{
+		BackupRecordRepository: records,
+		err:                    errStorageUsageFailed,
+	}
+
+	detail, err := executionService.RunTaskByIDSync(ctx, 1)
+	if err != nil {
+		t.Fatalf("RunTaskByIDSync returned error: %v", err)
+	}
+	if detail.Status != model.BackupRecordStatusSuccess {
+		t.Fatalf("expected success despite soft quota usage snapshot error, got %#v", detail)
+	}
+	if len(provider.objects) != 1 {
+		t.Fatalf("expected upload to proceed, got %d uploaded objects", len(provider.objects))
+	}
+}
+
 func TestBackupRecordServiceRestore(t *testing.T) {
 	executionService, recordService, _, _, _, sourceDir, _ := newExecutionTestServices(t)
 	detail, err := executionService.RunTaskByIDSync(context.Background(), 1)
@@ -354,3 +546,27 @@ func TestBackupRecordServiceRestore(t *testing.T) {
 		t.Fatalf("unexpected restored content: %s", string(content))
 	}
 }
+
+type storageUsageCountingRecordRepo struct {
+	repository.BackupRecordRepository
+	mu         sync.Mutex
+	usageCalls int
+}
+
+func (r *storageUsageCountingRecordRepo) StorageUsage(ctx context.Context) ([]repository.BackupStorageUsageItem, error) {
+	r.mu.Lock()
+	r.usageCalls++
+	r.mu.Unlock()
+	return r.BackupRecordRepository.StorageUsage(ctx)
+}
+
+type storageUsageFailingRecordRepo struct {
+	repository.BackupRecordRepository
+	err error
+}
+
+func (r *storageUsageFailingRecordRepo) StorageUsage(context.Context) ([]repository.BackupStorageUsageItem, error) {
+	return nil, r.err
+}
+
+var errStorageUsageFailed = errors.New("storage usage failed")

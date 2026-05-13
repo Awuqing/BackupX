@@ -36,6 +36,19 @@ type NodeSummary struct {
 	BandwidthLimit string    `json:"bandwidthLimit"`
 	Labels         string    `json:"labels"`
 	CreatedAt      time.Time `json:"createdAt"`
+	Queue          NodeQueue `json:"queue"`
+	RunningTasks   int       `json:"runningTasks"`
+	LastError      string    `json:"lastError,omitempty"`
+	Health         string    `json:"health"`
+}
+
+type NodeQueue struct {
+	Pending          int        `json:"pending"`
+	Dispatched       int        `json:"dispatched"`
+	Depth            int        `json:"depth"`
+	Timeouts         int        `json:"timeouts"`
+	OldestActiveAt   *time.Time `json:"oldestActiveAt,omitempty"`
+	OldestActiveAgeS int        `json:"oldestActiveAgeSeconds"`
 }
 
 // NodeCreateInput is the input for creating a new remote node.
@@ -54,10 +67,11 @@ type NodeUpdateInput struct {
 
 // NodeService manages the cluster nodes.
 type NodeService struct {
-	repo      repository.NodeRepository
-	taskRepo  repository.BackupTaskRepository
-	agentRPC  NodeAgentRPC
-	version   string
+	repo     repository.NodeRepository
+	taskRepo repository.BackupTaskRepository
+	agentRPC NodeAgentRPC
+	cmdRepo  repository.AgentCommandRepository
+	version  string
 }
 
 // NodeAgentRPC 抽象 Agent 远程调用能力（避免 service 内循环依赖）。
@@ -79,6 +93,10 @@ func (s *NodeService) SetTaskRepository(taskRepo repository.BackupTaskRepository
 // SetAgentRPC 注入 Agent RPC 能力，启用远程目录浏览。
 func (s *NodeService) SetAgentRPC(rpc NodeAgentRPC) {
 	s.agentRPC = rpc
+}
+
+func (s *NodeService) SetAgentCommandRepository(cmdRepo repository.AgentCommandRepository) {
+	s.cmdRepo = cmdRepo
 }
 
 // EnsureLocalNode creates the default "local" node if it does not exist.
@@ -120,24 +138,10 @@ func (s *NodeService) List(ctx context.Context) ([]NodeSummary, error) {
 	if err != nil {
 		return nil, err
 	}
+	queueByNode := s.loadQueueSummaries(ctx)
 	result := make([]NodeSummary, len(nodes))
 	for i, n := range nodes {
-		result[i] = NodeSummary{
-			ID:             n.ID,
-			Name:           n.Name,
-			Hostname:       n.Hostname,
-			IPAddress:      n.IPAddress,
-			Status:         n.Status,
-			IsLocal:        n.IsLocal,
-			OS:             n.OS,
-			Arch:           n.Arch,
-			AgentVersion:   n.AgentVer,
-			LastSeen:       n.LastSeen,
-			MaxConcurrent:  n.MaxConcurrent,
-			BandwidthLimit: n.BandwidthLimit,
-			Labels:         n.Labels,
-			CreatedAt:      n.CreatedAt,
-		}
+		result[i] = s.toNodeSummary(&n, queueByNode[n.ID])
 	}
 	return result, nil
 }
@@ -150,7 +154,24 @@ func (s *NodeService) Get(ctx context.Context, id uint) (*NodeSummary, error) {
 	if node == nil {
 		return nil, apperror.New(http.StatusNotFound, "NODE_NOT_FOUND", "节点不存在", nil)
 	}
-	return &NodeSummary{
+	queueByNode := s.loadQueueSummaries(ctx)
+	summary := s.toNodeSummary(node, queueByNode[node.ID])
+	return &summary, nil
+}
+
+func (s *NodeService) loadQueueSummaries(ctx context.Context) map[uint]repository.AgentCommandQueueSummary {
+	if s.cmdRepo == nil {
+		return nil
+	}
+	summaries, err := s.cmdRepo.NodeQueueSummaries(ctx)
+	if err != nil {
+		return nil
+	}
+	return summaries
+}
+
+func (s *NodeService) toNodeSummary(node *model.Node, queue repository.AgentCommandQueueSummary) NodeSummary {
+	summary := NodeSummary{
 		ID:             node.ID,
 		Name:           node.Name,
 		Hostname:       node.Hostname,
@@ -165,7 +186,31 @@ func (s *NodeService) Get(ctx context.Context, id uint) (*NodeSummary, error) {
 		BandwidthLimit: node.BandwidthLimit,
 		Labels:         node.Labels,
 		CreatedAt:      node.CreatedAt,
-	}, nil
+		Queue: NodeQueue{
+			Pending:        queue.Pending,
+			Dispatched:     queue.Dispatched,
+			Depth:          queue.Depth,
+			Timeouts:       queue.Timeouts,
+			OldestActiveAt: queue.OldestActiveAt,
+		},
+		RunningTasks: queue.Running,
+		LastError:    queue.LastError,
+		Health:       nodeHealth(node, queue),
+	}
+	if queue.OldestActiveAt != nil {
+		summary.Queue.OldestActiveAgeS = int(time.Since(*queue.OldestActiveAt).Seconds())
+	}
+	return summary
+}
+
+func nodeHealth(node *model.Node, queue repository.AgentCommandQueueSummary) string {
+	if node.Status != model.NodeStatusOnline {
+		return "offline"
+	}
+	if queue.Timeouts > 0 || strings.TrimSpace(queue.LastError) != "" {
+		return "degraded"
+	}
+	return "healthy"
 }
 
 // Create registers a new remote node and returns its authentication token.

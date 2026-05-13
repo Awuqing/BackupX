@@ -14,6 +14,19 @@ export interface NodeSummary {
   /** CSV 节点标签；任务的 NodePoolTag 命中这里任一即会被调度到本节点 */
   labels?: string
   createdAt: string
+  queue?: NodeQueueSummary
+  runningTasks?: number
+  lastError?: string
+  health?: 'healthy' | 'degraded' | 'offline'
+}
+
+export interface NodeQueueSummary {
+  pending: number
+  dispatched: number
+  depth: number
+  timeouts: number
+  oldestActiveAt?: string
+  oldestActiveAgeSeconds?: number
 }
 
 export interface DirEntry {

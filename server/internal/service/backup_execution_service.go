@@ -52,6 +52,11 @@ type StorageUploadResultItem struct {
 	Error             string `json:"error,omitempty"`
 }
 
+const (
+	uploadMaxAttempts  = 3
+	uploadRetryBackoff = 10 * time.Second
+)
+
 type DownloadedArtifact struct {
 	FileName string
 	Reader   io.ReadCloser
@@ -96,6 +101,7 @@ type BackupExecutionService struct {
 	retries        int    // rclone 底层重试次数
 	bandwidthLimit string // rclone 带宽限制（全局默认，节点配置可覆盖）
 	metrics        *metrics.Metrics
+	taskLocks      sync.Map
 }
 
 // SetMetrics 注入 Prometheus 采集器。nil 时所有埋点退化为 no-op。
@@ -358,6 +364,11 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 	if task == nil {
 		return nil, apperror.New(404, "BACKUP_TASK_NOT_FOUND", "备份任务不存在", fmt.Errorf("backup task %d not found", id))
 	}
+	unlock := s.acquireTaskStartLock(task.ID)
+	defer unlock()
+	if err := s.ensureTaskNotRunning(ctx, task); err != nil {
+		return nil, err
+	}
 	// 维护窗口校验：手动执行同样尊重窗口，避免业务高峰期误触发。
 	if strings.TrimSpace(task.MaintenanceWindows) != "" {
 		windows := backup.ParseMaintenanceWindows(task.MaintenanceWindows)
@@ -425,6 +436,27 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 		run()
 	}
 	return s.getRecordDetail(ctx, record.ID)
+}
+
+func (s *BackupExecutionService) acquireTaskStartLock(taskID uint) func() {
+	value, _ := s.taskLocks.LoadOrStore(taskID, &sync.Mutex{})
+	mu := value.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+func (s *BackupExecutionService) ensureTaskNotRunning(ctx context.Context, task *model.BackupTask) error {
+	taskID := task.ID
+	items, err := s.records.List(ctx, repository.BackupRecordListOptions{TaskID: &taskID, Status: model.BackupRecordStatusRunning})
+	if err != nil {
+		return apperror.Internal("BACKUP_RECORD_LIST_FAILED", "无法检查任务运行状态", err)
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return apperror.BadRequest("BACKUP_TASK_ALREADY_RUNNING",
+		fmt.Sprintf("任务「%s」正在运行（记录 #%d），请等待完成后再触发。", task.Name, items[0].ID),
+		nil)
 }
 
 // shouldNotify 按任务的告警策略决定是否发送本次通知。
@@ -678,6 +710,11 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 		logger.Errorf("没有关联的存储目标")
 		return
 	}
+	storageUsage, err := s.storageUsageSnapshot(ctx)
+	if err != nil {
+		logger.Warnf("读取存储目标用量失败，跳过本次软配额校验：%v", err)
+		storageUsage = map[uint]int64{}
+	}
 
 	// 并行上传到所有目标
 	uploadResults = make([]StorageUploadResultItem, len(targetIDs))
@@ -701,15 +738,7 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 			}
 			// 软限额校验：QuotaBytes > 0 时，已累计 + 本次 > 配额 → 拒绝上传
 			if target != nil && target.QuotaBytes > 0 {
-				currentUsed := int64(0)
-				if items, err := s.records.StorageUsage(ctx); err == nil {
-					for _, it := range items {
-						if it.StorageTargetID == targetID {
-							currentUsed = it.TotalSize
-							break
-						}
-					}
-				}
+				currentUsed := storageUsage[targetID]
 				if currentUsed+fileSize > target.QuotaBytes {
 					quotaMsg := fmt.Sprintf("超出存储目标 %s 的配额（%d + %d > %d）", targetName, currentUsed, fileSize, target.QuotaBytes)
 					uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: quotaMsg}
@@ -718,15 +747,18 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 				}
 			}
 			logger.Infof("开始上传备份到存储目标：%s", targetName)
-			// 上传级重试：最多 3 次，指数退避（10s, 30s, 90s）
-			maxAttempts := 3
+			// 上传级重试：最多 3 次，等待时间随 context 取消及时退出。
 			var lastUploadErr error
 			var hr *hashingReader
-			for attempt := 1; attempt <= maxAttempts; attempt++ {
+			for attempt := 1; attempt <= uploadMaxAttempts; attempt++ {
 				if attempt > 1 {
-					backoff := time.Duration(attempt*attempt) * 10 * time.Second
+					backoff := time.Duration(attempt-1) * uploadRetryBackoff
 					logger.Warnf("存储目标 %s 第 %d 次重试（等待 %v）：%v", targetName, attempt, backoff, lastUploadErr)
-					time.Sleep(backoff)
+					if waitErr := waitForUploadRetry(ctx, backoff); waitErr != nil {
+						uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: waitErr.Error()}
+						logger.Warnf("存储目标 %s 上传重试已取消：%v", targetName, waitErr)
+						return
+					}
 				}
 				artifact, openErr := os.Open(finalPath)
 				if openErr != nil {
@@ -756,7 +788,7 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 			}
 			if lastUploadErr != nil {
 				uploadResults[index] = StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: lastUploadErr.Error()}
-				logger.Warnf("存储目标 %s 上传失败（已重试 %d 次）：%v", targetName, maxAttempts, lastUploadErr)
+				logger.Warnf("存储目标 %s 上传失败（已重试 %d 次）：%v", targetName, uploadMaxAttempts, lastUploadErr)
 				return
 			}
 			// 完整性校验：对比实际传输字节数
@@ -879,6 +911,32 @@ func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model
 	task.LastRunAt = &startedAt
 	task.LastStatus = status
 	return s.tasks.Update(ctx, task)
+}
+
+func (s *BackupExecutionService) storageUsageSnapshot(ctx context.Context) (map[uint]int64, error) {
+	items, err := s.records.StorageUsage(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("storage usage snapshot: %w", err)
+	}
+	usage := make(map[uint]int64, len(items))
+	for _, item := range items {
+		usage[item.StorageTargetID] = item.TotalSize
+	}
+	return usage, nil
+}
+
+func waitForUploadRetry(ctx context.Context, delay time.Duration) error {
+	if delay <= 0 {
+		return nil
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (s *BackupExecutionService) resolveProvider(ctx context.Context, targetID uint) (storage.StorageProvider, error) {

@@ -42,6 +42,8 @@ Go to **Backup Tasks → New**. Three steps:
 2. **Source** — paths for file backup (multi-source supported), or connection info for databases
 3. **Storage & policy** — pick target(s), compression, retention days, encryption on/off
 
+For Agent-routed tasks, encryption must stay off because the Agent never receives the Master's encryption key. BackupX rejects remote-node or node-pool tasks with encryption enabled during create/update.
+
 Save, then click **Run Now** to trigger a test. Live logs stream on the **Backup Records** page.
 
 :::note

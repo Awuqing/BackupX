@@ -230,13 +230,15 @@ func (s *AgentService) ensureTaskSpecAccess(ctx context.Context, node *model.Nod
 
 // AgentRecordUpdate Agent 上报备份记录的最终状态。
 type AgentRecordUpdate struct {
-	Status       string `json:"status"` // running | success | failed
-	FileName     string `json:"fileName,omitempty"`
-	FileSize     int64  `json:"fileSize,omitempty"`
-	Checksum     string `json:"checksum,omitempty"`
-	StoragePath  string `json:"storagePath,omitempty"`
-	ErrorMessage string `json:"errorMessage,omitempty"`
-	LogAppend    string `json:"logAppend,omitempty"` // 增量日志，追加到 record.log_content
+	Status               string                    `json:"status"` // running | success | failed
+	FileName             string                    `json:"fileName,omitempty"`
+	FileSize             int64                     `json:"fileSize,omitempty"`
+	Checksum             string                    `json:"checksum,omitempty"`
+	StoragePath          string                    `json:"storagePath,omitempty"`
+	StorageTargetID      uint                      `json:"storageTargetId,omitempty"`
+	StorageUploadResults []StorageUploadResultItem `json:"storageUploadResults,omitempty"`
+	ErrorMessage         string                    `json:"errorMessage,omitempty"`
+	LogAppend            string                    `json:"logAppend,omitempty"` // 增量日志，追加到 record.log_content
 }
 
 // UpdateRecord 更新备份记录的状态/日志。Agent 在执行过程中可多次调用。
@@ -273,6 +275,14 @@ func (s *AgentService) UpdateRecord(ctx context.Context, node *model.Node, recor
 	if update.StoragePath != "" {
 		record.StoragePath = update.StoragePath
 	}
+	if update.StorageTargetID > 0 {
+		record.StorageTargetID = update.StorageTargetID
+	}
+	if len(update.StorageUploadResults) > 0 {
+		if resultsJSON, marshalErr := json.Marshal(update.StorageUploadResults); marshalErr == nil {
+			record.StorageUploadResults = string(resultsJSON)
+		}
+	}
 	if update.ErrorMessage != "" {
 		record.ErrorMessage = update.ErrorMessage
 	}
@@ -294,7 +304,10 @@ func (s *AgentService) UpdateRecord(ctx context.Context, node *model.Node, recor
 	// 同步更新任务的 last_status
 	if update.Status == model.BackupRecordStatusSuccess || update.Status == model.BackupRecordStatusFailed {
 		task.LastStatus = update.Status
-		_ = s.taskRepo.Update(ctx, task)
+		task.LastRunAt = &record.StartedAt
+		if err := s.taskRepo.Update(ctx, task); err != nil {
+			return fmt.Errorf("update backup task summary: %w", err)
+		}
 	}
 	return nil
 }

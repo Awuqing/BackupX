@@ -20,6 +20,28 @@ export function canManageNodes(user: UserInfo | null | undefined): boolean {
   return isAdmin(user)
 }
 
+export function formatQueueAge(seconds?: number): string {
+  if (!seconds || seconds <= 0) return '-'
+  if (seconds < 60) return `${seconds}s`
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`
+  return `${Math.floor(seconds / 3600)}h`
+}
+
+export function getNodeHealthView(node: NodeSummary) {
+  if (node.status !== 'online' || node.health === 'offline') {
+    return { text: '离线', badgeStatus: 'default' as const, tagColor: 'gray', tooltip: '节点未在线' }
+  }
+  if (node.health === 'degraded' || node.queue?.timeouts || node.lastError) {
+    return {
+      text: '异常',
+      badgeStatus: 'warning' as const,
+      tagColor: 'orangered',
+      tooltip: node.lastError || '存在超时或失败的 Agent 命令',
+    }
+  }
+  return { text: '健康', badgeStatus: 'success' as const, tagColor: 'green', tooltip: 'Agent 心跳与队列状态正常' }
+}
+
 export default function NodesPage() {
   const [nodes, setNodes] = useState<NodeSummary[]>([])
   const [loading, setLoading] = useState(false)
@@ -122,10 +144,18 @@ export default function NodesPage() {
       ),
     },
     {
-      title: '状态', dataIndex: 'status', width: 100,
-      render: (status: string) => status === 'online'
-        ? <Badge status="success" text="在线" />
-        : <Badge status="default" text="离线" />,
+      title: '健康', dataIndex: 'health', width: 150,
+      render: (_: string, record: NodeSummary) => {
+        const health = getNodeHealthView(record)
+        return (
+          <Tooltip content={health.tooltip}>
+            <Space size={6}>
+              <Badge status={health.badgeStatus} />
+              <Tag color={health.tagColor}>{health.text}</Tag>
+            </Space>
+          </Tooltip>
+        )
+      },
     },
     { title: '主机名', dataIndex: 'hostname', render: (v: string) => v || '-' },
     { title: 'IP 地址', dataIndex: 'ipAddress', render: (v: string) => v || '-' },
@@ -137,6 +167,27 @@ export default function NodesPage() {
     {
       title: 'Agent 版本', dataIndex: 'agentVersion', width: 140,
       render: (v: string) => renderAgentVersion(v, masterVersion),
+    },
+    {
+      title: '队列', dataIndex: 'queue', width: 160,
+      render: (_: unknown, record: NodeSummary) => {
+        const queue = record.queue
+        if (!queue || queue.depth === 0) {
+          return <Text type="secondary">空闲</Text>
+        }
+        return (
+          <Tooltip content={`pending ${queue.pending} / dispatched ${queue.dispatched} / oldest ${formatQueueAge(queue.oldestActiveAgeSeconds)}`}>
+            <Space size={4}>
+              <Tag color="arcoblue">深度 {queue.depth}</Tag>
+              {queue.timeouts > 0 && <Tag color="orangered">超时 {queue.timeouts}</Tag>}
+            </Space>
+          </Tooltip>
+        )
+      },
+    },
+    {
+      title: '运行中', dataIndex: 'runningTasks', width: 90,
+      render: (v: number | undefined) => v && v > 0 ? <Tag color="green">{v}</Tag> : <Text type="secondary">0</Text>,
     },
     {
       title: '标签 / 节点池', dataIndex: 'labels', width: 180,

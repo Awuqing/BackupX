@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,10 +95,15 @@ func TestAgentServicePooledTaskUsesRecordNodeForSpecAndRecordUpdates(t *testing.
 	}
 
 	if err := svc.UpdateRecord(ctx, owner, 1, AgentRecordUpdate{
-		Status:      model.BackupRecordStatusSuccess,
-		FileName:    "backup.tar.gz",
-		FileSize:    123,
-		StoragePath: "tasks/1/backup.tar.gz",
+		Status:          model.BackupRecordStatusSuccess,
+		FileName:        "backup.tar.gz",
+		FileSize:        123,
+		StoragePath:     "tasks/1/backup.tar.gz",
+		StorageTargetID: 2,
+		StorageUploadResults: []StorageUploadResultItem{
+			{StorageTargetID: 1, StorageTargetName: "first", Status: "failed", Error: "boom"},
+			{StorageTargetID: 2, StorageTargetName: "second", Status: "success", StoragePath: "tasks/1/backup.tar.gz", FileSize: 123},
+		},
 	}); err != nil {
 		t.Fatalf("owner UpdateRecord returned error: %v", err)
 	}
@@ -107,8 +114,57 @@ func TestAgentServicePooledTaskUsesRecordNodeForSpecAndRecordUpdates(t *testing.
 	if updated.Status != model.BackupRecordStatusSuccess || updated.NodeID != owner.ID {
 		t.Fatalf("unexpected updated record: %#v", updated)
 	}
+	if updated.StorageTargetID != 2 {
+		t.Fatalf("expected successful storage target id 2, got %d", updated.StorageTargetID)
+	}
+	if !strings.Contains(updated.StorageUploadResults, `"storageTargetName":"second"`) {
+		t.Fatalf("expected upload results to be persisted, got %q", updated.StorageUploadResults)
+	}
 	if err := svc.UpdateRecord(ctx, other, 1, AgentRecordUpdate{LogAppend: "bad"}); err == nil {
 		t.Fatal("expected non-owner node to be forbidden from record update")
+	}
+}
+
+func TestAgentServiceUpdateRecordRefreshesTaskSummaryOnTerminalStatus(t *testing.T) {
+	for _, status := range []string{model.BackupRecordStatusSuccess, model.BackupRecordStatusFailed} {
+		t.Run(status, func(t *testing.T) {
+			svc, _, records, _, owner, _ := newAgentServicePoolTestHarness(t)
+			ctx := context.Background()
+			record, err := records.FindByID(ctx, 1)
+			if err != nil {
+				t.Fatalf("FindByID record returned error: %v", err)
+			}
+
+			if err := svc.UpdateRecord(ctx, owner, record.ID, AgentRecordUpdate{Status: status}); err != nil {
+				t.Fatalf("UpdateRecord returned error: %v", err)
+			}
+
+			task, err := svc.taskRepo.FindByID(ctx, record.TaskID)
+			if err != nil {
+				t.Fatalf("FindByID task returned error: %v", err)
+			}
+			if task.LastStatus != status {
+				t.Fatalf("expected task LastStatus %q, got %q", status, task.LastStatus)
+			}
+			if task.LastRunAt == nil || !task.LastRunAt.Equal(record.StartedAt) {
+				t.Fatalf("expected task LastRunAt to match record startedAt %s, got %#v", record.StartedAt, task.LastRunAt)
+			}
+		})
+	}
+}
+
+func TestAgentServiceUpdateRecordReturnsTaskSummaryUpdateError(t *testing.T) {
+	svc, _, _, _, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	expectedErr := errors.New("task update failed")
+	svc.taskRepo = &failingUpdateTaskRepo{
+		BackupTaskRepository: svc.taskRepo,
+		err:                  expectedErr,
+	}
+
+	err := svc.UpdateRecord(ctx, owner, 1, AgentRecordUpdate{Status: model.BackupRecordStatusSuccess})
+	if !errors.Is(err, expectedErr) {
+		t.Fatalf("expected task update error %v, got %v", expectedErr, err)
 	}
 }
 
@@ -586,4 +642,13 @@ func setBackupRecordUpdatedAt(db *gorm.DB, id uint, updatedAt time.Time) error {
 
 func setRestoreRecordUpdatedAt(db *gorm.DB, id uint, updatedAt time.Time) error {
 	return db.Model(&model.RestoreRecord{}).Where("id = ?", id).UpdateColumn("updated_at", updatedAt).Error
+}
+
+type failingUpdateTaskRepo struct {
+	repository.BackupTaskRepository
+	err error
+}
+
+func (r *failingUpdateTaskRepo) Update(context.Context, *model.BackupTask) error {
+	return r.err
 }

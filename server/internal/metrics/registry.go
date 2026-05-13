@@ -31,6 +31,12 @@ type Metrics struct {
 	StorageUsedBytes *prometheus.GaugeVec
 	// 节点在线状态（labels: node_name, role；value: 0/1）
 	NodeOnline *prometheus.GaugeVec
+	// Agent 命令队列深度（labels: node_name, role）
+	AgentCommandQueueDepth *prometheus.GaugeVec
+	// Agent 正在执行的长命令数（labels: node_name, role）
+	AgentCommandRunning *prometheus.GaugeVec
+	// Agent 命令超时累计数快照（labels: node_name, role）
+	AgentCommandTimeoutTotal *prometheus.GaugeVec
 	// 验证演练结果（labels: status）
 	VerifyRunTotal *prometheus.CounterVec
 	// 恢复操作结果（labels: status）
@@ -78,6 +84,18 @@ func New(version string) *Metrics {
 			Name: "backupx_node_online",
 			Help: "集群节点在线状态（1 在线 / 0 离线）",
 		}, []string{"node_name", "role"}),
+		AgentCommandQueueDepth: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "backupx_agent_command_queue_depth",
+			Help: "Agent 当前 pending/dispatched 命令总数",
+		}, []string{"node_name", "role"}),
+		AgentCommandRunning: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "backupx_agent_command_running",
+			Help: "Agent 当前正在执行的长命令数",
+		}, []string{"node_name", "role"}),
+		AgentCommandTimeoutTotal: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "backupx_agent_command_timeout_total",
+			Help: "Agent 已超时命令数快照",
+		}, []string{"node_name", "role"}),
 		VerifyRunTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "backupx_verify_run_total",
 			Help: "备份验证演练执行总数",
@@ -106,6 +124,9 @@ func New(version string) *Metrics {
 		m.TaskRunningGauge,
 		m.StorageUsedBytes,
 		m.NodeOnline,
+		m.AgentCommandQueueDepth,
+		m.AgentCommandRunning,
+		m.AgentCommandTimeoutTotal,
 		m.VerifyRunTotal,
 		m.RestoreRunTotal,
 		m.ReplicationRunTotal,
@@ -206,6 +227,24 @@ func (m *Metrics) ResetNodeOnline() {
 		return
 	}
 	m.NodeOnline.Reset()
+}
+
+func (m *Metrics) SetAgentQueue(name, role string, depth, running, timeoutCount int) {
+	if m == nil {
+		return
+	}
+	m.AgentCommandQueueDepth.WithLabelValues(name, role).Set(float64(depth))
+	m.AgentCommandRunning.WithLabelValues(name, role).Set(float64(running))
+	m.AgentCommandTimeoutTotal.WithLabelValues(name, role).Set(float64(timeoutCount))
+}
+
+func (m *Metrics) ResetAgentQueue() {
+	if m == nil {
+		return
+	}
+	m.AgentCommandQueueDepth.Reset()
+	m.AgentCommandRunning.Reset()
+	m.AgentCommandTimeoutTotal.Reset()
 }
 
 // ResetStorageUsed 清空存储目标 gauge。

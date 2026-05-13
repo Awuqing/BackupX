@@ -62,6 +62,8 @@ Web 控制台 → **节点管理** → **添加节点**，打开三步向导：
 5. 执行 `systemctl enable --now backupx-agent`
 6. 轮询 `/api/v1/agent/self`，直到 Master 确认 `status: online`（最多 30 秒）
 
+Docker 模式使用同一组环境变量约定：`BACKUPX_AGENT_MASTER`、`BACKUPX_AGENT_TOKEN` 和 `BACKUPX_AGENT_TEMP_DIR=/var/lib/backupx-agent/tmp`。容器启动后，安装脚本同样会探测 `/api/v1/agent/self`；如果节点没有上线，会输出 `docker ps` 与 `docker logs --tail=100 backupx-agent` 排查命令，并以非零状态退出。
+
 如果使用 URL 备用命令时 `curl` 输出 HTML，或 shell 报 `Syntax error: newline unexpected`，说明安装 URL 被 Web 控制台接管而不是转发到后端。需要确保 `/api/install/` 或 `/install/` 至少一个路径能转发到 BackupX 后端，或改用控制台生成的嵌入式命令。
 
 脚本是幂等的：升级或重装只需重新生成一条安装命令再跑一次。一次性安装链接在 TTL 到期或被首次消费后立即作废。
@@ -81,9 +83,15 @@ Web 控制台 → **节点管理** → **添加节点**，打开三步向导：
 - 本机 / 未指定（`nodeId=0`）：Master 进程内直接执行
 - 远程节点：Master 写入命令队列 → Agent 拉取 → Agent 本地执行 → 上传 → 回报
 
+节点列表会展示 Agent 健康与命令队列状态：pending/dispatched 深度、运行中的长任务、超时数、最旧活跃命令年龄和最近 Agent 错误。同样的队列深度、运行中命令数和超时快照会导出为 Prometheus 指标：
+
+- `backupx_agent_command_queue_depth`
+- `backupx_agent_command_running`
+- `backupx_agent_command_timeout_total`
+
 ## 已知限制
 
-- **Agent 不支持加密备份**：Agent 不持有 Master 的 AES-256 密钥。`encrypt: true` 的任务路由到 Agent 时会直接上报失败
+- **加密备份仅支持 Master 本机执行**：Agent 不持有 Master 的 AES-256 密钥。创建或更新任务时，如果 `encrypt: true` 且选择了远程节点或节点池，会在入口直接拒绝
 - **目录浏览超时**：远程目录浏览通过命令队列做同步 RPC，默认 15s 超时
 - **派发命令超时**：Agent 领取但未完成的命令超过 10 分钟会被置 `timeout`
 

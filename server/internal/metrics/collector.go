@@ -13,16 +13,18 @@ type SampleSource interface {
 	ListStorageTargets(ctx context.Context) ([]model.StorageTarget, error)
 	StorageUsage(ctx context.Context) ([]repository.BackupStorageUsageItem, error)
 	ListNodes(ctx context.Context) ([]model.Node, error)
+	AgentQueueSummaries(ctx context.Context) (map[uint]repository.AgentCommandQueueSummary, error)
 	CountSLABreach(ctx context.Context) (int, error)
 }
 
 // repoSource 把 repository 适配到 SampleSource。
 type repoSource struct {
-	targets repository.StorageTargetRepository
-	records repository.BackupRecordRepository
-	nodes   repository.NodeRepository
-	tasks   repository.BackupTaskRepository
-	now     func() time.Time
+	targets  repository.StorageTargetRepository
+	records  repository.BackupRecordRepository
+	nodes    repository.NodeRepository
+	tasks    repository.BackupTaskRepository
+	commands repository.AgentCommandRepository
+	now      func() time.Time
 }
 
 // NewRepoSource 用仓储实例构造 SampleSource。
@@ -31,13 +33,15 @@ func NewRepoSource(
 	records repository.BackupRecordRepository,
 	nodes repository.NodeRepository,
 	tasks repository.BackupTaskRepository,
+	commands repository.AgentCommandRepository,
 ) SampleSource {
 	return &repoSource{
-		targets: targets,
-		records: records,
-		nodes:   nodes,
-		tasks:   tasks,
-		now:     func() time.Time { return time.Now().UTC() },
+		targets:  targets,
+		records:  records,
+		nodes:    nodes,
+		tasks:    tasks,
+		commands: commands,
+		now:      func() time.Time { return time.Now().UTC() },
 	}
 }
 
@@ -51,6 +55,13 @@ func (s *repoSource) StorageUsage(ctx context.Context) ([]repository.BackupStora
 
 func (s *repoSource) ListNodes(ctx context.Context) ([]model.Node, error) {
 	return s.nodes.List(ctx)
+}
+
+func (s *repoSource) AgentQueueSummaries(ctx context.Context) (map[uint]repository.AgentCommandQueueSummary, error) {
+	if s.commands == nil {
+		return nil, nil
+	}
+	return s.commands.NodeQueueSummaries(ctx)
 }
 
 // CountSLABreach 统计当前违反 RPO 的任务：
@@ -136,7 +147,9 @@ func (c *Collector) collect(ctx context.Context) {
 	}
 	// 节点在线状态：role 约定为 master / agent
 	if nodes, err := c.source.ListNodes(ctx); err == nil {
+		queueByNode, _ := c.source.AgentQueueSummaries(ctx)
 		c.metrics.ResetNodeOnline()
+		c.metrics.ResetAgentQueue()
 		for i := range nodes {
 			n := &nodes[i]
 			role := "agent"
@@ -144,6 +157,8 @@ func (c *Collector) collect(ctx context.Context) {
 				role = "master"
 			}
 			c.metrics.SetNodeOnline(n.Name, role, n.Status == model.NodeStatusOnline)
+			queue := queueByNode[n.ID]
+			c.metrics.SetAgentQueue(n.Name, role, queue.Depth, queue.Running, queue.Timeouts)
 		}
 	}
 	if breach, err := c.source.CountSLABreach(ctx); err == nil {

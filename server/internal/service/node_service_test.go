@@ -23,6 +23,9 @@ func openNodeServiceDB(t *testing.T) *gorm.DB {
 	if err := db.AutoMigrate(&model.Node{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	if err := db.AutoMigrate(&model.AgentCommand{}); err != nil {
+		t.Fatalf("migrate agent commands: %v", err)
+	}
 	return db
 }
 
@@ -155,5 +158,50 @@ func TestRotateTokenNotFound(t *testing.T) {
 	svc := NewNodeService(repository.NewNodeRepository(db), "test")
 	if _, err := svc.RotateToken(context.Background(), 9999); err == nil {
 		t.Fatalf("expected not found error")
+	}
+}
+
+func TestNodeServiceListIncludesQueueHealthSummary(t *testing.T) {
+	db := openNodeServiceDB(t)
+	nodeRepo := repository.NewNodeRepository(db)
+	cmdRepo := repository.NewAgentCommandRepository(db)
+	svc := NewNodeService(nodeRepo, "test")
+	svc.SetAgentCommandRepository(cmdRepo)
+	ctx := context.Background()
+	node := &model.Node{
+		Name:     "edge-a",
+		Token:    "edge-token",
+		Status:   model.NodeStatusOnline,
+		IsLocal:  false,
+		LastSeen: time.Now().UTC(),
+	}
+	if err := nodeRepo.Create(ctx, node); err != nil {
+		t.Fatalf("Create node returned error: %v", err)
+	}
+	old := time.Now().UTC().Add(-time.Minute)
+	if err := cmdRepo.Create(ctx, &model.AgentCommand{NodeID: node.ID, Type: model.AgentCommandTypeRunTask, Status: model.AgentCommandStatusPending, CreatedAt: old}); err != nil {
+		t.Fatalf("Create pending command returned error: %v", err)
+	}
+	completedAt := time.Now().UTC()
+	if err := cmdRepo.Create(ctx, &model.AgentCommand{NodeID: node.ID, Type: model.AgentCommandTypeRunTask, Status: model.AgentCommandStatusTimeout, ErrorMessage: "agent timeout", CompletedAt: &completedAt}); err != nil {
+		t.Fatalf("Create timeout command returned error: %v", err)
+	}
+
+	items, err := svc.List(ctx)
+	if err != nil {
+		t.Fatalf("List returned error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected one node, got %#v", items)
+	}
+	got := items[0]
+	if got.Queue.Pending != 1 || got.Queue.Depth != 1 || got.Queue.Timeouts != 1 {
+		t.Fatalf("unexpected queue summary: %#v", got.Queue)
+	}
+	if got.Health != "degraded" || got.LastError != "agent timeout" {
+		t.Fatalf("expected terminal command errors to degrade healthy node, got %#v", got)
+	}
+	if got.Queue.OldestActiveAt == nil || got.Queue.OldestActiveAgeS <= 0 {
+		t.Fatalf("expected oldest active metadata, got %#v", got.Queue)
 	}
 }

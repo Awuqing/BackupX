@@ -126,22 +126,52 @@ func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) er
 		e.reportRecordFailure(ctx, recordID, "没有关联的存储目标")
 		return fmt.Errorf("no storage targets")
 	}
+	uploadResults := make([]StorageResultItem, 0, len(spec.StorageTargets))
+	selectedStorageTargetID := uint(0)
+	var uploadErrors []string
 	for _, target := range spec.StorageTargets {
 		if err := e.uploadToTarget(ctx, recordID, target, finalPath, storagePath, fileSize, spec.TaskID); err != nil {
-			e.reportRecordFailure(ctx, recordID, fmt.Sprintf("上传到 %s 失败: %v", target.Name, err))
-			return err
+			uploadResults = append(uploadResults, StorageResultItem{
+				StorageTargetID:   target.ID,
+				StorageTargetName: target.Name,
+				Status:            "failed",
+				Error:             err.Error(),
+			})
+			uploadErrors = append(uploadErrors, fmt.Sprintf("%s: %v", target.Name, err))
+			e.appendLog(ctx, recordID, fmt.Sprintf("[agent] 上传到存储目标 %s 失败: %v\n", target.Name, err))
+			continue
 		}
+		if selectedStorageTargetID == 0 {
+			selectedStorageTargetID = target.ID
+		}
+		uploadResults = append(uploadResults, StorageResultItem{
+			StorageTargetID:   target.ID,
+			StorageTargetName: target.Name,
+			Status:            "success",
+			StoragePath:       storagePath,
+			FileSize:          fileSize,
+		})
 		e.appendLog(ctx, recordID, fmt.Sprintf("[agent] 已上传到存储目标 %s\n", target.Name))
+	}
+	if selectedStorageTargetID == 0 {
+		msg := strings.Join(uploadErrors, "; ")
+		if msg == "" {
+			msg = "所有存储目标上传均失败"
+		}
+		e.reportRecordFailureWithUploadResults(ctx, recordID, msg, uploadResults)
+		return fmt.Errorf("%s", msg)
 	}
 
 	// 6) 上报最终成功
 	return e.client.UpdateRecord(ctx, recordID, RecordUpdate{
-		Status:      "success",
-		FileName:    fileName,
-		FileSize:    fileSize,
-		Checksum:    checksum,
-		StoragePath: storagePath,
-		LogAppend:   fmt.Sprintf("[agent] 任务完成，总计 %d 字节\n", fileSize),
+		Status:               "success",
+		FileName:             fileName,
+		FileSize:             fileSize,
+		Checksum:             checksum,
+		StoragePath:          storagePath,
+		StorageTargetID:      selectedStorageTargetID,
+		StorageUploadResults: uploadResults,
+		LogAppend:            fmt.Sprintf("[agent] 任务完成，总计 %d 字节\n", fileSize),
 	})
 }
 
@@ -177,10 +207,15 @@ func (e *Executor) appendLog(ctx context.Context, recordID uint, line string) {
 
 // reportRecordFailure 上报失败状态
 func (e *Executor) reportRecordFailure(ctx context.Context, recordID uint, msg string) {
+	e.reportRecordFailureWithUploadResults(ctx, recordID, msg, nil)
+}
+
+func (e *Executor) reportRecordFailureWithUploadResults(ctx context.Context, recordID uint, msg string, uploadResults []StorageResultItem) {
 	_ = e.client.UpdateRecord(ctx, recordID, RecordUpdate{
-		Status:       "failed",
-		ErrorMessage: msg,
-		LogAppend:    fmt.Sprintf("[agent] 错误: %s\n", msg),
+		Status:               "failed",
+		ErrorMessage:         msg,
+		StorageUploadResults: uploadResults,
+		LogAppend:            fmt.Sprintf("[agent] 错误: %s\n", msg),
 	})
 }
 

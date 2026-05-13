@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"backupx/server/internal/config"
@@ -27,6 +28,82 @@ func newBackupTaskServiceForTest(t *testing.T) (*BackupTaskService, repository.S
 	tasks := repository.NewBackupTaskRepository(db)
 	service := NewBackupTaskService(tasks, targets, codec.NewConfigCipher("task-service-secret"))
 	return service, targets, tasks
+}
+
+func TestBackupTaskServiceRejectsEncryptedRemoteTasks(t *testing.T) {
+	ctx := context.Background()
+	service, targets, _ := newBackupTaskServiceForTest(t)
+	service.SetNodeRepository(&nodeRepoStub{nodes: []model.Node{
+		{ID: 41, Name: "master", Token: "master-token", Status: model.NodeStatusOnline, IsLocal: true},
+		{ID: 42, Name: "edge", Token: "edge-token", Status: model.NodeStatusOnline, IsLocal: false},
+	}})
+	if err := targets.Create(ctx, &model.StorageTarget{Name: "local", Type: "local_disk", Enabled: true, ConfigCiphertext: "ciphertext", ConfigVersion: 1, LastTestStatus: "unknown"}); err != nil {
+		t.Fatalf("seed storage target error: %v", err)
+	}
+
+	_, err := service.Create(ctx, BackupTaskUpsertInput{
+		Name:            "encrypted-node-pool",
+		Type:            "file",
+		Enabled:         true,
+		SourcePath:      "/srv/site",
+		StorageTargetID: 1,
+		NodePoolTag:     "db",
+		RetentionDays:   30,
+		Compression:     "gzip",
+		MaxBackups:      10,
+		Encrypt:         true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "远程节点暂不支持加密备份") {
+		t.Fatalf("expected encrypted node-pool task to be rejected, got %v", err)
+	}
+
+	created, err := service.Create(ctx, BackupTaskUpsertInput{
+		Name:            "local-encrypted",
+		Type:            "file",
+		Enabled:         true,
+		SourcePath:      "/srv/site",
+		StorageTargetID: 1,
+		RetentionDays:   30,
+		Compression:     "gzip",
+		MaxBackups:      10,
+		Encrypt:         true,
+	})
+	if err != nil {
+		t.Fatalf("Create local encrypted task returned error: %v", err)
+	}
+	localNodeTask, err := service.Create(ctx, BackupTaskUpsertInput{
+		Name:            "local-node-encrypted",
+		Type:            "file",
+		Enabled:         true,
+		SourcePath:      "/srv/site",
+		StorageTargetID: 1,
+		NodeID:          41,
+		RetentionDays:   30,
+		Compression:     "gzip",
+		MaxBackups:      10,
+		Encrypt:         true,
+	})
+	if err != nil {
+		t.Fatalf("Create encrypted task pinned to local node returned error: %v", err)
+	}
+	if localNodeTask.NodeID != 41 || !localNodeTask.Encrypt {
+		t.Fatalf("expected encrypted task to keep local node, got %#v", localNodeTask)
+	}
+	_, err = service.Update(ctx, created.ID, BackupTaskUpsertInput{
+		Name:            created.Name,
+		Type:            created.Type,
+		Enabled:         true,
+		SourcePath:      "/srv/site",
+		StorageTargetID: 1,
+		NodeID:          42,
+		RetentionDays:   30,
+		Compression:     "gzip",
+		MaxBackups:      10,
+		Encrypt:         true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "远程节点暂不支持加密备份") {
+		t.Fatalf("expected encrypted fixed-node update to be rejected, got %v", err)
+	}
 }
 
 func TestBackupTaskServiceCreateAndGet(t *testing.T) {

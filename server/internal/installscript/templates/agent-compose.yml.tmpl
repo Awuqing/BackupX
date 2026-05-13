@@ -9,5 +9,6 @@ services:
     environment:
       BACKUPX_AGENT_MASTER: "{{.MasterURL}}"
       BACKUPX_AGENT_TOKEN: "{{.AgentToken}}"
+      BACKUPX_AGENT_TEMP_DIR: "/var/lib/backupx-agent/tmp"
     volumes:
       - /var/lib/backupx-agent:/var/lib/backupx-agent

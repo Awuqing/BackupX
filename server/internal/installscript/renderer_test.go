@@ -1,6 +1,8 @@
 package installscript
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -85,8 +87,35 @@ func TestRenderScriptDocker(t *testing.T) {
 	if !strings.Contains(got, "awuqing/backupx:${AGENT_VERSION}") {
 		t.Errorf("docker script missing image tag reference:\n%s", got)
 	}
+	if !strings.Contains(got, `"awuqing/backupx:${AGENT_VERSION}" agent`) {
+		t.Errorf("docker script must start image in agent mode:\n%s", got)
+	}
+	if !strings.Contains(got, `-e "BACKUPX_AGENT_TEMP_DIR=/var/lib/backupx-agent/tmp"`) {
+		t.Errorf("docker script missing temp dir env:\n%s", got)
+	}
+	if !strings.Contains(got, `docker logs --tail=100 backupx-agent`) {
+		t.Errorf("docker script missing diagnostic log command:\n%s", got)
+	}
+	if !strings.Contains(got, `grep -q '"status":"online"'`) {
+		t.Errorf("docker script missing online probe:\n%s", got)
+	}
 	if strings.Contains(got, "systemctl daemon-reload") {
 		t.Errorf("docker script should not reference systemctl:\n%s", got)
+	}
+}
+
+func TestDockerEntrypointForwardsAgentSubcommand(t *testing.T) {
+	entrypointPath := filepath.Join("..", "..", "..", "deploy", "docker", "entrypoint.sh")
+	got, err := os.ReadFile(entrypointPath)
+	if err != nil {
+		t.Fatalf("read docker entrypoint: %v", err)
+	}
+	script := string(got)
+	if !strings.Contains(script, `"${1:-}" = "agent"`) {
+		t.Fatalf("entrypoint must detect the agent subcommand before starting server:\n%s", script)
+	}
+	if !strings.Contains(script, `exec /app/bin/backupx "$@"`) {
+		t.Fatalf("entrypoint must exec backupx with forwarded args:\n%s", script)
 	}
 }
 
@@ -100,8 +129,14 @@ func TestRenderComposeYaml(t *testing.T) {
 	if !strings.Contains(got, "image: awuqing/backupx:v1.7.0") {
 		t.Errorf("compose missing image:\n%s", got)
 	}
+	if !strings.Contains(got, `command: ["agent"]`) {
+		t.Errorf("compose must start image in agent mode:\n%s", got)
+	}
 	if !strings.Contains(got, `BACKUPX_AGENT_TOKEN: "deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcdef"`) {
 		t.Errorf("compose missing token env:\n%s", got)
+	}
+	if !strings.Contains(got, `BACKUPX_AGENT_TEMP_DIR: "/var/lib/backupx-agent/tmp"`) {
+		t.Errorf("compose missing temp dir env:\n%s", got)
 	}
 	if !strings.Contains(got, "/var/lib/backupx-agent:/var/lib/backupx-agent") {
 		t.Errorf("compose missing agent data volume:\n%s", got)
