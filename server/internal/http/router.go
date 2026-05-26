@@ -41,6 +41,7 @@ type RouterDependencies struct {
 	ApiKeyService            *service.ApiKeyService
 	NotificationService      *service.NotificationService
 	DashboardService         *service.DashboardService
+	ReportService            *service.ReportService
 	SettingsService          *service.SettingsService
 	NodeService              *service.NodeService
 	AgentService             *service.AgentService
@@ -211,6 +212,15 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 			// 基于备份记录的验证入口：与 restore 对称
 			backupRecords.POST("/:id/verify", RequireNotViewer(), verificationHandler.TriggerByRecord)
 		}
+		// 企业合规报表：按任务的可导出备份合规证据（区别于 Dashboard 的实时聚合视图）。
+		if deps.ReportService != nil {
+			reportHandler := NewReportHandler(deps.ReportService)
+			reports := api.Group("/reports")
+			reports.Use(AuthMiddleware(deps.JWTManager, apiKeyAuth))
+			reports.GET("/compliance", reportHandler.Compliance)
+			reports.GET("/compliance/export", reportHandler.ComplianceCSV)
+		}
+
 		dashboard := api.Group("/dashboard")
 		dashboard.Use(AuthMiddleware(deps.JWTManager, apiKeyAuth))
 		dashboard.GET("/stats", dashboardHandler.Stats)

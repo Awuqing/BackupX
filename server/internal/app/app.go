@@ -104,6 +104,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	restoreRecordRepo := repository.NewRestoreRecordRepository(db)
 	restoreLogHub := backup.NewLogHub()
 	dashboardService := service.NewDashboardService(backupTaskRepo, backupRecordRepo, storageTargetRepo)
+	reportService := service.NewReportService(backupTaskRepo, backupRecordRepo)
 	settingsService := service.NewSettingsService(systemConfigRepo)
 
 	// Audit
@@ -268,6 +269,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 		ApiKeyService:            apiKeyService,
 		NotificationService:      notificationService,
 		DashboardService:         dashboardService,
+		ReportService:            reportService,
 		SettingsService:          settingsService,
 		NodeService:              nodeService,
 		AgentService:             agentService,
