@@ -167,7 +167,8 @@ func (s *Service) syncTaskLocked(task *model.BackupTask) error {
 		// 集群感知：若任务绑定了离线的远程节点，跳过本轮触发避免堆积 failed 记录
 		if taskNodeID > 0 && s.nodes != nil {
 			node, err := s.nodes.FindByID(context.Background(), taskNodeID)
-			if err == nil && node != nil && !node.IsLocal && node.Status != model.NodeStatusOnline {
+			// 用实时推导的状态判定，避免后台监控刷新前把任务下发给刚失联的节点。
+			if err == nil && node != nil && !node.IsLocal && node.EffectiveStatus(time.Now().UTC()) != model.NodeStatusOnline {
 				if s.logger != nil {
 					s.logger.Warn("skip scheduled run: target node offline",
 						zap.Uint("task_id", taskID), zap.String("task_name", taskName),

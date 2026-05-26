@@ -70,6 +70,8 @@ Environment="BACKUPX_AGENT_TOKEN=${AGENT_TOKEN}"
 ExecStart=${INSTALL_PREFIX}/backupx agent --temp-dir /var/lib/backupx-agent/tmp
 Restart=on-failure
 RestartSec=10s
+# Agent 需以 root 运行以读取任意源数据；与单机服务端保持一致的资源/句柄上限。
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target

@@ -171,12 +171,14 @@ func (s *NodeService) loadQueueSummaries(ctx context.Context) map[uint]repositor
 }
 
 func (s *NodeService) toNodeSummary(node *model.Node, queue repository.AgentCommandQueueSummary) NodeSummary {
+	// 以 LastSeen 实时推导状态，避免读到后台监控尚未刷新的过期 "online"。
+	effStatus := node.EffectiveStatus(time.Now().UTC())
 	summary := NodeSummary{
 		ID:             node.ID,
 		Name:           node.Name,
 		Hostname:       node.Hostname,
 		IPAddress:      node.IPAddress,
-		Status:         node.Status,
+		Status:         effStatus,
 		IsLocal:        node.IsLocal,
 		OS:             node.OS,
 		Arch:           node.Arch,
@@ -195,7 +197,7 @@ func (s *NodeService) toNodeSummary(node *model.Node, queue repository.AgentComm
 		},
 		RunningTasks: queue.Running,
 		LastError:    queue.LastError,
-		Health:       nodeHealth(node, queue),
+		Health:       nodeHealth(effStatus, queue),
 	}
 	if queue.OldestActiveAt != nil {
 		summary.Queue.OldestActiveAgeS = int(time.Since(*queue.OldestActiveAt).Seconds())
@@ -203,8 +205,8 @@ func (s *NodeService) toNodeSummary(node *model.Node, queue repository.AgentComm
 	return summary
 }
 
-func nodeHealth(node *model.Node, queue repository.AgentCommandQueueSummary) string {
-	if node.Status != model.NodeStatusOnline {
+func nodeHealth(status string, queue repository.AgentCommandQueueSummary) string {
+	if status != model.NodeStatusOnline {
 		return "offline"
 	}
 	if queue.Timeouts > 0 || strings.TrimSpace(queue.LastError) != "" {
@@ -303,9 +305,9 @@ func (s *NodeService) ListDirectory(ctx context.Context, nodeID uint, path strin
 	return result, nil
 }
 
-// OfflineThreshold 节点被判定为离线的心跳超时阈值。
-// Agent 默认 15s 心跳一次；45s 未见视为离线，预留 3 次重试空间。
-const OfflineThreshold = 45 * time.Second
+// OfflineThreshold 节点被判定为离线的心跳超时阈值，与 model.EffectiveStatus 共用同一阈值，
+// 保证「后台监控持久化的 offline」与「读路径实时推导的 offline」判定一致。
+const OfflineThreshold = model.OfflineGracePeriod
 
 // StartOfflineMonitor 启动后台 goroutine，定期把超时未心跳的节点标记为离线。
 // 传入的 ctx 被取消后退出。
