@@ -199,7 +199,7 @@ func (h *StorageTargetHandler) GoogleDriveProfile(c *gin.Context) {
 
 func parseUintParam(c *gin.Context, key string) (uint, bool) {
 	value := strings.TrimSpace(c.Param(key))
-	parsed, err := strconv.ParseUint(value, 10, 64)
+	parsed, err := strconv.ParseUint(value, 10, 0)
 	if err != nil {
 		response.Error(c, apperror.BadRequest("INVALID_ID", fmt.Sprintf("参数 %s 不合法", key), err))
 		return 0, false

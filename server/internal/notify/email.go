@@ -37,13 +37,12 @@ func (n *EmailNotifier) Send(_ context.Context, config map[string]any, message M
 	from := strings.TrimSpace(asString(config["from"]))
 	toList := splitCommaValues(asString(config["to"]))
 	address := host + ":" + strconv.Itoa(port)
-	headers := []string{"From: " + from, "To: " + strings.Join(toList, ", "), "Subject: " + message.Title, "MIME-Version: 1.0", "Content-Type: text/plain; charset=UTF-8", "", message.Body}
 	var auth smtp.Auth
 	if username != "" {
 		auth = smtp.PlainAuth("", username, password, host)
 	}
 
-	rawMessage := []byte(strings.Join(headers, "\r\n"))
+	rawMessage := buildRawMessage(from, toList, message)
 
 	if port == 465 {
 		tlsConfig := &tls.Config{ServerName: host}
@@ -85,4 +84,32 @@ func (n *EmailNotifier) Send(_ context.Context, config map[string]any, message M
 	}
 
 	return smtp.SendMail(address, auth, from, toList, rawMessage)
+}
+
+// buildRawMessage 构造 RFC 5322 邮件原文。所有头部值都会剔除 CR/LF，
+// 防止 SMTP 头注入：备份任务名等用户可控内容会进入 Subject，若包含
+// 换行符可被用来注入额外头部（如 Bcc）或伪造正文。正文本身不做处理，
+// 允许包含换行。
+func buildRawMessage(from string, toList []string, message Message) []byte {
+	sanitizedTo := make([]string, 0, len(toList))
+	for _, addr := range toList {
+		if s := sanitizeHeaderValue(addr); s != "" {
+			sanitizedTo = append(sanitizedTo, s)
+		}
+	}
+	headers := []string{
+		"From: " + sanitizeHeaderValue(from),
+		"To: " + strings.Join(sanitizedTo, ", "),
+		"Subject: " + sanitizeHeaderValue(message.Title),
+		"MIME-Version: 1.0",
+		"Content-Type: text/plain; charset=UTF-8",
+		"",
+		message.Body,
+	}
+	return []byte(strings.Join(headers, "\r\n"))
+}
+
+// sanitizeHeaderValue 移除头部值中的 CR 与 LF，消除头注入向量。
+func sanitizeHeaderValue(value string) string {
+	return strings.NewReplacer("\r", "", "\n", "").Replace(strings.TrimSpace(value))
 }

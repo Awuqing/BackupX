@@ -293,7 +293,7 @@ func (s *AuthService) verifyLoginMFA(ctx context.Context, user *model.User, inpu
 }
 
 func (s *AuthService) userBySubject(ctx context.Context, subject string) (*model.User, error) {
-	userID, err := strconv.ParseUint(subject, 10, 64)
+	userID, err := strconv.ParseUint(subject, 10, 0)
 	if err != nil {
 		return nil, apperror.Unauthorized("AUTH_INVALID_SUBJECT", "无效用户身份", err)
 	}

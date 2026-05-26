@@ -216,7 +216,7 @@ func writeSSEEvent(writer io.Writer, event backup.LogEvent) error {
 }
 
 func parseUintString(value string) (uint, bool) {
-	parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+	parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 0)
 	if err != nil {
 		return 0, false
 	}

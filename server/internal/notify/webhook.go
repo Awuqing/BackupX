@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -21,8 +22,17 @@ func (n *WebhookNotifier) Type() string              { return "webhook" }
 func (n *WebhookNotifier) SensitiveFields() []string { return []string{"secret"} }
 
 func (n *WebhookNotifier) Validate(config map[string]any) error {
-	if strings.TrimSpace(asString(config["url"])) == "" {
+	raw := strings.TrimSpace(asString(config["url"]))
+	if raw == "" {
 		return fmt.Errorf("webhook url is required")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("webhook url is invalid: %w", err)
+	}
+	// 仅允许 http/https，杜绝 file://、gopher:// 等可被用于 SSRF 的协议。
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return fmt.Errorf("webhook url must use http or https scheme")
 	}
 	return nil
 }
