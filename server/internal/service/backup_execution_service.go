@@ -332,28 +332,8 @@ func (s *BackupExecutionService) deleteRemoteLocalDiskObject(ctx context.Context
 // provider 指向的是 Master 本机的同名路径，访问会静默取错文件或 404。明确拒绝
 // 让用户知情，避免假成功。
 func (s *BackupExecutionService) validateClusterAccessible(ctx context.Context, record *model.BackupRecord) error {
-	if record == nil || record.NodeID == 0 {
-		return nil
-	}
-	// 检查是否为远程节点
-	if s.nodeRepo == nil {
-		return nil
-	}
-	node, err := s.nodeRepo.FindByID(ctx, record.NodeID)
-	if err != nil || node == nil || node.IsLocal {
-		return nil
-	}
-	// 检查存储类型是否为 local_disk（跨节点不可达）
-	target, err := s.targets.FindByID(ctx, record.StorageTargetID)
-	if err != nil || target == nil {
-		return nil
-	}
-	if strings.EqualFold(target.Type, "local_disk") {
-		return apperror.BadRequest("BACKUP_RECORD_CROSS_NODE_LOCAL_DISK",
-			fmt.Sprintf("该备份位于节点 %s 的本地磁盘（local_disk），Master 无法跨节点访问。请登录该节点或改用云存储后再操作。", node.Name),
-			nil)
-	}
-	return nil
+	return validateCrossNodeLocalDisk(ctx, s.nodeRepo, s.targets, record,
+		"BACKUP_RECORD_CROSS_NODE_LOCAL_DISK", "访问。请登录该节点或改用云存储后再操作")
 }
 
 func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async bool) (*BackupRecordDetail, error) {
@@ -593,14 +573,7 @@ func (s *BackupExecutionService) isRemoteNode(ctx context.Context, nodeID uint) 
 // resolveRemoteNode 返回 NodeID 对应的远程节点指针，或 nil 表示本机执行。
 // 相比 isRemoteNode，它让调用方能读取节点状态（在线/离线）做进一步判断。
 func (s *BackupExecutionService) resolveRemoteNode(ctx context.Context, nodeID uint) *model.Node {
-	if s.nodeRepo == nil || s.agentDispatcher == nil || nodeID == 0 {
-		return nil
-	}
-	node, err := s.nodeRepo.FindByID(ctx, nodeID)
-	if err != nil || node == nil || node.IsLocal {
-		return nil
-	}
-	return node
+	return resolveRemoteExecutionNode(ctx, s.nodeRepo, s.agentDispatcher != nil, nodeID)
 }
 
 func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time) {
@@ -952,78 +925,11 @@ func (s *BackupExecutionService) resolveProviderForNode(ctx context.Context, tar
 		LowLevelRetries: s.retries,
 		BandwidthLimit:  s.effectiveBandwidth(ctx, nodeID),
 	})
-	target, err := s.targets.FindByID(ctx, targetID)
-	if err != nil {
-		return nil, apperror.Internal("BACKUP_STORAGE_TARGET_GET_FAILED", "无法获取存储目标详情", err)
-	}
-	if target == nil {
-		return nil, apperror.BadRequest("BACKUP_STORAGE_TARGET_INVALID", "关联的存储目标不存在", nil)
-	}
-	configMap := map[string]any{}
-	if err := s.cipher.DecryptJSON(target.ConfigCiphertext, &configMap); err != nil {
-		return nil, apperror.Internal("BACKUP_STORAGE_TARGET_DECRYPT_FAILED", "无法解密存储目标配置", err)
-	}
-	provider, err := s.storageRegistry.Create(ctx, target.Type, configMap)
-	if err != nil {
-		return nil, err
-	}
-	return provider, nil
+	return resolveStorageProvider(ctx, s.targets, s.storageRegistry, s.cipher, targetID)
 }
 
 func (s *BackupExecutionService) buildTaskSpec(task *model.BackupTask, startedAt time.Time) (backup.TaskSpec, error) {
-	excludePatterns := []string{}
-	if strings.TrimSpace(task.ExcludePatterns) != "" {
-		if err := json.Unmarshal([]byte(task.ExcludePatterns), &excludePatterns); err != nil {
-			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析排除规则", err)
-		}
-	}
-	password := ""
-	if strings.TrimSpace(task.DBPasswordCiphertext) != "" {
-		plain, err := s.cipher.Decrypt(task.DBPasswordCiphertext)
-		if err != nil {
-			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECRYPT_FAILED", "无法解密数据库密码", err)
-		}
-		password = string(plain)
-	}
-	sourcePaths := []string{}
-	if strings.TrimSpace(task.SourcePaths) != "" {
-		if err := json.Unmarshal([]byte(task.SourcePaths), &sourcePaths); err != nil {
-			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析源路径配置", err)
-		}
-	}
-	dbSpec := backup.DatabaseSpec{
-		Host:     task.DBHost,
-		Port:     task.DBPort,
-		User:     task.DBUser,
-		Password: password,
-		Names:    []string{task.DBName},
-		Path:     task.DBPath,
-	}
-	// 解析 ExtraConfig 填充类型特有字段（目前主要用于 SAP HANA）
-	if strings.TrimSpace(task.ExtraConfig) != "" {
-		extra := map[string]any{}
-		if err := json.Unmarshal([]byte(task.ExtraConfig), &extra); err != nil {
-			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析扩展配置", err)
-		}
-		applyHANAExtraConfig(&dbSpec, extra)
-	}
-	return backup.TaskSpec{
-		ID:                task.ID,
-		Name:              task.Name,
-		Type:              task.Type,
-		SourcePath:        task.SourcePath,
-		SourcePaths:       sourcePaths,
-		ExcludePatterns:   excludePatterns,
-		StorageTargetID:   task.StorageTargetID,
-		StorageTargetType: "",
-		Compression:       task.Compression,
-		Encrypt:           task.Encrypt,
-		RetentionDays:     task.RetentionDays,
-		MaxBackups:        task.MaxBackups,
-		StartedAt:         startedAt,
-		TempDir:           s.tempDir,
-		Database:          dbSpec,
-	}, nil
+	return buildBackupTaskSpec(s.cipher, task, startedAt, s.tempDir)
 }
 
 // applyHANAExtraConfig 从 ExtraConfig map 中提取 SAP HANA 字段填入 DatabaseSpec。
@@ -1065,22 +971,7 @@ func (s *BackupExecutionService) loadRecordProvider(ctx context.Context, recordI
 }
 
 func (s *BackupExecutionService) prepareArtifactForRestore(artifactPath string) (string, error) {
-	currentPath := artifactPath
-	if strings.HasSuffix(strings.ToLower(currentPath), ".enc") {
-		decryptedPath, err := backupcrypto.DecryptFile(s.cipher.Key(), currentPath)
-		if err != nil {
-			return "", err
-		}
-		currentPath = decryptedPath
-	}
-	if strings.HasSuffix(strings.ToLower(currentPath), ".gz") {
-		decompressedPath, err := compress.GunzipFile(currentPath)
-		if err != nil {
-			return "", err
-		}
-		currentPath = decompressedPath
-	}
-	return currentPath, nil
+	return prepareBackupArtifact(s.cipher, artifactPath, nil)
 }
 
 func (s *BackupExecutionService) getRecordDetail(ctx context.Context, recordID uint) (*BackupRecordDetail, error) {

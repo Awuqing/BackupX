@@ -82,22 +82,22 @@ func (s *ReplicationService) SetEventDispatcher(dispatcher EventDispatcher) {
 
 // ReplicationRecordSummary 列表项。
 type ReplicationRecordSummary struct {
-	ID              uint       `json:"id"`
-	BackupRecordID  uint       `json:"backupRecordId"`
-	TaskID          uint       `json:"taskId"`
-	SourceTargetID  uint       `json:"sourceTargetId"`
-	SourceTargetName string    `json:"sourceTargetName"`
-	DestTargetID    uint       `json:"destTargetId"`
-	DestTargetName  string     `json:"destTargetName"`
-	Status          string     `json:"status"`
-	StoragePath     string     `json:"storagePath"`
-	FileSize        int64      `json:"fileSize"`
-	Checksum        string     `json:"checksum"`
-	ErrorMessage    string     `json:"errorMessage"`
-	DurationSeconds int        `json:"durationSeconds"`
-	TriggeredBy     string     `json:"triggeredBy"`
-	StartedAt       time.Time  `json:"startedAt"`
-	CompletedAt     *time.Time `json:"completedAt,omitempty"`
+	ID               uint       `json:"id"`
+	BackupRecordID   uint       `json:"backupRecordId"`
+	TaskID           uint       `json:"taskId"`
+	SourceTargetID   uint       `json:"sourceTargetId"`
+	SourceTargetName string     `json:"sourceTargetName"`
+	DestTargetID     uint       `json:"destTargetId"`
+	DestTargetName   string     `json:"destTargetName"`
+	Status           string     `json:"status"`
+	StoragePath      string     `json:"storagePath"`
+	FileSize         int64      `json:"fileSize"`
+	Checksum         string     `json:"checksum"`
+	ErrorMessage     string     `json:"errorMessage"`
+	DurationSeconds  int        `json:"durationSeconds"`
+	TriggeredBy      string     `json:"triggeredBy"`
+	StartedAt        time.Time  `json:"startedAt"`
+	CompletedAt      *time.Time `json:"completedAt,omitempty"`
 }
 
 type ReplicationRecordListInput struct {
@@ -262,39 +262,13 @@ func (s *ReplicationService) executeReplication(ctx context.Context, repID uint)
 }
 
 func (s *ReplicationService) resolveProvider(ctx context.Context, targetID uint) (storage.StorageProvider, error) {
-	target, err := s.targets.FindByID(ctx, targetID)
-	if err != nil {
-		return nil, apperror.Internal("STORAGE_TARGET_GET_FAILED", "无法获取存储目标", err)
-	}
-	if target == nil {
-		return nil, apperror.BadRequest("STORAGE_TARGET_INVALID", "存储目标不存在", nil)
-	}
-	configMap := map[string]any{}
-	if err := s.cipher.DecryptJSON(target.ConfigCiphertext, &configMap); err != nil {
-		return nil, apperror.Internal("STORAGE_TARGET_DECRYPT_FAILED", "无法解密存储配置", err)
-	}
-	return s.storageRegistry.Create(ctx, target.Type, configMap)
+	return resolveStorageProvider(ctx, s.targets, s.storageRegistry, s.cipher, targetID)
 }
 
-// validateClusterAccessible 拒绝跨节点 local_disk 源（Master 无法拉取）
+// validateClusterAccessible 拒绝跨节点 local_disk 源（Master 无法拉取）。
 func (s *ReplicationService) validateClusterAccessible(ctx context.Context, record *model.BackupRecord) error {
-	if record == nil || record.NodeID == 0 || s.nodeRepo == nil {
-		return nil
-	}
-	node, err := s.nodeRepo.FindByID(ctx, record.NodeID)
-	if err != nil || node == nil || node.IsLocal {
-		return nil
-	}
-	target, err := s.targets.FindByID(ctx, record.StorageTargetID)
-	if err != nil || target == nil {
-		return nil
-	}
-	if strings.EqualFold(target.Type, "local_disk") {
-		return apperror.BadRequest("REPLICATION_CROSS_NODE_LOCAL_DISK",
-			fmt.Sprintf("备份位于节点 %s 的本地磁盘（local_disk），Master 无法跨节点复制。请改用云存储作为主备份。", node.Name),
-			nil)
-	}
-	return nil
+	return validateCrossNodeLocalDisk(ctx, s.nodeRepo, s.targets, record,
+		"REPLICATION_CROSS_NODE_LOCAL_DISK", "复制。请改用云存储作为主备份")
 }
 
 func (s *ReplicationService) dispatchFailed(ctx context.Context, rep *model.ReplicationRecord, message string) {
@@ -304,12 +278,12 @@ func (s *ReplicationService) dispatchFailed(ctx context.Context, rep *model.Repl
 	title := "BackupX 备份复制失败"
 	body := fmt.Sprintf("备份记录：#%d\n源 → 目标：#%d → #%d\n错误：%s", rep.BackupRecordID, rep.SourceTargetID, rep.DestTargetID, message)
 	fields := map[string]any{
-		"replicationId":   rep.ID,
-		"backupRecordId":  rep.BackupRecordID,
-		"taskId":          rep.TaskID,
-		"sourceTargetId":  rep.SourceTargetID,
-		"destTargetId":    rep.DestTargetID,
-		"error":           message,
+		"replicationId":  rep.ID,
+		"backupRecordId": rep.BackupRecordID,
+		"taskId":         rep.TaskID,
+		"sourceTargetId": rep.SourceTargetID,
+		"destTargetId":   rep.DestTargetID,
+		"error":          message,
 	}
 	_ = s.eventDispatcher.DispatchEvent(ctx, model.NotificationEventReplicationFailed, title, body, fields)
 }

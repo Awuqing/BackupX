@@ -16,8 +16,6 @@ import (
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage"
 	"backupx/server/internal/storage/codec"
-	"backupx/server/pkg/compress"
-	backupcrypto "backupx/server/pkg/crypto"
 )
 
 // RestoreService 管理恢复记录生命周期并在集群中路由执行。
@@ -203,14 +201,7 @@ func (s *RestoreService) isRemoteNode(ctx context.Context, nodeID uint) bool {
 
 // resolveRemoteNode 返回远程节点指针（含 Status），用于离线判定。
 func (s *RestoreService) resolveRemoteNode(ctx context.Context, nodeID uint) *model.Node {
-	if s.nodeRepo == nil || s.dispatcher == nil || nodeID == 0 {
-		return nil
-	}
-	node, err := s.nodeRepo.FindByID(ctx, nodeID)
-	if err != nil || node == nil || node.IsLocal {
-		return nil
-	}
-	return node
+	return resolveRemoteExecutionNode(ctx, s.nodeRepo, s.dispatcher != nil, nodeID)
 }
 
 // executeLocally 在 Master 本地执行恢复。
@@ -335,97 +326,19 @@ func (s *RestoreService) dispatchRestoreEvent(ctx context.Context, restoreID uin
 	_ = s.eventDispatcher.DispatchEvent(ctx, eventType, title, body, fields)
 }
 
-// resolveProvider 复用 BackupExecutionService 的逻辑（解密 → 创建 provider）。
+// resolveProvider 解密存储目标配置并创建 provider（共享实现）。
 func (s *RestoreService) resolveProvider(ctx context.Context, targetID uint) (storage.StorageProvider, error) {
-	target, err := s.targets.FindByID(ctx, targetID)
-	if err != nil {
-		return nil, apperror.Internal("BACKUP_STORAGE_TARGET_GET_FAILED", "无法获取存储目标详情", err)
-	}
-	if target == nil {
-		return nil, apperror.BadRequest("BACKUP_STORAGE_TARGET_INVALID", "关联的存储目标不存在", nil)
-	}
-	configMap := map[string]any{}
-	if err := s.cipher.DecryptJSON(target.ConfigCiphertext, &configMap); err != nil {
-		return nil, apperror.Internal("BACKUP_STORAGE_TARGET_DECRYPT_FAILED", "无法解密存储目标配置", err)
-	}
-	return s.storageRegistry.Create(ctx, target.Type, configMap)
+	return resolveStorageProvider(ctx, s.targets, s.storageRegistry, s.cipher, targetID)
 }
 
-// prepareArtifact 根据文件后缀依次解密、解压。
+// prepareArtifact 根据文件后缀依次解密、解压（共享实现）。
 func (s *RestoreService) prepareArtifact(artifactPath string, logger *backup.ExecutionLogger) (string, error) {
-	currentPath := artifactPath
-	if strings.HasSuffix(strings.ToLower(currentPath), ".enc") {
-		logger.Infof("检测到加密后缀，开始解密")
-		decrypted, err := backupcrypto.DecryptFile(s.cipher.Key(), currentPath)
-		if err != nil {
-			return "", err
-		}
-		currentPath = decrypted
-	}
-	if strings.HasSuffix(strings.ToLower(currentPath), ".gz") {
-		logger.Infof("检测到 gzip 压缩，开始解压")
-		decompressed, err := compress.GunzipFile(currentPath)
-		if err != nil {
-			return "", err
-		}
-		currentPath = decompressed
-	}
-	return currentPath, nil
+	return prepareBackupArtifact(s.cipher, artifactPath, logger)
 }
 
-// buildTaskSpec 复刻 BackupExecutionService.buildTaskSpec 的核心逻辑。
+// buildTaskSpec 由任务构建执行规格（共享实现）。
 func (s *RestoreService) buildTaskSpec(task *model.BackupTask, startedAt time.Time) (backup.TaskSpec, error) {
-	excludePatterns := []string{}
-	if strings.TrimSpace(task.ExcludePatterns) != "" {
-		if err := json.Unmarshal([]byte(task.ExcludePatterns), &excludePatterns); err != nil {
-			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析排除规则", err)
-		}
-	}
-	password := ""
-	if strings.TrimSpace(task.DBPasswordCiphertext) != "" {
-		plain, err := s.cipher.Decrypt(task.DBPasswordCiphertext)
-		if err != nil {
-			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECRYPT_FAILED", "无法解密数据库密码", err)
-		}
-		password = string(plain)
-	}
-	sourcePaths := []string{}
-	if strings.TrimSpace(task.SourcePaths) != "" {
-		if err := json.Unmarshal([]byte(task.SourcePaths), &sourcePaths); err != nil {
-			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析源路径配置", err)
-		}
-	}
-	dbSpec := backup.DatabaseSpec{
-		Host:     task.DBHost,
-		Port:     task.DBPort,
-		User:     task.DBUser,
-		Password: password,
-		Names:    []string{task.DBName},
-		Path:     task.DBPath,
-	}
-	if strings.TrimSpace(task.ExtraConfig) != "" {
-		extra := map[string]any{}
-		if err := json.Unmarshal([]byte(task.ExtraConfig), &extra); err != nil {
-			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析扩展配置", err)
-		}
-		applyHANAExtraConfig(&dbSpec, extra)
-	}
-	return backup.TaskSpec{
-		ID:              task.ID,
-		Name:            task.Name,
-		Type:            task.Type,
-		SourcePath:      task.SourcePath,
-		SourcePaths:     sourcePaths,
-		ExcludePatterns: excludePatterns,
-		StorageTargetID: task.StorageTargetID,
-		Compression:     task.Compression,
-		Encrypt:         task.Encrypt,
-		RetentionDays:   task.RetentionDays,
-		MaxBackups:      task.MaxBackups,
-		StartedAt:       startedAt,
-		TempDir:         s.tempDir,
-		Database:        dbSpec,
-	}, nil
+	return buildBackupTaskSpec(s.cipher, task, startedAt, s.tempDir)
 }
 
 // finalize 只更新状态和错误信息，不写 log（用于失败的 dispatch 路径）。

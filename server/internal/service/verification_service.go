@@ -15,8 +15,6 @@ import (
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage"
 	"backupx/server/internal/storage/codec"
-	"backupx/server/pkg/compress"
-	backupcrypto "backupx/server/pkg/crypto"
 )
 
 // VerificationService 管理备份验证（恢复演练）记录生命周期。
@@ -92,11 +90,11 @@ func (v *VerificationEventNotifier) NotifyVerificationResult(ctx context.Context
 	title := "BackupX 备份验证失败"
 	body := fmt.Sprintf("任务：%s\n验证记录：#%d\n错误：%s", taskName, record.ID, record.ErrorMessage)
 	fields := map[string]any{
-		"taskId":        record.TaskID,
-		"taskName":      taskName,
-		"verifyId":      record.ID,
+		"taskId":         record.TaskID,
+		"taskName":       taskName,
+		"verifyId":       record.ID,
 		"backupRecordId": record.BackupRecordID,
-		"error":         record.ErrorMessage,
+		"error":          record.ErrorMessage,
 	}
 	return v.dispatcher.DispatchEvent(ctx, model.NotificationEventVerifyFailed, title, body, fields)
 }
@@ -243,23 +241,8 @@ func (s *VerificationService) Start(ctx context.Context, backupRecordID uint, mo
 // validateClusterAccessible 复刻 BackupExecutionService 的跨节点 local_disk 保护。
 // 避免 Master 端在错误机器下载/校验到假数据。
 func (s *VerificationService) validateClusterAccessible(ctx context.Context, record *model.BackupRecord) error {
-	if record == nil || record.NodeID == 0 || s.nodeRepo == nil {
-		return nil
-	}
-	node, err := s.nodeRepo.FindByID(ctx, record.NodeID)
-	if err != nil || node == nil || node.IsLocal {
-		return nil
-	}
-	target, err := s.targets.FindByID(ctx, record.StorageTargetID)
-	if err != nil || target == nil {
-		return nil
-	}
-	if strings.EqualFold(target.Type, "local_disk") {
-		return apperror.BadRequest("VERIFY_CROSS_NODE_LOCAL_DISK",
-			fmt.Sprintf("备份位于节点 %s 的本地磁盘（local_disk），Master 无法跨节点验证。", node.Name),
-			nil)
-	}
-	return nil
+	return validateCrossNodeLocalDisk(ctx, s.nodeRepo, s.targets, record,
+		"VERIFY_CROSS_NODE_LOCAL_DISK", "验证")
 }
 
 // executeLocally 异步执行验证：下载 → 解密 → 解压 → 按类型校验。
@@ -358,24 +341,7 @@ func (s *VerificationService) executeLocally(ctx context.Context, verID uint, ta
 
 // prepareArtifact 按后缀解密/解压，返回可读路径。
 func (s *VerificationService) prepareArtifact(artifactPath string, logger *backup.ExecutionLogger) (string, error) {
-	current := artifactPath
-	if strings.HasSuffix(strings.ToLower(current), ".enc") {
-		logger.Infof("检测到加密后缀，开始解密")
-		decrypted, err := backupcrypto.DecryptFile(s.cipher.Key(), current)
-		if err != nil {
-			return "", err
-		}
-		current = decrypted
-	}
-	if strings.HasSuffix(strings.ToLower(current), ".gz") {
-		logger.Infof("检测到 gzip，解压")
-		decompressed, err := compress.GunzipFile(current)
-		if err != nil {
-			return "", err
-		}
-		current = decompressed
-	}
-	return current, nil
+	return prepareBackupArtifact(s.cipher, artifactPath, logger)
 }
 
 // verifyByType 按任务类型分派到对应 Verify* 策略。
