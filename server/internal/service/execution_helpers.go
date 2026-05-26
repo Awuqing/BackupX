@@ -2,8 +2,12 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -24,6 +28,43 @@ import (
 // 字段名与少量错误码/日志文案。重复实现既增加维护成本，也容易出现"改了一处忘了
 // 另一处"的不一致缺陷。这里抽取为单一实现，各服务通过薄封装方法委托调用，调用方
 // 无需改动。
+
+// fileSHA256 计算文件内容的 SHA-256（小写 hex），与备份上传时记录到
+// BackupRecord.Checksum 的格式一致，用于恢复/复制前的完整性校验。
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// verifyArtifactChecksum 校验下载到本地的备份对象与记录的 SHA-256 是否一致。
+// expected 为空时跳过（兼容早期未记录 checksum 的备份）；不一致返回结构化错误，
+// 调用方应据此中止恢复，避免还原已损坏或被篡改的数据。
+func verifyArtifactChecksum(path, expected string) error {
+	expected = strings.TrimSpace(expected)
+	if expected == "" {
+		return nil
+	}
+	actual, err := fileSHA256(path)
+	if err != nil {
+		return apperror.Internal("BACKUP_CHECKSUM_READ_FAILED", "无法读取备份文件计算校验和", err)
+	}
+	if !strings.EqualFold(actual, expected) {
+		// 包装错误同样使用中文并附上期望/实际哈希：apperror.Error() 会优先返回包装错误，
+		// 而恢复记录的 ErrorMessage 取自 err.Error()，需保证对用户可读。
+		return apperror.BadRequest("BACKUP_CHECKSUM_MISMATCH",
+			"备份文件完整性校验失败：SHA-256 不匹配，文件可能已损坏或被篡改",
+			fmt.Errorf("备份文件完整性校验失败：SHA-256 不匹配（期望 %s，实际 %s），文件可能已损坏或被篡改", expected, actual))
+	}
+	return nil
+}
 
 // resolveStorageProvider 查询存储目标、解密其配置并创建 provider。
 func resolveStorageProvider(ctx context.Context, targets repository.StorageTargetRepository, registry *storage.Registry, cipher *codec.ConfigCipher, targetID uint) (storage.StorageProvider, error) {

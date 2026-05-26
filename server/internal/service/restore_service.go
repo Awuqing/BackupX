@@ -260,6 +260,17 @@ func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, tas
 		logger.Errorf("写入恢复文件失败：%v", writeErr)
 		return
 	}
+	// 完整性校验：在解密/解压前比对下载对象的 SHA-256，拒绝还原损坏或被篡改的备份。
+	// 早期未记录 checksum 的备份会跳过（向后兼容）。
+	if backupRecord.Checksum != "" {
+		logger.Infof("校验备份完整性（SHA-256）")
+		if csErr := verifyArtifactChecksum(artifactPath, backupRecord.Checksum); csErr != nil {
+			errMessage = csErr.Error()
+			logger.Errorf("完整性校验失败：%v", csErr)
+			return
+		}
+		logger.Infof("完整性校验通过")
+	}
 	preparedPath, prepareErr := s.prepareArtifact(artifactPath, logger)
 	if prepareErr != nil {
 		errMessage = prepareErr.Error()

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -194,6 +195,77 @@ func TestRestoreServiceStart_LocalNodeExecutesInline(t *testing.T) {
 	}
 	if len(h.dispatcher.snapshot()) != 0 {
 		t.Fatalf("expected no dispatcher calls for local node, got %d", len(h.dispatcher.snapshot()))
+	}
+}
+
+// TestRestoreServiceStart_RejectsCorruptedBackup 验证恢复在还原前做 SHA-256 完整性
+// 校验：若已存储的备份对象被损坏/篡改，恢复必须失败且不触碰源数据。
+func TestRestoreServiceStart_RejectsCorruptedBackup(t *testing.T) {
+	h := newRestoreTestHarness(t, false)
+	ctx := context.Background()
+
+	backupDetail, err := h.execution.RunTaskByIDSync(ctx, 1)
+	if err != nil {
+		t.Fatalf("RunTaskByIDSync: %v", err)
+	}
+	if backupDetail.Status != "success" {
+		t.Fatalf("expected backup success, got %s", backupDetail.Status)
+	}
+
+	// 破坏已存储的备份对象：追加垃圾字节，使其 SHA-256 与记录不符。
+	corrupted := false
+	if walkErr := filepath.Walk(h.storageDir, func(p string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil || info.IsDir() {
+			return walkErr
+		}
+		f, openErr := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0o644)
+		if openErr != nil {
+			return openErr
+		}
+		defer f.Close()
+		if _, writeErr := f.WriteString("corrupt"); writeErr != nil {
+			return writeErr
+		}
+		corrupted = true
+		return nil
+	}); walkErr != nil {
+		t.Fatalf("corrupt walk: %v", walkErr)
+	}
+	if !corrupted {
+		t.Fatal("did not find a stored backup object to corrupt")
+	}
+
+	if err := os.RemoveAll(h.sourceDir); err != nil {
+		t.Fatalf("remove source: %v", err)
+	}
+
+	done := make(chan struct{})
+	h.service.async = func(job func()) {
+		go func() { job(); close(done) }()
+	}
+	detail, err := h.service.Start(ctx, backupDetail.ID, "tester")
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatalf("restore did not complete in time")
+	}
+
+	final, err := h.service.Get(ctx, detail.ID)
+	if err != nil {
+		t.Fatalf("Get final: %v", err)
+	}
+	if final.Status != model.RestoreRecordStatusFailed {
+		t.Fatalf("expected restore to FAIL on corrupted backup, got %s (err=%s)", final.Status, final.ErrorMessage)
+	}
+	if !strings.Contains(final.ErrorMessage, "完整性校验失败") && !strings.Contains(final.ErrorMessage, "SHA-256") {
+		t.Fatalf("expected checksum failure message, got %q", final.ErrorMessage)
+	}
+	// 校验阶段即中止，不应触碰源数据。
+	if _, statErr := os.Stat(filepath.Join(h.sourceDir, "index.html")); statErr == nil {
+		t.Fatal("source must not be restored when checksum verification fails")
 	}
 }
 
