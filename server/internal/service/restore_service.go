@@ -463,6 +463,8 @@ type AgentRestoreSpec struct {
 	Storage         AgentStorageTargetConfig `json:"storage"`
 	StoragePath     string                   `json:"storagePath"`
 	FileName        string                   `json:"fileName"`
+	// Checksum 源备份对象的 SHA-256（小写 hex）；Agent 在还原前据此校验完整性。
+	Checksum string `json:"checksum,omitempty"`
 }
 
 // AgentRestoreUpdate Agent 回传的增量更新。
@@ -549,6 +551,7 @@ func (s *RestoreService) GetAgentRestoreSpec(ctx context.Context, node *model.No
 		},
 		StoragePath: backupRecord.StoragePath,
 		FileName:    backupRecord.FileName,
+		Checksum:    backupRecord.Checksum,
 	}, nil
 }
 

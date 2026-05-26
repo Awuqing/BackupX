@@ -190,6 +190,7 @@ type RestoreSpec struct {
 	Storage         StorageTargetConfig `json:"storage"`
 	StoragePath     string              `json:"storagePath"`
 	FileName        string              `json:"fileName"`
+	Checksum        string              `json:"checksum,omitempty"`
 }
 
 // RestoreUpdate 与 service.AgentRestoreUpdate 对齐

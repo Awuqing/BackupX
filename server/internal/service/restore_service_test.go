@@ -379,6 +379,7 @@ func TestRestoreServiceAgentRestoreAccessUsesRestoreRecordNode(t *testing.T) {
 		Status:          model.BackupRecordStatusSuccess,
 		FileName:        "remote.tar.gz",
 		StoragePath:     "file/2026/05/09/remote.tar.gz",
+		Checksum:        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
 		StartedAt:       startedAt,
 		CompletedAt:     &completedAt,
 	}
@@ -403,6 +404,10 @@ func TestRestoreServiceAgentRestoreAccessUsesRestoreRecordNode(t *testing.T) {
 	}
 	if spec.RestoreRecordID != restore.ID || spec.StoragePath != backupRecord.StoragePath {
 		t.Fatalf("unexpected restore spec: %#v", spec)
+	}
+	// Agent 端完整性校验依赖 spec 透传源备份 checksum。
+	if spec.Checksum != backupRecord.Checksum {
+		t.Fatalf("expected spec.Checksum=%q, got %q", backupRecord.Checksum, spec.Checksum)
 	}
 	if _, err := h.service.GetAgentRestoreSpec(ctx, other, restore.ID); err == nil {
 		t.Fatal("expected non-owner node to be forbidden from restore spec")

@@ -379,6 +379,24 @@ func (e *Executor) ExecuteRestore(ctx context.Context, restoreRecordID uint) err
 		return err
 	}
 
+	// 2.5) 完整性校验：还原前比对下载对象的 SHA-256（与 Master 本地恢复路径一致）。
+	// 拒绝还原损坏或被篡改的备份；早期无 checksum 的备份跳过（向后兼容）。
+	if strings.TrimSpace(spec.Checksum) != "" {
+		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 校验备份完整性（SHA-256）\n")
+		actual, sumErr := computeFileSHA256(artifactPath)
+		if sumErr != nil {
+			msg := fmt.Sprintf("计算校验和失败: %v", sumErr)
+			e.reportRestoreFailure(ctx, restoreRecordID, msg)
+			return fmt.Errorf("%s", msg)
+		}
+		if !strings.EqualFold(actual, spec.Checksum) {
+			msg := "备份文件完整性校验失败：SHA-256 不匹配，文件可能已损坏或被篡改"
+			e.reportRestoreFailure(ctx, restoreRecordID, msg)
+			return fmt.Errorf("%s（期望 %s，实际 %s）", msg, spec.Checksum, actual)
+		}
+		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 完整性校验通过\n")
+	}
+
 	// 3) 解压（Agent 不支持加密，遇到 .enc 会直接失败）
 	preparedPath := artifactPath
 	if strings.HasSuffix(strings.ToLower(preparedPath), ".enc") {
