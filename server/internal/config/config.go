@@ -21,6 +21,10 @@ type ServerConfig struct {
 	Port        int    `mapstructure:"port"`
 	Mode        string `mapstructure:"mode"`
 	ExternalURL string `mapstructure:"external_url"`
+	// WebRoot 指向前端构建产物目录。留空时后端会按部署惯例自动探测
+	// （./web、./web/dist、/opt/backupx/web 等）。探测命中后后端直接托管
+	// 前端 SPA，无需额外的 nginx 反向代理即可访问 Web 控制台。
+	WebRoot string `mapstructure:"web_root"`
 }
 
 type DatabaseConfig struct {
@@ -138,6 +142,7 @@ func applyDefaults(v *viper.Viper) {
 	v.SetDefault("server.port", 8340)
 	v.SetDefault("server.mode", "release")
 	v.SetDefault("server.external_url", "")
+	v.SetDefault("server.web_root", "")
 	v.SetDefault("database.path", "./data/backupx.db")
 	v.SetDefault("security.jwt_expire", "24h")
 	v.SetDefault("backup.temp_dir", "/tmp/backupx")

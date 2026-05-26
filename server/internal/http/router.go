@@ -353,9 +353,25 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		engine.GET("/api/install/:token/compose.yml", installHandler.Compose)
 	}
 
-	engine.NoRoute(func(c *gin.Context) {
+	// 未匹配路由处理：
+	//   - 找到前端产物目录时，托管 SPA（静态文件 + index.html 回退），
+	//     使后端在无 nginx 反向代理时也能直接提供 Web 控制台（issue #62）；
+	//   - 未找到前端目录时退化为纯 API 服务，统一返回结构化 JSON 404。
+	apiNotFound := func(c *gin.Context) {
 		response.Error(c, apperror.New(stdhttp.StatusNotFound, "NOT_FOUND", "接口不存在", errors.New("route not found")))
-	})
+	}
+	if webRoot := resolveWebRoot(deps.Config.Server.WebRoot); webRoot != "" {
+		if deps.Logger != nil {
+			deps.Logger.Info("serving web frontend", zap.String("web_root", webRoot))
+		}
+		engine.NoRoute(spaFileServer(webRoot, apiNotFound))
+	} else {
+		if deps.Logger != nil {
+			deps.Logger.Warn("web frontend directory not found; serving API only",
+				zap.String("hint", "set server.web_root in config, or place the built frontend at ./web"))
+		}
+		engine.NoRoute(apiNotFound)
+	}
 
 	return engine
 }

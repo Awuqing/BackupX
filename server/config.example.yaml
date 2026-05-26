@@ -4,6 +4,8 @@ server:
   port: 8340
   mode: "release"              # debug | release
   external_url: ""             # 可选：Master 对 Agent 可达的 URL，例如 https://backup.example.com
+  web_root: ""                 # 前端静态目录；留空自动探测（./web、/opt/backupx/web 等）。
+                               # 命中后后端直接托管 Web 控制台，无需额外 nginx 反向代理。
 
 database:
   path: "./data/backupx.db"    # SQLite 数据库路径

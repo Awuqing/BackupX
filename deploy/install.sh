@@ -59,8 +59,11 @@ cp -R "$WEB_SOURCE/." "$PREFIX/web/"
 chown -R "$APP_USER:$APP_GROUP" "$PREFIX"
 
 if [ ! -f "$ETC_DIR/config.yaml" ]; then
-    install -m 0640 "$CONFIG_TEMPLATE" "$ETC_DIR/config.yaml"
+    install -o "$APP_USER" -g "$APP_GROUP" -m 0640 "$CONFIG_TEMPLATE" "$ETC_DIR/config.yaml"
 fi
+# 确保服务账户能读取配置：历史版本曾以 root:root 0640 安装配置，
+# 导致以 backupx 身份运行的服务因无权读取配置而启动失败（exit 1）。
+chown "$APP_USER:$APP_GROUP" "$ETC_DIR/config.yaml"
 
 if [ -f "$SERVICE_SOURCE" ]; then
     install -m 0644 "$SERVICE_SOURCE" "/etc/systemd/system/$SERVICE_NAME.service"
@@ -104,6 +107,14 @@ cat <<MESSAGE
 - 前端目录：$PREFIX/web
 - 配置文件：$ETC_DIR/config.yaml
 - systemd 服务：/etc/systemd/system/$SERVICE_NAME.service
+
+Web 控制台已由后端直接托管，无需额外的 nginx 反向代理即可访问：
+  http://<本机IP>:8340
+
+（如已安装 nginx，脚本会自动写入反向代理配置，可继续用 80 端口访问。）
+
+排查：若服务未监听端口，请查看日志：
+  journalctl -u "$SERVICE_NAME" -n 50 --no-pager
 
 如需修改监听地址、数据库路径或日志级别，请编辑 "$ETC_DIR/config.yaml" 后执行：
   systemctl restart "$SERVICE_NAME"
