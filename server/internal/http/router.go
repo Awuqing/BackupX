@@ -292,7 +292,10 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		nodes.POST("", RequireRole("admin"), nodeHandler.Create)
 		nodes.PUT("/:id", RequireRole("admin"), nodeHandler.Update)
 		nodes.DELETE("/:id", RequireRole("admin"), nodeHandler.Delete)
-		nodes.GET("/:id/fs/list", nodeHandler.ListDirectory)
+		// 文件浏览会枚举节点文件系统目录（含 /etc、/root 等），属敏感读操作：
+		// 限制为非 viewer（admin/operator），与"创建备份任务需选源路径"的权限对齐，
+		// 避免只读 viewer 借此探查服务器目录结构。
+		nodes.GET("/:id/fs/list", RequireNotViewer(), nodeHandler.ListDirectory)
 		nodes.POST("/batch", RequireRole("admin"), nodeHandler.BatchCreate)
 		nodes.POST("/:id/install-tokens", RequireRole("admin"), nodeHandler.CreateInstallToken)
 		nodes.POST("/:id/rotate-token", RequireRole("admin"), nodeHandler.RotateToken)
