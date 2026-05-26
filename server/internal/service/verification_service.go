@@ -316,14 +316,26 @@ func (s *VerificationService) executeLocally(ctx context.Context, verID uint, ta
 		logger.Errorf("写入沙箱失败：%v", err)
 		return
 	}
+	// 完整性校验：先比对下载对象的 SHA-256（外层对象，与备份记录一致），再做结构校验。
+	// 与恢复路径保持一致的强度；早期无 checksum 的备份跳过（向后兼容）。
+	if backupRecord.Checksum != "" {
+		logger.Infof("校验备份完整性（SHA-256）")
+		if csErr := verifyArtifactChecksum(artifactPath, backupRecord.Checksum); csErr != nil {
+			errMessage = csErr.Error()
+			summary = "完整性校验失败"
+			logger.Errorf("完整性校验失败：%v", csErr)
+			return
+		}
+		logger.Infof("完整性校验通过")
+	}
 	preparedPath, err := s.prepareArtifact(artifactPath, logger)
 	if err != nil {
 		errMessage = err.Error()
 		logger.Errorf("准备归档失败：%v", err)
 		return
 	}
-	// 按任务类型分派校验
-	report, verifyErr := s.verifyByType(task.Type, preparedPath, backupRecord.Checksum, logger)
+	// 按任务类型做结构校验（外层 SHA-256 已在上方单独校验）。
+	report, verifyErr := s.verifyByType(task.Type, preparedPath, logger)
 	if verifyErr != nil {
 		errMessage = verifyErr.Error()
 		if report != nil && report.Detail != "" {
@@ -344,8 +356,8 @@ func (s *VerificationService) prepareArtifact(artifactPath string, logger *backu
 	return prepareBackupArtifact(s.cipher, artifactPath, logger)
 }
 
-// verifyByType 按任务类型分派到对应 Verify* 策略。
-func (s *VerificationService) verifyByType(taskType, artifactPath, checksum string, logger *backup.ExecutionLogger) (*backup.VerifyReport, error) {
+// verifyByType 按任务类型分派到对应 Verify* 结构校验策略（不含 SHA-256 比对）。
+func (s *VerificationService) verifyByType(taskType, artifactPath string, logger *backup.ExecutionLogger) (*backup.VerifyReport, error) {
 	switch strings.ToLower(strings.TrimSpace(taskType)) {
 	case "file":
 		logger.Infof("执行文件归档校验")
