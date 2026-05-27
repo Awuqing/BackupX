@@ -1,5 +1,5 @@
 import { http, getAccessToken, type ApiEnvelope, unwrapApiEnvelope } from './http'
-import type { BackupLogEvent, BackupRecordDetail, BackupRecordListFilter, BackupRecordSummary } from '../types/backup-records'
+import type { BackupLogEvent, BackupRecordContents, BackupRecordDetail, BackupRecordListFilter, BackupRecordSummary } from '../types/backup-records'
 import { resolveErrorMessage } from '../utils/error'
 
 interface RecordLogStreamHandlers {
@@ -66,6 +66,12 @@ export async function listBackupRecords(filter: BackupRecordListFilter = {}) {
 
 export async function getBackupRecord(id: number) {
   const response = await http.get<ApiEnvelope<BackupRecordDetail>>(`/backup/records/${id}`)
+  return unwrapApiEnvelope(response.data)
+}
+
+// getBackupRecordContents 获取备份记录的文件清单（内容浏览，只读）。
+export async function getBackupRecordContents(id: number) {
+  const response = await http.get<ApiEnvelope<BackupRecordContents>>(`/backup/records/${id}/contents`)
   return unwrapApiEnvelope(response.data)
 }
 

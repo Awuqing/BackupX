@@ -167,6 +167,7 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		backupRecords.GET("/:id", backupRecordHandler.Get)
 		backupRecords.GET("/:id/logs/stream", backupRecordHandler.StreamLogs)
 		backupRecords.GET("/:id/download", backupRecordHandler.Download)
+		backupRecords.GET("/:id/contents", backupRecordHandler.Contents)
 		backupRecords.POST("/:id/restore", RequireNotViewer(), backupRecordHandler.Restore)
 		backupRecords.POST("/batch-delete", RequireNotViewer(), backupRecordHandler.BatchDelete)
 		backupRecords.DELETE("/:id", RequireNotViewer(), backupRecordHandler.Delete)

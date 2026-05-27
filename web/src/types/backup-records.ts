@@ -29,6 +29,20 @@ export interface BackupRecordSummary {
   backupKind: 'full' | 'differential'
 }
 
+export interface BackupRecordContentEntry {
+  path: string
+  size: number
+  isDir: boolean
+}
+
+export interface BackupRecordContents {
+  recordId: number
+  total: number
+  truncated: boolean
+  basedOnFull?: number
+  entries: BackupRecordContentEntry[]
+}
+
 export interface StorageUploadResultItem {
   storageTargetId: number
   storageTargetName: string

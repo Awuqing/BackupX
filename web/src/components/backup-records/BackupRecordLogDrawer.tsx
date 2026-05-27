@@ -12,6 +12,7 @@ import type { BackupTaskDetail } from '../../types/backup-tasks'
 import { resolveErrorMessage } from '../../utils/error'
 import { formatBytes, formatDateTime, formatDuration } from '../../utils/format'
 import { RestoreConfirmModal } from '../restore-records/RestoreConfirmModal'
+import { BackupRecordContentsModal } from './BackupRecordContentsModal'
 
 interface BackupRecordLogDrawerProps {
   visible: boolean
@@ -53,6 +54,7 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
   const [restoreLoading, setRestoreLoading] = useState(false)
   const [restorePreparing, setRestorePreparing] = useState(false)
   const [verifyLoading, setVerifyLoading] = useState(false)
+  const [contentsVisible, setContentsVisible] = useState(false)
 
   useEffect(() => {
     if (!visible || !recordId) {
@@ -268,6 +270,7 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
             <Button loading={acting} onClick={handleDownload}>
               下载
             </Button>
+            <Button onClick={() => setContentsVisible(true)}>查看内容</Button>
             {writable && (
               <Button
                 type="primary"
@@ -324,6 +327,7 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
         }}
         onConfirm={() => void handleConfirmRestore()}
       />
+      <BackupRecordContentsModal visible={contentsVisible} recordId={recordId} onClose={() => setContentsVisible(false)} />
     </Drawer>
   )
 }

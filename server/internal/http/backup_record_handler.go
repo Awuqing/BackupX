@@ -52,6 +52,20 @@ func (h *BackupRecordHandler) Get(c *gin.Context) {
 	response.Success(c, item)
 }
 
+// Contents 返回备份记录的文件清单（内容浏览，只读）。
+func (h *BackupRecordHandler) Contents(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	contents, err := h.service.ListContents(c.Request.Context(), id)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Success(c, contents)
+}
+
 func (h *BackupRecordHandler) StreamLogs(c *gin.Context) {
 	id, ok := parseUintParam(c, "id")
 	if !ok {
