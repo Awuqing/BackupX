@@ -8,6 +8,7 @@ const (
 	BackupTaskTypeSQLite     = "sqlite"
 	BackupTaskTypePostgreSQL = "postgresql"
 	BackupTaskTypeSAPHANA    = "saphana"
+	BackupTaskTypeMongoDB    = "mongodb"
 )
 
 const (

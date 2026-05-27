@@ -21,7 +21,7 @@ const backupTaskMaskedValue = "********"
 
 type BackupTaskUpsertInput struct {
 	Name             string   `json:"name" binding:"required,min=1,max=100"`
-	Type             string   `json:"type" binding:"required,oneof=file mysql sqlite postgresql pgsql saphana"`
+	Type             string   `json:"type" binding:"required,oneof=file mysql sqlite postgresql pgsql saphana mongodb"`
 	Enabled          bool     `json:"enabled"`
 	CronExpr         string   `json:"cronExpr" binding:"max=64"`
 	SourcePath       string   `json:"sourcePath" binding:"max=500"`
@@ -578,7 +578,7 @@ func validateTaskTypeSpecificFields(input BackupTaskUpsertInput, passwordRequire
 		if !hasSourcePaths {
 			return apperror.BadRequest("BACKUP_TASK_INVALID", "文件备份必须填写源路径", nil)
 		}
-	case "mysql", "postgresql", "saphana":
+	case "mysql", "postgresql", "saphana", "mongodb":
 		if strings.TrimSpace(input.DBHost) == "" {
 			return apperror.BadRequest("BACKUP_TASK_INVALID", "数据库主机不能为空", nil)
 		}

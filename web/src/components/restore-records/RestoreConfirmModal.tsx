@@ -80,7 +80,7 @@ function renderRestoreTarget(task: BackupTaskDetail) {
   if (task.type === 'sqlite') {
     return <Typography.Text code>{task.dbPath || '-'}</Typography.Text>
   }
-  if (task.type === 'mysql' || task.type === 'postgresql' || task.type === 'saphana') {
+  if (task.type === 'mysql' || task.type === 'postgresql' || task.type === 'saphana' || task.type === 'mongodb') {
     return (
       <Typography.Text>
         {task.dbUser}@{task.dbHost}:{task.dbPort} / <Typography.Text code>{task.dbName || '-'}</Typography.Text>

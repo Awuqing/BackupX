@@ -198,11 +198,11 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       sourcePath: value === 'file' ? current.sourcePath : '',
       sourcePaths: value === 'file' ? current.sourcePaths : [''],
       excludePatterns: value === 'file' ? current.excludePatterns : [],
-      dbHost: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbHost : '',
-      dbPort: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbPort || getDefaultPort(value) : 0,
-      dbUser: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbUser : '',
-      dbPassword: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbPassword : '',
-      dbName: value === 'mysql' || value === 'postgresql' || value === 'saphana' ? current.dbName : '',
+      dbHost: isDatabaseBackupTask(value) ? current.dbHost : '',
+      dbPort: isDatabaseBackupTask(value) ? current.dbPort || getDefaultPort(value) : 0,
+      dbUser: isDatabaseBackupTask(value) ? current.dbUser : '',
+      dbPassword: isDatabaseBackupTask(value) ? current.dbPassword : '',
+      dbName: isDatabaseBackupTask(value) ? current.dbName : '',
       dbPath: value === 'sqlite' ? current.dbPath : '',
       // 切换到 SAP HANA 时初始化扩展配置；切换到其他类型时清空
       extraConfig: value === 'saphana'

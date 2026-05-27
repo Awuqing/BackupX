@@ -34,6 +34,7 @@ func NewExecutor(client *MasterClient, tempDir string) *Executor {
 		backup.NewMySQLRunner(nil),
 		backup.NewPostgreSQLRunner(nil),
 		backup.NewSAPHANARunner(nil),
+		backup.NewMongoDBRunner(nil),
 	)
 	storageRegistry := storage.NewRegistry(
 		storageRclone.NewLocalDiskFactory(),

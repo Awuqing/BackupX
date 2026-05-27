@@ -82,7 +82,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	backupTaskService := service.NewBackupTaskService(backupTaskRepo, storageTargetRepo, configCipher)
 	backupTaskService.SetRecordsAndStorage(backupRecordRepo, storageRegistry)
 	// nodeRepo 在下方 Cluster 节点管理区块才实例化，这里延后注入
-	backupRunnerRegistry := backup.NewRegistry(backup.NewFileRunner(), backup.NewSQLiteRunner(), backup.NewMySQLRunner(nil), backup.NewPostgreSQLRunner(nil), backup.NewSAPHANARunner(nil))
+	backupRunnerRegistry := backup.NewRegistry(backup.NewFileRunner(), backup.NewSQLiteRunner(), backup.NewMySQLRunner(nil), backup.NewPostgreSQLRunner(nil), backup.NewSAPHANARunner(nil), backup.NewMongoDBRunner(nil))
 	logHub := backup.NewLogHub()
 	retentionService := backupretention.NewService(backupRecordRepo)
 	notifyRegistry := notify.NewRegistry(notify.NewEmailNotifier(), notify.NewWebhookNotifier(), notify.NewTelegramNotifier())
