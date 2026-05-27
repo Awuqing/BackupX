@@ -20,6 +20,7 @@ import {
   IconCloud,
   IconDesktop,
   IconList,
+  IconFilePdf,
 } from '@arco-design/web-react/icon'
 import { useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
@@ -106,6 +107,7 @@ interface MenuItemConfig {
 
 const menuItems: MenuItemConfig[] = [
   { key: '/dashboard', label: '仪表盘', icon: <IconDashboard /> },
+  { key: '/reports', label: '合规报表', icon: <IconFilePdf /> },
   { key: '/backup/tasks', label: '备份任务', icon: <IconFile /> },
   { key: '/backup/records', label: '备份记录', icon: <IconHistory /> },
   { key: '/restore/records', label: '恢复记录', icon: <IconRefresh /> },
