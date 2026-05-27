@@ -213,6 +213,26 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
     }
   }
 
+  // handleSelectiveRestore 按需恢复：仅还原内容浏览中勾选的文件/目录到原位置。
+  async function handleSelectiveRestore(paths: string[]) {
+    if (!recordId || paths.length === 0) {
+      return
+    }
+    if (!window.confirm(`确定将选中的 ${paths.length} 项恢复到原位置吗？这会覆盖目标位置的现有文件，不可撤销。`)) {
+      return
+    }
+    try {
+      const restore = await startRestoreFromBackup(recordId, paths)
+      Message.success('按需恢复已启动，正在打开日志')
+      setContentsVisible(false)
+      await onChanged?.()
+      navigate(`/restore/records?restoreId=${restore.id}`)
+      onCancel()
+    } catch (restoreError) {
+      Message.error(resolveErrorMessage(restoreError, '启动按需恢复失败'))
+    }
+  }
+
   async function handleDelete() {
     if (!recordId) {
       return
@@ -327,7 +347,12 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
         }}
         onConfirm={() => void handleConfirmRestore()}
       />
-      <BackupRecordContentsModal visible={contentsVisible} recordId={recordId} onClose={() => setContentsVisible(false)} />
+      <BackupRecordContentsModal
+        visible={contentsVisible}
+        recordId={recordId}
+        onClose={() => setContentsVisible(false)}
+        onRestoreSelected={writable && record?.status === 'success' ? (paths) => void handleSelectiveRestore(paths) : undefined}
+      />
     </Drawer>
   )
 }

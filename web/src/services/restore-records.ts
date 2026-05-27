@@ -39,9 +39,10 @@ export async function getRestoreRecord(id: number) {
   return unwrapApiEnvelope(response.data)
 }
 
-// startRestoreFromBackup 通过源备份记录启动恢复。返回新建的恢复记录详情。
-export async function startRestoreFromBackup(backupRecordId: number) {
-  const response = await http.post<ApiEnvelope<RestoreRecordDetail>>(`/backup/records/${backupRecordId}/restore`)
+// startRestoreFromBackup 通过源备份记录启动恢复。selectedPaths 非空时为按需（选择性）恢复。
+export async function startRestoreFromBackup(backupRecordId: number, selectedPaths?: string[]) {
+  const body = selectedPaths && selectedPaths.length > 0 ? { selectedPaths } : undefined
+  const response = await http.post<ApiEnvelope<RestoreRecordDetail>>(`/backup/records/${backupRecordId}/restore`, body)
   return unwrapApiEnvelope(response.data)
 }
 

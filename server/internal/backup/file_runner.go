@@ -207,6 +207,10 @@ func (r *FileRunner) Restore(_ context.Context, task TaskSpec, artifactPath stri
 		if cleanName == "." || cleanName == "" {
 			continue
 		}
+		// 选择性恢复：仅提取被选中的文件/目录（及其子项）。
+		if len(task.SelectedPaths) > 0 && !pathSelected(cleanName, task.SelectedPaths) {
+			continue
+		}
 		targetPath, ok := resolveWithinParent(targetParent, cleanName)
 		if !ok {
 			return fmt.Errorf("tar entry escapes restore path")
@@ -233,11 +237,40 @@ func (r *FileRunner) Restore(_ context.Context, task TaskSpec, artifactPath stri
 			}
 		}
 	}
+	// 选择性恢复时仅对选中范围应用删除，避免误删未选中的文件。
+	if len(task.SelectedPaths) > 0 {
+		pendingDeletions = filterSelectedPaths(pendingDeletions, task.SelectedPaths)
+	}
 	if err := applyDeletions(targetParent, pendingDeletions, writer); err != nil {
 		return err
 	}
 	writer.WriteLine("文件恢复完成")
 	return nil
+}
+
+// pathSelected 判断归档条目名是否落在选中集合内（精确匹配或位于选中目录之下）。
+func pathSelected(name string, selected []string) bool {
+	for _, sel := range selected {
+		clean := path.Clean(strings.TrimSpace(sel))
+		if clean == "" || clean == "." {
+			continue
+		}
+		if name == clean || strings.HasPrefix(name, clean+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+// filterSelectedPaths 仅保留落在选中集合内的路径。
+func filterSelectedPaths(paths []string, selected []string) []string {
+	filtered := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if pathSelected(path.Clean(strings.TrimSpace(p)), selected) {
+			filtered = append(filtered, p)
+		}
+	}
+	return filtered
 }
 
 // resolveWithinParent 将归档相对名安全解析为 targetParent 下的绝对路径；

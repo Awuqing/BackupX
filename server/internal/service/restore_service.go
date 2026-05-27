@@ -120,6 +120,11 @@ type RestoreRecordDetail struct {
 // 若任务绑定远程节点：入队 AgentCommand 后立即返回（状态为 running）
 // 若本地：异步执行并立即返回。
 func (s *RestoreService) Start(ctx context.Context, backupRecordID uint, triggeredBy string) (*RestoreRecordDetail, error) {
+	return s.StartSelective(ctx, backupRecordID, nil, triggeredBy)
+}
+
+// StartSelective 启动恢复；selectedPaths 非空时仅恢复选中的文件/目录（按需恢复，仅本机文件备份）。
+func (s *RestoreService) StartSelective(ctx context.Context, backupRecordID uint, selectedPaths []string, triggeredBy string) (*RestoreRecordDetail, error) {
 	record, err := s.records.FindByID(ctx, backupRecordID)
 	if err != nil {
 		return nil, apperror.Internal("BACKUP_RECORD_GET_FAILED", "无法获取备份记录", err)
@@ -136,6 +141,14 @@ func (s *RestoreService) Start(ctx context.Context, backupRecordID uint, trigger
 	}
 	if task == nil {
 		return nil, apperror.New(404, "BACKUP_TASK_NOT_FOUND", "关联的备份任务不存在", fmt.Errorf("backup task %d not found", record.TaskID))
+	}
+	if len(selectedPaths) > 0 {
+		if task.Type != model.BackupTaskTypeFile {
+			return nil, apperror.BadRequest("RESTORE_SELECTIVE_UNSUPPORTED", "按需（选择性）恢复仅支持文件类型备份", nil)
+		}
+		if s.resolveRemoteNode(ctx, s.resolveRestoreNodeID(record, task)) != nil {
+			return nil, apperror.BadRequest("RESTORE_SELECTIVE_REMOTE_UNSUPPORTED", "按需恢复当前仅支持本机 Master 执行", nil)
+		}
 	}
 
 	startedAt := s.now()
@@ -178,7 +191,7 @@ func (s *RestoreService) Start(ctx context.Context, backupRecordID uint, trigger
 
 	// 本地节点：异步执行
 	run := func() {
-		s.executeLocally(context.Background(), restore.ID, task, record)
+		s.executeLocally(context.Background(), restore.ID, task, record, selectedPaths)
 	}
 	s.async(run)
 	return s.getDetail(ctx, restore.ID)
@@ -205,7 +218,7 @@ func (s *RestoreService) resolveRemoteNode(ctx context.Context, nodeID uint) *mo
 }
 
 // executeLocally 在 Master 本地执行恢复。
-func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, task *model.BackupTask, backupRecord *model.BackupRecord) {
+func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, task *model.BackupTask, backupRecord *model.BackupRecord, selectedPaths []string) {
 	s.semaphore <- struct{}{}
 	defer func() { <-s.semaphore }()
 
@@ -229,6 +242,10 @@ func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, tas
 		errMessage = specErr.Error()
 		logger.Errorf("构建恢复规格失败：%v", specErr)
 		return
+	}
+	if len(selectedPaths) > 0 {
+		spec.SelectedPaths = selectedPaths
+		logger.Infof("按需恢复：仅恢复选中的 %d 个路径", len(selectedPaths))
 	}
 	runner, runnerErr := s.runnerRegistry.Runner(spec.Type)
 	if runnerErr != nil {

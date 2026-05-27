@@ -1,4 +1,4 @@
-import { Alert, Input, Modal, Spin, Table, Tag, Typography } from '@arco-design/web-react'
+import { Alert, Button, Input, Modal, Spin, Table, Tag, Typography } from '@arco-design/web-react'
 import { useEffect, useMemo, useState } from 'react'
 import { getBackupRecordContents } from '../../services/backup-records'
 import type { BackupRecordContentEntry, BackupRecordContents } from '../../types/backup-records'
@@ -9,15 +9,18 @@ interface BackupRecordContentsModalProps {
   visible: boolean
   recordId?: number
   onClose: () => void
+  // onRestoreSelected 提供时启用按需恢复：勾选条目后回调选中的归档路径。
+  onRestoreSelected?: (paths: string[]) => void
 }
 
 // BackupRecordContentsModal 浏览某次备份捕获的文件清单（只读）。
 // 数据来源于全量备份记录的清单，无需下载归档，秒级展示并支持按路径筛选。
-export function BackupRecordContentsModal({ visible, recordId, onClose }: BackupRecordContentsModalProps) {
+export function BackupRecordContentsModal({ visible, recordId, onClose, onRestoreSelected }: BackupRecordContentsModalProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [contents, setContents] = useState<BackupRecordContents | null>(null)
   const [keyword, setKeyword] = useState('')
+  const [selectedKeys, setSelectedKeys] = useState<string[]>([])
 
   useEffect(() => {
     if (!visible || !recordId) {
@@ -28,6 +31,7 @@ export function BackupRecordContentsModal({ visible, recordId, onClose }: Backup
     setError('')
     setKeyword('')
     setContents(null)
+    setSelectedKeys([])
     void (async () => {
       try {
         const data = await getBackupRecordContents(recordId)
@@ -71,11 +75,23 @@ export function BackupRecordContentsModal({ visible, recordId, onClose }: Backup
             {contents.truncated ? `（清单较大，仅展示前 ${contents.entries.length} 个）` : ''}
             {contents.basedOnFull ? `；差异备份，清单取自基线全量 #${contents.basedOnFull}` : ''}
           </Typography.Text>
-          <Input.Search allowClear placeholder="按路径筛选" value={keyword} onChange={setKeyword} style={{ margin: '8px 0' }} />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', margin: '8px 0' }}>
+            <Input.Search allowClear placeholder="按路径筛选" value={keyword} onChange={setKeyword} style={{ flex: 1 }} />
+            {onRestoreSelected && (
+              <Button type="primary" status="warning" disabled={selectedKeys.length === 0} onClick={() => onRestoreSelected(selectedKeys)}>
+                恢复选中（{selectedKeys.length}）
+              </Button>
+            )}
+          </div>
           <Table
             size="small"
             rowKey="path"
             data={filtered}
+            rowSelection={
+              onRestoreSelected
+                ? { type: 'checkbox', selectedRowKeys: selectedKeys, onChange: (keys) => setSelectedKeys(keys as string[]) }
+                : undefined
+            }
             pagination={{ pageSize: 50, sizeCanChange: false }}
             scroll={{ y: 420 }}
             columns={[

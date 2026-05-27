@@ -40,6 +40,8 @@ type TaskSpec struct {
 	// 并记录被删除的路径。仅文件类型任务支持；BaseManifest 为空时回退为全量。
 	Differential bool
 	BaseManifest Manifest
+	// SelectedPaths 非空时仅恢复这些归档相对路径（及其子项），用于按需（选择性）恢复；仅文件类型生效。
+	SelectedPaths []string
 }
 
 type RunResult struct {

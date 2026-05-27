@@ -122,6 +122,47 @@ func TestFileRunnerDifferentialRoundTrip(t *testing.T) {
 	diffAssertAbsent(t, filepath.Join(restoreSrc, "b.txt"))
 }
 
+func TestPathSelected(t *testing.T) {
+	sel := []string{"src/a.txt", "src/sub"}
+	cases := map[string]bool{
+		"src/a.txt":     true,
+		"src/sub":       true,
+		"src/sub/c.txt": true,  // 选中目录下的子项
+		"src/b.txt":     false, // 未选中文件
+		"src/subother":  false, // 前缀相近但非子项，不应误判
+	}
+	for name, want := range cases {
+		if got := pathSelected(name, sel); got != want {
+			t.Errorf("pathSelected(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+// TestFileRunnerSelectiveRestore 验证按需恢复：仅选中的文件与目录被还原，未选中的文件不出现。
+func TestFileRunnerSelectiveRestore(t *testing.T) {
+	work := t.TempDir()
+	src := filepath.Join(work, "src")
+	diffWrite(t, filepath.Join(src, "a.txt"), "alpha")
+	diffWrite(t, filepath.Join(src, "b.txt"), "bravo")
+	diffWrite(t, filepath.Join(src, "sub", "c.txt"), "charlie")
+
+	runner := NewFileRunner()
+	full, err := runner.Run(context.Background(), TaskSpec{Name: "sel", Type: "file", SourcePath: src, TempDir: t.TempDir()}, NopLogWriter{})
+	if err != nil {
+		t.Fatalf("full Run: %v", err)
+	}
+
+	restoreRoot := t.TempDir()
+	restoreSrc := filepath.Join(restoreRoot, "src")
+	task := TaskSpec{Name: "sel", Type: "file", SourcePath: restoreSrc, SelectedPaths: []string{"src/a.txt", "src/sub"}}
+	if err := runner.Restore(context.Background(), task, full.ArtifactPath, NopLogWriter{}); err != nil {
+		t.Fatalf("selective Restore: %v", err)
+	}
+	diffAssertContent(t, filepath.Join(restoreSrc, "a.txt"), "alpha")
+	diffAssertContent(t, filepath.Join(restoreSrc, "sub", "c.txt"), "charlie") // 选中目录 → 子项一并恢复
+	diffAssertAbsent(t, filepath.Join(restoreSrc, "b.txt"))                     // 未选中 → 不恢复
+}
+
 // TestFileRunnerDifferentialWithoutBaseIsFull 验证无基线时差异请求回退为全量（产出清单、含全部文件）。
 func TestFileRunnerDifferentialWithoutBaseIsFull(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "src")

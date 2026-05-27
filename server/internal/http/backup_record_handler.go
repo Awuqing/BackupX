@@ -151,7 +151,11 @@ func (h *BackupRecordHandler) Restore(c *gin.Context) {
 	if subject, exists := c.Get(contextUserSubjectKey); exists {
 		triggeredBy = strings.TrimSpace(fmt.Sprintf("%v", subject))
 	}
-	detail, err := h.restoreService.Start(c.Request.Context(), id, triggeredBy)
+	var body struct {
+		SelectedPaths []string `json:"selectedPaths"`
+	}
+	_ = c.ShouldBindJSON(&body) // body 可选：无 body 为整体恢复，含 selectedPaths 为按需恢复
+	detail, err := h.restoreService.StartSelective(c.Request.Context(), id, body.SelectedPaths, triggeredBy)
 	if err != nil {
 		response.Error(c, err)
 		return
