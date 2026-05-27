@@ -21,6 +21,10 @@ export interface BackupTaskSummary {
   compression: BackupCompression
   encrypt: boolean
   maxBackups: number
+  keepDaily: number
+  keepWeekly: number
+  keepMonthly: number
+  keepYearly: number
   lastRunAt?: string
   lastStatus: BackupTaskStatus
   verifyEnabled: boolean
@@ -73,6 +77,10 @@ export interface BackupTaskPayload {
   compression: BackupCompression
   encrypt: boolean
   maxBackups: number
+  keepDaily: number
+  keepWeekly: number
+  keepMonthly: number
+  keepYearly: number
   /** 类型特有的扩展配置（如 SAP HANA 的 backupLevel/backupChannels 等） */
   extraConfig?: Record<string, unknown>
   verifyEnabled: boolean

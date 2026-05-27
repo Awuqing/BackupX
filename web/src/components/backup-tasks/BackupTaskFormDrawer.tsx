@@ -65,6 +65,10 @@ function createEmptyDraft(storageTargets?: StorageTargetSummary[]): BackupTaskPa
     compression: 'gzip',
     encrypt: false,
     maxBackups: 10,
+    keepDaily: 0,
+    keepWeekly: 0,
+    keepMonthly: 0,
+    keepYearly: 0,
     extraConfig: undefined,
     verifyEnabled: false,
     verifyCronExpr: '',
@@ -134,6 +138,10 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       compression: initialValue.compression,
       encrypt: initialValue.encrypt,
       maxBackups: initialValue.maxBackups,
+      keepDaily: initialValue.keepDaily ?? 0,
+      keepWeekly: initialValue.keepWeekly ?? 0,
+      keepMonthly: initialValue.keepMonthly ?? 0,
+      keepYearly: initialValue.keepYearly ?? 0,
       extraConfig: initialValue.extraConfig,
       verifyEnabled: initialValue.verifyEnabled ?? false,
       verifyCronExpr: initialValue.verifyCronExpr ?? '',
@@ -587,6 +595,25 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
         <div>
           <Typography.Text>最大保留份数</Typography.Text>
           <InputNumber style={{ width: '100%' }} value={draft.maxBackups} min={0} onChange={(value) => updateDraft({ maxBackups: Number(value ?? 0) })} />
+        </div>
+        <div>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            GFS 分层保留（任一 &gt; 0 即启用，覆盖上面的天数/份数；每天/周/月/年仅保留最新一份）
+          </Typography.Text>
+          <Grid.Row gutter={8} style={{ marginTop: 4 }}>
+            <Grid.Col span={6}>
+              <InputNumber style={{ width: '100%' }} placeholder="日" prefix="日" min={0} value={draft.keepDaily} onChange={(value) => updateDraft({ keepDaily: Number(value ?? 0) })} />
+            </Grid.Col>
+            <Grid.Col span={6}>
+              <InputNumber style={{ width: '100%' }} placeholder="周" prefix="周" min={0} value={draft.keepWeekly} onChange={(value) => updateDraft({ keepWeekly: Number(value ?? 0) })} />
+            </Grid.Col>
+            <Grid.Col span={6}>
+              <InputNumber style={{ width: '100%' }} placeholder="月" prefix="月" min={0} value={draft.keepMonthly} onChange={(value) => updateDraft({ keepMonthly: Number(value ?? 0) })} />
+            </Grid.Col>
+            <Grid.Col span={6}>
+              <InputNumber style={{ width: '100%' }} placeholder="年" prefix="年" min={0} value={draft.keepYearly} onChange={(value) => updateDraft({ keepYearly: Number(value ?? 0) })} />
+            </Grid.Col>
+          </Grid.Row>
         </div>
         <div>
           <Typography.Text>标签（逗号分隔，用于分组与筛选）</Typography.Text>
