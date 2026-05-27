@@ -46,6 +46,10 @@ func (r *fakeAuditRepo) ListAll(context.Context, repository.AuditLogListOptions)
 	return nil, nil
 }
 
+func (r *fakeAuditRepo) DeleteBefore(context.Context, time.Time) (int64, error) {
+	return 0, nil
+}
+
 func TestAuditService_WebhookDeliversSignedPayload(t *testing.T) {
 	var hits atomic.Int32
 	var got struct {

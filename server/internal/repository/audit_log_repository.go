@@ -29,6 +29,8 @@ type AuditLogRepository interface {
 	Create(ctx context.Context, log *model.AuditLog) error
 	List(ctx context.Context, opts AuditLogListOptions) (*AuditLogListResult, error)
 	ListAll(ctx context.Context, opts AuditLogListOptions) ([]model.AuditLog, error)
+	// DeleteBefore 删除 created_at 早于 cutoff 的审计日志，返回删除行数。用于保留期清理。
+	DeleteBefore(ctx context.Context, cutoff time.Time) (int64, error)
 }
 
 type gormAuditLogRepository struct {
@@ -41,6 +43,11 @@ func NewAuditLogRepository(db *gorm.DB) AuditLogRepository {
 
 func (r *gormAuditLogRepository) Create(_ context.Context, log *model.AuditLog) error {
 	return r.db.Create(log).Error
+}
+
+func (r *gormAuditLogRepository) DeleteBefore(ctx context.Context, cutoff time.Time) (int64, error) {
+	result := r.db.WithContext(ctx).Where("created_at < ?", cutoff).Delete(&model.AuditLog{})
+	return result.RowsAffected, result.Error
 }
 
 func (r *gormAuditLogRepository) List(_ context.Context, opts AuditLogListOptions) (*AuditLogListResult, error) {

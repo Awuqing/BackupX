@@ -47,6 +47,8 @@ const (
 	SettingKeyBandwidthLimit            = "bandwidth_limit"
 	SettingKeyAuditWebhookURL           = "audit_webhook_url"
 	SettingKeyAuditWebhookSecret        = "audit_webhook_secret"
+	// SettingKeyAuditRetentionDays 审计日志保留天数（0/缺省=永久保留）。
+	SettingKeyAuditRetentionDays = "audit_retention_days"
 )
 
 var settingsKeys = []string{
@@ -57,6 +59,7 @@ var settingsKeys = []string{
 	SettingKeyBandwidthLimit,
 	SettingKeyAuditWebhookURL,
 	SettingKeyAuditWebhookSecret,
+	SettingKeyAuditRetentionDays,
 }
 
 func (s *SettingsService) GetAll(ctx context.Context) (map[string]string, error) {

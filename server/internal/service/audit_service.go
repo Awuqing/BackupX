@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,59 @@ func NewAuditService(repo repository.AuditLogRepository) *AuditService {
 		httpClient: &http.Client{
 			Timeout: 3 * time.Second, // 短超时：审计 webhook 不应拖慢业务
 		},
+	}
+}
+
+// PurgeOlderThan 删除早于 days 天前的审计日志，返回删除条数。days<=0 时不清理。
+func (s *AuditService) PurgeOlderThan(ctx context.Context, days int) (int64, error) {
+	if days <= 0 {
+		return 0, nil
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days)
+	return s.repo.DeleteBefore(ctx, cutoff)
+}
+
+// StartRetentionMonitor 启动后台审计保留期清理：按 interval 周期读取
+// audit_retention_days 设置，>0 时删除超期审计日志。缺省/0 表示永久保留
+// （向后兼容，默认不删任何历史）。ctx 取消后退出。
+func (s *AuditService) StartRetentionMonitor(ctx context.Context, configs repository.SystemConfigRepository, interval time.Duration) {
+	if s == nil || configs == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = 6 * time.Hour
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		s.runRetentionOnce(ctx, configs) // 启动后立即跑一次
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.runRetentionOnce(ctx, configs)
+			}
+		}
+	}()
+}
+
+func (s *AuditService) runRetentionOnce(ctx context.Context, configs repository.SystemConfigRepository) {
+	cfg, err := configs.GetByKey(ctx, SettingKeyAuditRetentionDays)
+	if err != nil || cfg == nil {
+		return
+	}
+	days, err := strconv.Atoi(strings.TrimSpace(cfg.Value))
+	if err != nil || days <= 0 {
+		return
+	}
+	deleted, err := s.PurgeOlderThan(ctx, days)
+	if err != nil {
+		log.Printf("[audit] retention purge failed: %v", err)
+		return
+	}
+	if deleted > 0 {
+		log.Printf("[audit] retention purge: deleted %d logs older than %d days", deleted, days)
 	}
 }
 

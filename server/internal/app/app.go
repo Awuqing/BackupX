@@ -114,6 +114,8 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	schedulerService.SetAuditRecorder(auditService)
 	// 审计日志外输：启动时用当前 settings 初始化 webhook，后续前端修改立即生效
 	settingsService.SetAuditWebhookConfigurer(ctx, auditService)
+	// 审计日志保留期清理：每 6h 读取 audit_retention_days 设置并清理超期日志（0/缺省=永久保留）
+	auditService.StartRetentionMonitor(ctx, systemConfigRepo, 6*time.Hour)
 
 	// Database discovery（集群依赖在 agentService 创建后注入）
 	databaseDiscoveryService := service.NewDatabaseDiscoveryService(backup.NewOSCommandExecutor())
