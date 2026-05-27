@@ -2,7 +2,7 @@ import { Button, Card, Empty, Message, Select, Space, Table, Tag, Typography } f
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { BackupRecordLogDrawer } from '../../components/backup-records/BackupRecordLogDrawer'
-import { listBackupRecords } from '../../services/backup-records'
+import { listBackupRecords, setBackupRecordLock } from '../../services/backup-records'
 import { listBackupTasks } from '../../services/backup-tasks'
 import type { BackupRecordStatus, BackupRecordSummary } from '../../types/backup-records'
 import type { BackupTaskSummary } from '../../types/backup-tasks'
@@ -33,6 +33,7 @@ export function BackupRecordsPage() {
   const [tasks, setTasks] = useState<BackupTaskSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [lockBusyId, setLockBusyId] = useState<number | null>(null)
 
   const selectedTaskId = Number(searchParams.get('taskId') ?? 0) || undefined
   const selectedRecordId = Number(searchParams.get('recordId') ?? 0) || undefined
@@ -63,6 +64,19 @@ export function BackupRecordsPage() {
   useEffect(() => {
     void loadData()
   }, [loadData])
+
+  async function handleToggleLock(record: BackupRecordSummary) {
+    setLockBusyId(record.id)
+    try {
+      await setBackupRecordLock(record.id, !record.locked)
+      Message.success(record.locked ? '已解除保留锁定' : '已锁定：该备份将豁免保留清理与删除')
+      await loadData()
+    } catch (e) {
+      Message.error(resolveErrorMessage(e, '操作失败'))
+    } finally {
+      setLockBusyId(null)
+    }
+  }
 
   function updateSearchParam(key: 'taskId' | 'status' | 'recordId', value?: string) {
     const nextParams = new URLSearchParams(searchParams)
@@ -96,7 +110,10 @@ export function BackupRecordsPage() {
       dataIndex: 'fileName',
       render: (_: unknown, record: BackupRecordSummary) => (
         <Space direction="vertical" size={2}>
-          <Typography.Text>{record.fileName || '-'}</Typography.Text>
+          <Space size={4}>
+            <Typography.Text>{record.fileName || '-'}</Typography.Text>
+            {record.locked && <Tag color="orange" size="small" bordered>已锁定</Tag>}
+          </Space>
           <Typography.Text type="secondary">{formatBytes(record.fileSize)}</Typography.Text>
           {record.checksum && (
             <Typography.Text type="secondary" copyable style={{ fontSize: 11 }}>
@@ -129,11 +146,24 @@ export function BackupRecordsPage() {
     {
       title: '操作',
       dataIndex: 'actions',
-      width: 120,
+      width: 180,
       render: (_: unknown, record: BackupRecordSummary) => (
-        <Button size="small" type="text" onClick={() => updateSearchParam('recordId', String(record.id))}>
-          查看日志
-        </Button>
+        <Space size={4}>
+          <Button size="small" type="text" onClick={() => updateSearchParam('recordId', String(record.id))}>
+            查看日志
+          </Button>
+          {record.status === 'success' && (
+            <Button
+              size="small"
+              type="text"
+              status={record.locked ? 'warning' : 'default'}
+              loading={lockBusyId === record.id}
+              onClick={() => void handleToggleLock(record)}
+            >
+              {record.locked ? '解锁' : '锁定'}
+            </Button>
+          )}
+        </Space>
       ),
     },
   ]

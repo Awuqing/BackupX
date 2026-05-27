@@ -89,6 +89,12 @@ export async function deleteBackupRecord(id: number) {
   return unwrapApiEnvelope(response.data)
 }
 
+// setBackupRecordLock 设置/解除备份记录的保留锁定（法律保留）。
+export async function setBackupRecordLock(id: number, locked: boolean) {
+  const response = await http.put<ApiEnvelope<BackupRecordDetail>>(`/backup/records/${id}/lock`, { locked })
+  return unwrapApiEnvelope(response.data)
+}
+
 export function streamBackupRecordLogs(recordId: number, handlers: RecordLogStreamHandlers) {
   const controller = new AbortController()
 

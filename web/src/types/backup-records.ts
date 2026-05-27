@@ -25,6 +25,7 @@ export interface BackupRecordSummary {
   errorMessage: string
   startedAt: string
   completedAt?: string
+  locked: boolean
 }
 
 export interface StorageUploadResultItem {
