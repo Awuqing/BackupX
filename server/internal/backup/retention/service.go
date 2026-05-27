@@ -3,6 +3,7 @@ package retention
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -56,7 +57,13 @@ func (s *Service) Cleanup(ctx context.Context, task *model.BackupTask, provider 
 	if err != nil {
 		return nil, fmt.Errorf("list successful records: %w", err)
 	}
-	candidates := selectRecordsToDelete(records, task.RetentionDays, task.MaxBackups, s.now())
+	var candidates []model.BackupRecord
+	if gfsEnabled(task) {
+		// GFS 策略：按天/周/月/年分层保留代表性备份，取代简单的天数/数量策略。
+		candidates = selectGFSToDelete(records, task.KeepDaily, task.KeepWeekly, task.KeepMonthly, task.KeepYearly)
+	} else {
+		candidates = selectRecordsToDelete(records, task.RetentionDays, task.MaxBackups, s.now())
+	}
 	result := &CleanupResult{}
 	for _, record := range candidates {
 		if strings.TrimSpace(record.StoragePath) != "" {
@@ -132,4 +139,73 @@ func hasLocked(records []model.BackupRecord) bool {
 		}
 	}
 	return false
+}
+
+// gfsEnabled 判定任务是否启用 GFS 分层保留（任一层级 > 0）。
+func gfsEnabled(task *model.BackupTask) bool {
+	return task.KeepDaily > 0 || task.KeepWeekly > 0 || task.KeepMonthly > 0 || task.KeepYearly > 0
+}
+
+func recordTime(r *model.BackupRecord) time.Time {
+	if r.CompletedAt != nil {
+		return *r.CompletedAt
+	}
+	return r.StartedAt
+}
+
+func isoWeekKey(t time.Time) string {
+	y, w := t.ISOWeek()
+	return fmt.Sprintf("%d-W%02d", y, w)
+}
+
+// selectGFSToDelete 按 GFS（祖父-父-子）策略选出应删除的记录。
+//
+// 规则：对每个层级（天/周/月/年），在按时间降序排列后，保留最近 keep 个不同周期中
+// 每个周期最新的一份备份；各层级保留集合取并集即「保留集」，其余删除。
+// 锁定（法律保留）的记录始终排除在删除候选之外。
+func selectGFSToDelete(records []model.BackupRecord, daily, weekly, monthly, yearly int) []model.BackupRecord {
+	active := make([]model.BackupRecord, 0, len(records))
+	for i := range records {
+		if !records[i].Locked {
+			active = append(active, records[i])
+		}
+	}
+	sort.SliceStable(active, func(i, j int) bool {
+		return recordTime(&active[i]).After(recordTime(&active[j]))
+	})
+
+	keep := make(map[uint]bool, len(active))
+	keepTier := func(count int, key func(time.Time) string) {
+		if count <= 0 {
+			return
+		}
+		periods := 0
+		lastPeriod := ""
+		havePrev := false
+		for i := range active {
+			p := key(recordTime(&active[i]))
+			if havePrev && p == lastPeriod {
+				continue // 同周期已保留代表（最新一份）
+			}
+			if periods >= count {
+				break // 该层级已保留足够多的周期
+			}
+			keep[active[i].ID] = true
+			lastPeriod = p
+			havePrev = true
+			periods++
+		}
+	}
+	keepTier(daily, func(t time.Time) string { return t.Format("2006-01-02") })
+	keepTier(weekly, isoWeekKey)
+	keepTier(monthly, func(t time.Time) string { return t.Format("2006-01") })
+	keepTier(yearly, func(t time.Time) string { return t.Format("2006") })
+
+	del := make([]model.BackupRecord, 0)
+	for i := range active {
+		if !keep[active[i].ID] {
+			del = append(del, active[i])
+		}
+	}
+	return del
 }

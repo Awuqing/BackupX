@@ -52,6 +52,11 @@ type BackupTaskUpsertInput struct {
 	// SLA 配置
 	SLAHoursRPO             int `json:"slaHoursRpo"`
 	AlertOnConsecutiveFails int `json:"alertOnConsecutiveFails"`
+	// GFS 分层保留（任一 > 0 启用，取代 RetentionDays/MaxBackups）
+	KeepDaily   int `json:"keepDaily"`
+	KeepWeekly  int `json:"keepWeekly"`
+	KeepMonthly int `json:"keepMonthly"`
+	KeepYearly  int `json:"keepYearly"`
 	// 备份复制目标存储 ID 列表（3-2-1 规则）
 	ReplicationTargetIDs []uint `json:"replicationTargetIds"`
 	// 维护窗口（CSV，详见 backup/window.go）
@@ -90,6 +95,10 @@ type BackupTaskSummary struct {
 	VerifyMode              string `json:"verifyMode"`
 	SLAHoursRPO             int    `json:"slaHoursRpo"`
 	AlertOnConsecutiveFails int    `json:"alertOnConsecutiveFails"`
+	KeepDaily               int    `json:"keepDaily"`
+	KeepWeekly              int    `json:"keepWeekly"`
+	KeepMonthly             int    `json:"keepMonthly"`
+	KeepYearly              int    `json:"keepYearly"`
 	// 备份复制目标（3-2-1）
 	ReplicationTargetIDs []uint    `json:"replicationTargetIds"`
 	MaintenanceWindows   string    `json:"maintenanceWindows"`
@@ -674,6 +683,10 @@ func (s *BackupTaskService) buildTask(existing *model.BackupTask, input BackupTa
 		VerifyMode:              normalizeVerifyMode(input.VerifyMode),
 		SLAHoursRPO:             maxInt(0, input.SLAHoursRPO),
 		AlertOnConsecutiveFails: alertThreshold(input.AlertOnConsecutiveFails),
+		KeepDaily:               maxInt(0, input.KeepDaily),
+		KeepWeekly:              maxInt(0, input.KeepWeekly),
+		KeepMonthly:             maxInt(0, input.KeepMonthly),
+		KeepYearly:              maxInt(0, input.KeepYearly),
 		ReplicationTargetIDs:    encodeUintCSV(input.ReplicationTargetIDs),
 		MaintenanceWindows:      strings.TrimSpace(input.MaintenanceWindows),
 		DependsOnTaskIDs:        encodeUintCSV(input.DependsOnTaskIDs),
@@ -766,6 +779,10 @@ func toBackupTaskSummary(item *model.BackupTask) BackupTaskSummary {
 		VerifyMode:              item.VerifyMode,
 		SLAHoursRPO:             item.SLAHoursRPO,
 		AlertOnConsecutiveFails: item.AlertOnConsecutiveFails,
+		KeepDaily:               item.KeepDaily,
+		KeepWeekly:              item.KeepWeekly,
+		KeepMonthly:             item.KeepMonthly,
+		KeepYearly:              item.KeepYearly,
 		ReplicationTargetIDs:    parseUintCSV(item.ReplicationTargetIDs),
 		MaintenanceWindows:      item.MaintenanceWindows,
 		DependsOnTaskIDs:        parseUintCSV(item.DependsOnTaskIDs),

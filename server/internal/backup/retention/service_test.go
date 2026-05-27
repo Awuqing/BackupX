@@ -93,6 +93,81 @@ func TestSelectRecordsToDelete(t *testing.T) {
 	}
 }
 
+func gfsRecord(id uint, ts time.Time, locked bool) model.BackupRecord {
+	completed := ts
+	return model.BackupRecord{ID: id, StartedAt: ts, CompletedAt: &completed, Locked: locked}
+}
+
+func gfsDay(y, m, d, h int) time.Time {
+	return time.Date(y, time.Month(m), d, h, 0, 0, 0, time.UTC)
+}
+
+func deletedIDSet(records []model.BackupRecord) map[uint]bool {
+	out := make(map[uint]bool, len(records))
+	for i := range records {
+		out[records[i].ID] = true
+	}
+	return out
+}
+
+func assertDeleted(t *testing.T, del []model.BackupRecord, want ...uint) {
+	t.Helper()
+	got := deletedIDSet(del)
+	if len(got) != len(want) {
+		t.Fatalf("deleted set size = %d %v, want %d %v", len(got), got, len(want), want)
+	}
+	for _, id := range want {
+		if !got[id] {
+			t.Fatalf("expected id %d to be deleted; got %v", id, got)
+		}
+	}
+}
+
+// TestSelectGFSToDelete_DailyTier 验证按天分层：每天仅保留最新一份，且只保留最近 N 天。
+func TestSelectGFSToDelete_DailyTier(t *testing.T) {
+	records := []model.BackupRecord{
+		gfsRecord(5, gfsDay(2026, 3, 7, 12), false), // 今天，最新 → 保留
+		gfsRecord(4, gfsDay(2026, 3, 7, 6), false),  // 今天，较早 → 删除（非当天代表）
+		gfsRecord(3, gfsDay(2026, 3, 6, 12), false), // 昨天 → 保留
+		gfsRecord(2, gfsDay(2026, 3, 5, 12), false), // 前天 → 超出 daily=2 → 删除
+		gfsRecord(1, gfsDay(2026, 3, 4, 12), false), // 更早 → 删除
+	}
+	del := selectGFSToDelete(records, 2, 0, 0, 0)
+	assertDeleted(t, del, 4, 2, 1)
+}
+
+// TestSelectGFSToDelete_TierUnion 验证多层级取并集：月度层级保留日度层级会删除的旧备份。
+func TestSelectGFSToDelete_TierUnion(t *testing.T) {
+	records := []model.BackupRecord{
+		gfsRecord(3, gfsDay(2026, 3, 7, 12), false),  // 3 月（最新）
+		gfsRecord(2, gfsDay(2026, 2, 15, 12), false), // 2 月
+		gfsRecord(1, gfsDay(2026, 1, 15, 12), false), // 1 月
+	}
+	// daily=1 只留 ID3；monthly=2 留最近两个月（3 月=ID3、2 月=ID2）。并集={3,2}，删除 ID1。
+	del := selectGFSToDelete(records, 1, 0, 2, 0)
+	assertDeleted(t, del, 1)
+}
+
+// TestSelectGFSToDelete_SkipsLocked 验证锁定记录即使超出所有层级也永不删除。
+func TestSelectGFSToDelete_SkipsLocked(t *testing.T) {
+	records := []model.BackupRecord{
+		gfsRecord(3, gfsDay(2026, 3, 7, 12), false),
+		gfsRecord(2, gfsDay(2026, 3, 6, 12), false),
+		gfsRecord(1, gfsDay(2020, 1, 1, 12), true), // 远超 daily=1 但已锁定 → 不删
+	}
+	del := selectGFSToDelete(records, 1, 0, 0, 0)
+	assertDeleted(t, del, 2) // 仅 ID2 被删；ID1 锁定豁免，ID3 为当日代表
+}
+
+func TestGFSEnabled(t *testing.T) {
+	if gfsEnabled(&model.BackupTask{}) {
+		t.Fatal("empty GFS config should be disabled")
+	}
+	if !gfsEnabled(&model.BackupTask{KeepWeekly: 4}) {
+		t.Fatal("KeepWeekly>0 should enable GFS")
+	}
+}
+
 // TestSelectRecordsToDelete_SkipsLocked 验证保留锁定（法律保留）的记录永不被选中删除，
 // 即使它既超过保留期、又超过 maxBackups 名额。
 func TestSelectRecordsToDelete_SkipsLocked(t *testing.T) {
