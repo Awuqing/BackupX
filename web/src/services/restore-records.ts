@@ -39,9 +39,18 @@ export async function getRestoreRecord(id: number) {
   return unwrapApiEnvelope(response.data)
 }
 
-// startRestoreFromBackup 通过源备份记录启动恢复。selectedPaths 非空时为按需（选择性）恢复。
-export async function startRestoreFromBackup(backupRecordId: number, selectedPaths?: string[]) {
-  const body = selectedPaths && selectedPaths.length > 0 ? { selectedPaths } : undefined
+// startRestoreFromBackup 通过源备份记录启动恢复。两个可选项互不影响：
+//   - selectedPaths 非空时为按需（选择性）恢复，仅还原选中的文件/目录；
+//   - targetPath 非空时把文件归档恢复到该绝对目录而非原始路径（仅文件类型本机恢复）。
+// 返回新建的恢复记录详情。
+export async function startRestoreFromBackup(backupRecordId: number, selectedPaths?: string[], targetPath?: string) {
+  const body: { selectedPaths?: string[]; targetPath?: string } = {}
+  if (selectedPaths && selectedPaths.length > 0) {
+    body.selectedPaths = selectedPaths
+  }
+  if (targetPath && targetPath.trim()) {
+    body.targetPath = targetPath.trim()
+  }
   const response = await http.post<ApiEnvelope<RestoreRecordDetail>>(`/backup/records/${backupRecordId}/restore`, body)
   return unwrapApiEnvelope(response.data)
 }

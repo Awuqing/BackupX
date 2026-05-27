@@ -1,4 +1,5 @@
-import { Alert, Descriptions, Modal, Space, Tag, Typography } from '@arco-design/web-react'
+import { Alert, Descriptions, Input, Modal, Space, Tag, Typography } from '@arco-design/web-react'
+import { useState } from 'react'
 import type { BackupRecordDetail } from '../../types/backup-records'
 import type { BackupTaskDetail } from '../../types/backup-tasks'
 
@@ -8,21 +9,26 @@ interface RestoreConfirmModalProps {
   backupRecord: BackupRecordDetail | null
   task: BackupTaskDetail | null
   onCancel: () => void
-  onConfirm: () => void
+  onConfirm: (targetPath?: string) => void
 }
 
 // RestoreConfirmModal 展示即将恢复的备份摘要与覆盖风险，强制用户二次确认。
 // 恢复是破坏性操作：会覆盖任务配置的源路径/数据库，不可撤销。
+// 文件类型 + 本机恢复时，允许指定「恢复到其他目录」以避免覆盖原位置。
 export function RestoreConfirmModal({ visible, loading, backupRecord, task, onCancel, onConfirm }: RestoreConfirmModalProps) {
+  const [targetPath, setTargetPath] = useState('')
+
   if (!backupRecord || !task) {
     return (
-      <Modal visible={visible} title="确认恢复" onCancel={onCancel} onOk={onConfirm} confirmLoading={loading} unmountOnExit>
+      <Modal visible={visible} title="确认恢复" onCancel={onCancel} onOk={() => onConfirm()} confirmLoading={loading} unmountOnExit>
         <Alert type="info" content="正在加载任务与备份信息..." />
       </Modal>
     )
   }
 
   const restoreTarget = renderRestoreTarget(task)
+  const isLocal = !task.nodeId || task.nodeId === 0
+  const allowAltPath = task.type === 'file' && isLocal
   const nodeLabel = task.nodeId && task.nodeId > 0
     ? (task.nodeName ? `${task.nodeName}（远程节点）` : `节点 #${task.nodeId}`)
     : '本机 Master'
@@ -35,8 +41,9 @@ export function RestoreConfirmModal({ visible, loading, backupRecord, task, onCa
       cancelText="取消"
       okButtonProps={{ status: 'danger', loading }}
       onCancel={onCancel}
-      onOk={onConfirm}
+      onOk={() => onConfirm(targetPath.trim() || undefined)}
       unmountOnExit
+      afterClose={() => setTargetPath('')}
     >
       <Space direction="vertical" size="medium" style={{ width: '100%' }}>
         <Alert
@@ -51,9 +58,23 @@ export function RestoreConfirmModal({ visible, loading, backupRecord, task, onCa
             { label: '类型', value: <Tag color="arcoblue" bordered>{task.type.toUpperCase()}</Tag> },
             { label: '执行节点', value: nodeLabel },
             { label: '源备份', value: backupRecord.fileName || '-' },
-            { label: '恢复目标', value: restoreTarget },
+            { label: '恢复目标', value: targetPath.trim() ? <Typography.Text code>{targetPath.trim()}</Typography.Text> : restoreTarget },
           ]}
         />
+        {allowAltPath && (
+          <div>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              恢复到指定目录（可选，绝对路径；留空则恢复到原始位置）
+            </Typography.Text>
+            <Input
+              style={{ marginTop: 4 }}
+              allowClear
+              value={targetPath}
+              placeholder="/path/to/restore-here"
+              onChange={(value) => setTargetPath(value)}
+            />
+          </div>
+        )}
       </Space>
     </Modal>
   )

@@ -193,13 +193,13 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
     }
   }
 
-  async function handleConfirmRestore() {
+  async function handleConfirmRestore(targetPath?: string) {
     if (!recordId) {
       return
     }
     setRestoreLoading(true)
     try {
-      const restore = await startRestoreFromBackup(recordId)
+      const restore = await startRestoreFromBackup(recordId, undefined, targetPath)
       Message.success('恢复已启动，正在打开日志')
       setRestoreModalVisible(false)
       setRestoreTask(null)
@@ -345,7 +345,7 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
           setRestoreModalVisible(false)
           setRestoreTask(null)
         }}
-        onConfirm={() => void handleConfirmRestore()}
+        onConfirm={(targetPath) => void handleConfirmRestore(targetPath)}
       />
       <BackupRecordContentsModal
         visible={contentsVisible}
