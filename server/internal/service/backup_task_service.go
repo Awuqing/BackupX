@@ -40,7 +40,7 @@ type BackupTaskUpsertInput struct {
 	NodePoolTag   string `json:"nodePoolTag" binding:"max=64"`
 	Tags          string `json:"tags" binding:"max=500"` // 逗号分隔标签
 	RetentionDays int    `json:"retentionDays"`
-	Compression   string `json:"compression" binding:"omitempty,oneof=gzip none"`
+	Compression   string `json:"compression" binding:"omitempty,oneof=gzip zstd none"`
 	Encrypt       bool   `json:"encrypt"`
 	MaxBackups    int    `json:"maxBackups"`
 	// ExtraConfig 类型特有扩展配置（如 SAP HANA 的 backupLevel/backupChannels）

@@ -726,6 +726,15 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 			return
 		}
 		finalPath = compressedPath
+	} else if strings.EqualFold(task.Compression, "zstd") && !strings.HasSuffix(strings.ToLower(finalPath), ".zst") {
+		logger.Infof("开始压缩备份文件（zstd）")
+		compressedPath, compressErr := compress.ZstdFile(finalPath)
+		if compressErr != nil {
+			errMessage = compressErr.Error()
+			logger.Errorf("压缩备份文件失败：%v", compressErr)
+			return
+		}
+		finalPath = compressedPath
 	}
 	if task.Encrypt {
 		logger.Infof("开始加密备份文件")

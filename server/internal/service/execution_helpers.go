@@ -106,6 +106,16 @@ func prepareBackupArtifact(cipher *codec.ConfigCipher, artifactPath string, logg
 		}
 		current = decompressed
 	}
+	if strings.HasSuffix(strings.ToLower(current), ".zst") {
+		if logger != nil {
+			logger.Infof("检测到 zstd 压缩，开始解压")
+		}
+		decompressed, err := compress.UnzstdFile(current)
+		if err != nil {
+			return "", err
+		}
+		current = decompressed
+	}
 	return current, nil
 }
 

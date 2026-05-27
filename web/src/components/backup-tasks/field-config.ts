@@ -11,6 +11,7 @@ export const backupTaskTypeOptions = [
 
 export const backupCompressionOptions = [
   { label: 'Gzip 压缩', value: 'gzip' },
+  { label: 'Zstd 压缩（更快/更小）', value: 'zstd' },
   { label: '不压缩', value: 'none' },
 ] as const
 
@@ -89,7 +90,14 @@ export function getDefaultPort(type: BackupTaskType) {
 }
 
 export function getCompressionLabel(compression: BackupCompression) {
-  return compression === 'gzip' ? 'Gzip' : '无'
+  switch (compression) {
+    case 'gzip':
+      return 'Gzip'
+    case 'zstd':
+      return 'Zstd'
+    default:
+      return '无'
+  }
 }
 
 /** SAP HANA 备份级别选项 */

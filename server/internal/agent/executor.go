@@ -107,6 +107,14 @@ func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) er
 			return compressErr
 		}
 		finalPath = compressedPath
+	} else if strings.EqualFold(spec.Compression, "zstd") && !strings.HasSuffix(strings.ToLower(finalPath), ".zst") {
+		e.appendLog(ctx, recordID, "[agent] 开始压缩备份文件（zstd）\n")
+		compressedPath, compressErr := compress.ZstdFile(finalPath)
+		if compressErr != nil {
+			e.reportRecordFailure(ctx, recordID, fmt.Sprintf("压缩失败: %v", compressErr))
+			return compressErr
+		}
+		finalPath = compressedPath
 	}
 	info, err := os.Stat(finalPath)
 	if err != nil {
@@ -408,6 +416,15 @@ func (e *Executor) ExecuteRestore(ctx context.Context, restoreRecordID uint) err
 	if strings.HasSuffix(strings.ToLower(preparedPath), ".gz") {
 		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 解压 gzip 压缩\n")
 		decompressed, err := compress.GunzipFile(preparedPath)
+		if err != nil {
+			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解压失败: %v", err))
+			return err
+		}
+		preparedPath = decompressed
+	}
+	if strings.HasSuffix(strings.ToLower(preparedPath), ".zst") {
+		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 解压 zstd 压缩\n")
+		decompressed, err := compress.UnzstdFile(preparedPath)
 		if err != nil {
 			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解压失败: %v", err))
 			return err
