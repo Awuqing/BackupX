@@ -161,6 +161,32 @@ func (h *BackupRecordHandler) Delete(c *gin.Context) {
 	response.Success(c, gin.H{"deleted": true})
 }
 
+// SetLock 设置/解除备份记录的保留锁定（法律保留）。
+func (h *BackupRecordHandler) SetLock(c *gin.Context) {
+	id, ok := parseUintParam(c, "id")
+	if !ok {
+		return
+	}
+	var input struct {
+		Locked bool `json:"locked"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		response.Error(c, apperror.BadRequest("BACKUP_RECORD_LOCK_INVALID", "锁定参数不合法", err))
+		return
+	}
+	detail, err := h.service.SetLock(c.Request.Context(), id, input.Locked)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	action, desc := "unlock", fmt.Sprintf("解除备份记录保留锁定 (ID: %d)", id)
+	if input.Locked {
+		action, desc = "lock", fmt.Sprintf("设置备份记录保留锁定 (ID: %d)", id)
+	}
+	recordAudit(c, h.auditService, "backup_record", action, "backup_record", fmt.Sprintf("%d", id), "", desc)
+	response.Success(c, detail)
+}
+
 func (h *BackupRecordHandler) BatchDelete(c *gin.Context) {
 	var input struct {
 		IDs []uint `json:"ids" binding:"required,min=1"`

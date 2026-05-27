@@ -91,6 +91,17 @@ func (s *Service) Cleanup(ctx context.Context, task *model.BackupTask, provider 
 }
 
 func selectRecordsToDelete(records []model.BackupRecord, retentionDays int, maxBackups int, now time.Time) []model.BackupRecord {
+	// 保留锁定（法律保留）的记录永不参与清理：先从候选集中剔除，
+	// 锁定备份既不被删除，也不占用 maxBackups 轮转名额。
+	if hasLocked(records) {
+		unlocked := make([]model.BackupRecord, 0, len(records))
+		for _, r := range records {
+			if !r.Locked {
+				unlocked = append(unlocked, r)
+			}
+		}
+		records = unlocked
+	}
 	selected := make(map[uint]model.BackupRecord)
 	if maxBackups > 0 && len(records) > maxBackups {
 		for _, record := range records[maxBackups:] {
@@ -112,4 +123,13 @@ func selectRecordsToDelete(records []model.BackupRecord, retentionDays int, maxB
 		}
 	}
 	return result
+}
+
+func hasLocked(records []model.BackupRecord) bool {
+	for i := range records {
+		if records[i].Locked {
+			return true
+		}
+	}
+	return false
 }

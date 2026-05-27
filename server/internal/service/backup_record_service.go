@@ -36,13 +36,14 @@ type BackupRecordSummary struct {
 	ErrorMessage      string     `json:"errorMessage"`
 	StartedAt         time.Time  `json:"startedAt"`
 	CompletedAt       *time.Time `json:"completedAt,omitempty"`
+	Locked            bool       `json:"locked"`
 }
 
 type BackupRecordDetail struct {
 	BackupRecordSummary
 	LogContent           string                    `json:"logContent"`
 	LogEvents            []backup.LogEvent         `json:"logEvents,omitempty"`
-	StorageUploadResults []StorageUploadResultItem  `json:"storageUploadResults,omitempty"`
+	StorageUploadResults []StorageUploadResultItem `json:"storageUploadResults,omitempty"`
 }
 
 type BackupRecordService struct {
@@ -102,6 +103,25 @@ func (s *BackupRecordService) Delete(ctx context.Context, id uint) error {
 	return s.execution.DeleteRecord(ctx, id)
 }
 
+// SetLock 设置或解除备份记录的保留锁定（法律保留）。
+// 锁定后该记录免于保留期/数量自动清理，且禁止手动删除，直至显式解锁。
+func (s *BackupRecordService) SetLock(ctx context.Context, id uint, locked bool) (*BackupRecordDetail, error) {
+	item, err := s.records.FindByID(ctx, id)
+	if err != nil {
+		return nil, apperror.Internal("BACKUP_RECORD_GET_FAILED", "无法获取备份记录详情", err)
+	}
+	if item == nil {
+		return nil, apperror.New(404, "BACKUP_RECORD_NOT_FOUND", "备份记录不存在", nil)
+	}
+	if item.Locked != locked {
+		item.Locked = locked
+		if err := s.records.Update(ctx, item); err != nil {
+			return nil, apperror.Internal("BACKUP_RECORD_LOCK_FAILED", "无法更新备份锁定状态", err)
+		}
+	}
+	return toBackupRecordDetail(item, s.logHub), nil
+}
+
 func toBackupRecordSummary(item *model.BackupRecord) BackupRecordSummary {
 	return BackupRecordSummary{
 		ID:                item.ID,
@@ -118,6 +138,7 @@ func toBackupRecordSummary(item *model.BackupRecord) BackupRecordSummary {
 		ErrorMessage:      item.ErrorMessage,
 		StartedAt:         item.StartedAt,
 		CompletedAt:       item.CompletedAt,
+		Locked:            item.Locked,
 	}
 }
 

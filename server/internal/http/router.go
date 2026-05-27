@@ -170,6 +170,7 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 		backupRecords.POST("/:id/restore", RequireNotViewer(), backupRecordHandler.Restore)
 		backupRecords.POST("/batch-delete", RequireNotViewer(), backupRecordHandler.BatchDelete)
 		backupRecords.DELETE("/:id", RequireNotViewer(), backupRecordHandler.Delete)
+		backupRecords.PUT("/:id/lock", RequireNotViewer(), backupRecordHandler.SetLock)
 
 		// 恢复记录独立命名空间：列表/详情/SSE 日志流。
 		// 创建恢复仍然走 POST /backup/records/:id/restore（以源备份记录为触发点）。

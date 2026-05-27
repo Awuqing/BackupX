@@ -93,6 +93,30 @@ func TestSelectRecordsToDelete(t *testing.T) {
 	}
 }
 
+// TestSelectRecordsToDelete_SkipsLocked 验证保留锁定（法律保留）的记录永不被选中删除，
+// 即使它既超过保留期、又超过 maxBackups 名额。
+func TestSelectRecordsToDelete_SkipsLocked(t *testing.T) {
+	now := time.Date(2026, 3, 7, 16, 0, 0, 0, time.UTC)
+	completedNew := now.Add(-24 * time.Hour)
+	completedOld := now.Add(-15 * 24 * time.Hour)
+	records := []model.BackupRecord{
+		{ID: 3, CompletedAt: &completedNew},
+		{ID: 2, CompletedAt: &completedNew},
+		{ID: 1, CompletedAt: &completedOld, Locked: true}, // 超期但锁定 → 不应删除
+	}
+	selected := selectRecordsToDelete(records, 7, 2, now)
+	for _, r := range selected {
+		if r.ID == 1 {
+			t.Fatalf("locked record #1 must never be selected for deletion: %#v", selected)
+		}
+	}
+	// 锁定记录不占 maxBackups 名额：未锁定仅 2 条，maxBackups=2 → 无超额删除，
+	// 且无未锁定记录超期 → 选中集为空。
+	if len(selected) != 0 {
+		t.Fatalf("expected no deletions (locked excluded), got %#v", selected)
+	}
+}
+
 func TestCleanupDeletesExpiredRecords(t *testing.T) {
 	now := time.Date(2026, 3, 7, 16, 0, 0, 0, time.UTC)
 	completedNew := now.Add(-24 * time.Hour)

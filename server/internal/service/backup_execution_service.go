@@ -276,6 +276,10 @@ func (s *BackupExecutionService) DeleteRecord(ctx context.Context, recordID uint
 	if record == nil {
 		return apperror.New(404, "BACKUP_RECORD_NOT_FOUND", "备份记录不存在", fmt.Errorf("backup record %d not found", recordID))
 	}
+	if record.Locked {
+		return apperror.BadRequest("BACKUP_RECORD_LOCKED",
+			"该备份已保留锁定（法律保留），请先解锁再删除", nil)
+	}
 	if remote, err := s.deleteRemoteLocalDiskObject(ctx, record); err != nil {
 		return err
 	} else if !remote && strings.TrimSpace(record.StoragePath) != "" {

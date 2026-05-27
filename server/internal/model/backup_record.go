@@ -9,27 +9,30 @@ const (
 )
 
 type BackupRecord struct {
-	ID                   uint          `gorm:"primaryKey" json:"id"`
-	TaskID               uint          `gorm:"column:task_id;index;not null" json:"taskId"`
-	Task                 BackupTask    `json:"task,omitempty"`
-	StorageTargetID      uint          `gorm:"column:storage_target_id;index;not null" json:"storageTargetId"`
-	StorageTarget        StorageTarget `json:"storageTarget,omitempty"`
+	ID              uint          `gorm:"primaryKey" json:"id"`
+	TaskID          uint          `gorm:"column:task_id;index;not null" json:"taskId"`
+	Task            BackupTask    `json:"task,omitempty"`
+	StorageTargetID uint          `gorm:"column:storage_target_id;index;not null" json:"storageTargetId"`
+	StorageTarget   StorageTarget `json:"storageTarget,omitempty"`
 	// NodeID 执行该次备份的节点（0 = 本机 Master）。用于集群中识别 local_disk 类型
 	// 存储的归属节点，避免 Master 端试图跨节点访问远程 Agent 的本地存储。
-	NodeID               uint          `gorm:"column:node_id;index;default:0" json:"nodeId"`
-	Status               string        `gorm:"size:20;index;not null" json:"status"`
-	FileName             string        `gorm:"column:file_name;size:255" json:"fileName"`
-	FileSize             int64         `gorm:"column:file_size;not null;default:0" json:"fileSize"`
-	Checksum             string        `gorm:"column:checksum;size:64" json:"checksum"`
-	StoragePath          string        `gorm:"column:storage_path;size:500" json:"storagePath"`
-	StorageUploadResults string        `gorm:"column:storage_upload_results;type:text" json:"-"`
-	DurationSeconds      int           `gorm:"column:duration_seconds;not null;default:0" json:"durationSeconds"`
-	ErrorMessage         string        `gorm:"column:error_message;size:2000" json:"errorMessage"`
-	LogContent           string        `gorm:"column:log_content;type:text" json:"logContent"`
-	StartedAt            time.Time     `gorm:"column:started_at;index;not null" json:"startedAt"`
-	CompletedAt          *time.Time    `gorm:"column:completed_at;index" json:"completedAt,omitempty"`
-	CreatedAt            time.Time     `json:"createdAt"`
-	UpdatedAt            time.Time     `json:"updatedAt"`
+	NodeID               uint   `gorm:"column:node_id;index;default:0" json:"nodeId"`
+	Status               string `gorm:"size:20;index;not null" json:"status"`
+	FileName             string `gorm:"column:file_name;size:255" json:"fileName"`
+	FileSize             int64  `gorm:"column:file_size;not null;default:0" json:"fileSize"`
+	Checksum             string `gorm:"column:checksum;size:64" json:"checksum"`
+	StoragePath          string `gorm:"column:storage_path;size:500" json:"storagePath"`
+	StorageUploadResults string `gorm:"column:storage_upload_results;type:text" json:"-"`
+	DurationSeconds      int    `gorm:"column:duration_seconds;not null;default:0" json:"durationSeconds"`
+	// Locked 保留锁定（法律保留）：为 true 时该备份不参与保留期/数量自动清理，
+	// 且禁止手动删除，直到显式解锁。用于保护合规快照、迁移前基线等关键备份。
+	Locked       bool       `gorm:"column:locked;not null;default:false;index" json:"locked"`
+	ErrorMessage string     `gorm:"column:error_message;size:2000" json:"errorMessage"`
+	LogContent   string     `gorm:"column:log_content;type:text" json:"logContent"`
+	StartedAt    time.Time  `gorm:"column:started_at;index;not null" json:"startedAt"`
+	CompletedAt  *time.Time `gorm:"column:completed_at;index" json:"completedAt,omitempty"`
+	CreatedAt    time.Time  `json:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
 func (BackupRecord) TableName() string {
