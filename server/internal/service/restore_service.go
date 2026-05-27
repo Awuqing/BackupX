@@ -223,10 +223,17 @@ func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, tas
 	}()
 
 	logger.Infof("开始在本地执行恢复（备份记录 #%d）", backupRecord.ID)
-	provider, providerErr := s.resolveProvider(ctx, backupRecord.StorageTargetID)
-	if providerErr != nil {
-		errMessage = providerErr.Error()
-		logger.Errorf("创建存储客户端失败：%v", providerErr)
+
+	spec, specErr := s.buildTaskSpec(task, backupRecord.StartedAt)
+	if specErr != nil {
+		errMessage = specErr.Error()
+		logger.Errorf("构建恢复规格失败：%v", specErr)
+		return
+	}
+	runner, runnerErr := s.runnerRegistry.Runner(spec.Type)
+	if runnerErr != nil {
+		errMessage = runnerErr.Error()
+		logger.Errorf("不支持的备份类型：%v", runnerErr)
 		return
 	}
 
@@ -243,61 +250,87 @@ func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, tas
 	}
 	defer os.RemoveAll(tempDir)
 
-	fileName := backupRecord.FileName
-	if strings.TrimSpace(fileName) == "" {
-		fileName = filepath.Base(backupRecord.StoragePath)
-	}
-	artifactPath := filepath.Join(tempDir, filepath.Base(fileName))
-	logger.Infof("开始下载备份文件：%s", backupRecord.StoragePath)
-	reader, downloadErr := provider.Download(ctx, backupRecord.StoragePath)
-	if downloadErr != nil {
-		errMessage = downloadErr.Error()
-		logger.Errorf("下载备份文件失败：%v", downloadErr)
+	// 恢复链：全量 → [自身]；差异 → [基线全量, 自身]，按序应用（全量铺底，差异覆盖并删除）。
+	chain, chainErr := s.buildRestoreChain(ctx, backupRecord)
+	if chainErr != nil {
+		errMessage = chainErr.Error()
+		logger.Errorf("%v", chainErr)
 		return
 	}
-	if writeErr := writeReaderToFile(artifactPath, reader); writeErr != nil {
-		errMessage = writeErr.Error()
-		logger.Errorf("写入恢复文件失败：%v", writeErr)
-		return
-	}
-	// 完整性校验：在解密/解压前比对下载对象的 SHA-256，拒绝还原损坏或被篡改的备份。
-	// 早期未记录 checksum 的备份会跳过（向后兼容）。
-	if backupRecord.Checksum != "" {
-		logger.Infof("校验备份完整性（SHA-256）")
-		if csErr := verifyArtifactChecksum(artifactPath, backupRecord.Checksum); csErr != nil {
-			errMessage = csErr.Error()
-			logger.Errorf("完整性校验失败：%v", csErr)
+	logger.Infof("开始执行 %s 恢复（恢复链含 %d 个备份）", spec.Type, len(chain))
+	for idx := range chain {
+		rec := chain[idx]
+		if len(chain) > 1 {
+			logger.Infof("恢复链 [%d/%d]：应用备份记录 #%d（%s）", idx+1, len(chain), rec.ID, backupKindLabel(rec.BackupKind))
+		}
+		if err := s.restoreArtifact(ctx, &rec, spec, runner, tempDir, logger); err != nil {
+			errMessage = err.Error()
+			logger.Errorf("恢复执行失败：%v", err)
 			return
 		}
-		logger.Infof("完整性校验通过")
-	}
-	preparedPath, prepareErr := s.prepareArtifact(artifactPath, logger)
-	if prepareErr != nil {
-		errMessage = prepareErr.Error()
-		logger.Errorf("准备恢复文件失败：%v", prepareErr)
-		return
-	}
-
-	spec, specErr := s.buildTaskSpec(task, backupRecord.StartedAt)
-	if specErr != nil {
-		errMessage = specErr.Error()
-		logger.Errorf("构建恢复规格失败：%v", specErr)
-		return
-	}
-	runner, runnerErr := s.runnerRegistry.Runner(spec.Type)
-	if runnerErr != nil {
-		errMessage = runnerErr.Error()
-		logger.Errorf("不支持的备份类型：%v", runnerErr)
-		return
-	}
-	logger.Infof("开始执行 %s 恢复", spec.Type)
-	if restoreErr := runner.Restore(ctx, spec, preparedPath, logger); restoreErr != nil {
-		errMessage = restoreErr.Error()
-		logger.Errorf("恢复执行失败：%v", restoreErr)
-		return
 	}
 	status = model.RestoreRecordStatusSuccess
 	logger.Infof("恢复执行成功")
+}
+
+// restoreArtifact 下载、完整性校验、解密解压并通过 runner 应用单个备份记录的归档。
+// 每个记录使用独立子目录，避免恢复链中基线/差异的同名归档相互覆盖。
+func (s *RestoreService) restoreArtifact(ctx context.Context, record *model.BackupRecord, spec backup.TaskSpec, runner backup.BackupRunner, parentTempDir string, logger *backup.ExecutionLogger) error {
+	provider, err := s.resolveProvider(ctx, record.StorageTargetID)
+	if err != nil {
+		return fmt.Errorf("创建存储客户端失败：%w", err)
+	}
+	recDir, err := os.MkdirTemp(parentTempDir, fmt.Sprintf("rec-%d-*", record.ID))
+	if err != nil {
+		return fmt.Errorf("创建恢复子目录失败：%w", err)
+	}
+	fileName := record.FileName
+	if strings.TrimSpace(fileName) == "" {
+		fileName = filepath.Base(record.StoragePath)
+	}
+	artifactPath := filepath.Join(recDir, filepath.Base(fileName))
+	logger.Infof("开始下载备份文件：%s", record.StoragePath)
+	reader, err := provider.Download(ctx, record.StoragePath)
+	if err != nil {
+		return fmt.Errorf("下载备份文件失败：%w", err)
+	}
+	if err := writeReaderToFile(artifactPath, reader); err != nil {
+		return fmt.Errorf("写入恢复文件失败：%w", err)
+	}
+	// 完整性校验：解密/解压前比对 SHA-256；早期无 checksum 的备份跳过（向后兼容）。
+	if record.Checksum != "" {
+		if err := verifyArtifactChecksum(artifactPath, record.Checksum); err != nil {
+			return fmt.Errorf("完整性校验失败：%w", err)
+		}
+	}
+	preparedPath, err := s.prepareArtifact(artifactPath, logger)
+	if err != nil {
+		return fmt.Errorf("准备恢复文件失败：%w", err)
+	}
+	return runner.Restore(ctx, spec, preparedPath, logger)
+}
+
+// buildRestoreChain 返回恢复某记录所需、按应用顺序排列的记录链：
+// 全量 → [自身]；差异 → [基线全量, 自身]。基线缺失/不可用时报错，杜绝残缺恢复。
+func (s *RestoreService) buildRestoreChain(ctx context.Context, record *model.BackupRecord) ([]model.BackupRecord, error) {
+	if record.BackupKind != model.BackupKindDifferential || record.BaseRecordID == 0 {
+		return []model.BackupRecord{*record}, nil
+	}
+	base, err := s.records.FindByID(ctx, record.BaseRecordID)
+	if err != nil || base == nil {
+		return nil, fmt.Errorf("差异备份的基线全量 #%d 不存在，无法恢复", record.BaseRecordID)
+	}
+	if base.Status != model.BackupRecordStatusSuccess || strings.TrimSpace(base.StoragePath) == "" {
+		return nil, fmt.Errorf("差异备份的基线全量 #%d 不可用，无法恢复", record.BaseRecordID)
+	}
+	return []model.BackupRecord{*base, *record}, nil
+}
+
+func backupKindLabel(kind string) string {
+	if kind == model.BackupKindDifferential {
+		return "差异"
+	}
+	return "全量"
 }
 
 // dispatchRestoreEvent 按终态向事件总线派发 restore_success 或 restore_failed。

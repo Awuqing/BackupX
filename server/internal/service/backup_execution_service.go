@@ -580,6 +580,40 @@ func (s *BackupExecutionService) resolveRemoteNode(ctx context.Context, nodeID u
 	return resolveRemoteExecutionNode(ctx, s.nodeRepo, s.agentDispatcher != nil, nodeID)
 }
 
+// resolveDifferentialBase 为差异备份解析基线全量：仅本机（NodeID=0）文件任务且 BackupMode=differential 时生效。
+// 返回最近一次「成功、含清单、未超过 DiffFullIntervalDays」的全量记录 ID 及其清单；
+// 无合适基线（首次备份 / 最近全量已过期 / 清单缺失）时 ok=false，调用方回退为全量。
+func (s *BackupExecutionService) resolveDifferentialBase(ctx context.Context, task *model.BackupTask) (uint, backup.Manifest, bool) {
+	if task.Type != model.BackupTaskTypeFile || task.NodeID != 0 || !strings.EqualFold(task.BackupMode, model.BackupModeDifferential) {
+		return 0, backup.Manifest{}, false
+	}
+	records, err := s.records.ListSuccessfulByTask(ctx, task.ID)
+	if err != nil {
+		return 0, backup.Manifest{}, false
+	}
+	intervalDays := task.DiffFullIntervalDays
+	if intervalDays <= 0 {
+		intervalDays = 7
+	}
+	cutoff := time.Now().Add(-time.Duration(intervalDays) * 24 * time.Hour)
+	for i := range records {
+		rec := records[i]
+		if rec.BackupKind != model.BackupKindFull || strings.TrimSpace(rec.Manifest) == "" {
+			continue
+		}
+		// 最近的全量已超过强制全量间隔 → 触发新全量，限制差异链跨度与单个差异体积。
+		if rec.StartedAt.Before(cutoff) {
+			return 0, backup.Manifest{}, false
+		}
+		manifest, decErr := backup.DecodeManifest([]byte(rec.Manifest))
+		if decErr != nil || len(manifest.Entries) == 0 {
+			return 0, backup.Manifest{}, false
+		}
+		return rec.ID, manifest, true
+	}
+	return 0, backup.Manifest{}, false
+}
+
 func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time) {
 	// 节点级并发限流：当任务绑定节点且节点配置了 MaxConcurrent>0，
 	// 该节点上所有任务共享一个节点专属 semaphore，互相排队
@@ -604,6 +638,10 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	var storagePath string
 	selectedStorageTargetID := task.StorageTargetID
 	var uploadResults []StorageUploadResultItem
+	// 差异备份链信息：实际类型（全量/差异）、基线全量 ID、全量清单 JSON。
+	backupKind := model.BackupKindFull
+	var baseRecordID uint
+	var manifestJSON string
 	completeRecord := func() {
 		if finalizeErr := s.finalizeRecord(ctx, task, recordID, startedAt, status, errMessage, logger.String(), fileName, fileSize, checksum, storagePath, selectedStorageTargetID); finalizeErr != nil {
 			logger.Errorf("写回备份记录失败：%v", finalizeErr)
@@ -616,6 +654,17 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 				if record, findErr := s.records.FindByID(ctx, recordID); findErr == nil && record != nil {
 					record.StorageUploadResults = string(resultsJSON)
 					_ = s.records.Update(ctx, record)
+				}
+			}
+		}
+		// 持久化差异链信息：全量记录其清单（供后续差异比对），差异记录其基线全量 ID。
+		if status == model.BackupRecordStatusSuccess && (backupKind != model.BackupKindFull || baseRecordID != 0 || manifestJSON != "") {
+			if record, findErr := s.records.FindByID(ctx, recordID); findErr == nil && record != nil {
+				record.BackupKind = backupKind
+				record.BaseRecordID = baseRecordID
+				record.Manifest = manifestJSON
+				if updErr := s.records.Update(ctx, record); updErr != nil {
+					logger.Warnf("写回差异链信息失败：%v", updErr)
 				}
 			}
 		}
@@ -636,6 +685,13 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 		logger.Errorf("构建任务运行时配置失败：%v", err)
 		return
 	}
+	// 差异备份：解析基线全量，命中则切换为差异模式（仅本机文件任务）。
+	if baseID, baseManifest, ok := s.resolveDifferentialBase(ctx, task); ok {
+		spec.Differential = true
+		spec.BaseManifest = baseManifest
+		baseRecordID = baseID
+		logger.Infof("差异备份模式：基于全量备份 #%d 仅打包变更", baseID)
+	}
 	runner, err := s.runnerRegistry.Runner(spec.Type)
 	if err != nil {
 		errMessage = err.Error()
@@ -649,6 +705,17 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 		return
 	}
 	defer os.RemoveAll(result.TempDir)
+	// 依据运行器产出判定实际类型：产出清单 → 全量（记录清单供后续差异比对）；否则为差异。
+	if result.Manifest != nil {
+		backupKind = model.BackupKindFull
+		if data, encErr := backup.EncodeManifest(*result.Manifest); encErr == nil {
+			manifestJSON = string(data)
+		} else {
+			logger.Warnf("备份清单序列化失败（不影响本次备份，但将禁用后续差异）：%v", encErr)
+		}
+	} else {
+		backupKind = model.BackupKindDifferential
+	}
 	finalPath := result.ArtifactPath
 	if strings.EqualFold(task.Compression, "gzip") && !strings.HasSuffix(strings.ToLower(finalPath), ".gz") {
 		logger.Infof("开始压缩备份文件")

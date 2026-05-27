@@ -1,6 +1,7 @@
 export type BackupTaskType = 'file' | 'mysql' | 'sqlite' | 'postgresql' | 'saphana' | 'mongodb'
 export type BackupTaskStatus = 'idle' | 'running' | 'success' | 'failed'
 export type BackupCompression = 'gzip' | 'none'
+export type BackupMode = 'full' | 'differential'
 
 export interface BackupTaskSummary {
   id: number
@@ -25,6 +26,8 @@ export interface BackupTaskSummary {
   keepWeekly: number
   keepMonthly: number
   keepYearly: number
+  backupMode: BackupMode
+  diffFullIntervalDays: number
   lastRunAt?: string
   lastStatus: BackupTaskStatus
   verifyEnabled: boolean
@@ -81,6 +84,8 @@ export interface BackupTaskPayload {
   keepWeekly: number
   keepMonthly: number
   keepYearly: number
+  backupMode: BackupMode
+  diffFullIntervalDays: number
   /** 类型特有的扩展配置（如 SAP HANA 的 backupLevel/backupChannels 等） */
   extraConfig?: Record<string, unknown>
   verifyEnabled: boolean

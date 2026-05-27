@@ -37,6 +37,7 @@ type BackupRecordSummary struct {
 	StartedAt         time.Time  `json:"startedAt"`
 	CompletedAt       *time.Time `json:"completedAt,omitempty"`
 	Locked            bool       `json:"locked"`
+	BackupKind        string     `json:"backupKind"`
 }
 
 type BackupRecordDetail struct {
@@ -139,6 +140,7 @@ func toBackupRecordSummary(item *model.BackupRecord) BackupRecordSummary {
 		StartedAt:         item.StartedAt,
 		CompletedAt:       item.CompletedAt,
 		Locked:            item.Locked,
+		BackupKind:        item.BackupKind,
 	}
 }
 

@@ -12,6 +12,12 @@ const (
 )
 
 const (
+	// BackupModeFull 全量模式（默认）；BackupModeDifferential 差异模式（仅文件类型本机任务）。
+	BackupModeFull         = "full"
+	BackupModeDifferential = "differential"
+)
+
+const (
 	BackupTaskStatusIdle    = "idle"
 	BackupTaskStatusRunning = "running"
 	BackupTaskStatusSuccess = "success"
@@ -49,6 +55,11 @@ type BackupTask struct {
 	Compression   string `gorm:"size:10;not null;default:'gzip'" json:"compression"`
 	Encrypt       bool   `gorm:"not null;default:false" json:"encrypt"`
 	MaxBackups    int    `gorm:"column:max_backups;not null;default:10" json:"maxBackups"`
+	// BackupMode 备份模式：full（全量，默认）/ differential（差异）。差异仅支持本机文件任务。
+	BackupMode string `gorm:"column:backup_mode;size:16;not null;default:'full'" json:"backupMode"`
+	// DiffFullIntervalDays 差异模式下强制全量的间隔（天）：最近全量超过该天数则本次自动改为全量，
+	// 限制差异链跨度与单个差异体积。默认 7。
+	DiffFullIntervalDays int `gorm:"column:diff_full_interval_days;not null;default:7" json:"diffFullIntervalDays"`
 	// GFS（祖父-父-子）保留：分别保留最近 N 天 / M 周 / K 月 / Y 年的代表性备份（每周期保留最新一份）。
 	// 任一 > 0 即启用 GFS，取代 RetentionDays/MaxBackups 简单策略；全为 0 时维持简单策略（向后兼容）。
 	KeepDaily   int        `gorm:"column:keep_daily;not null;default:0" json:"keepDaily"`

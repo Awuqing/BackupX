@@ -113,6 +113,7 @@ export function BackupRecordsPage() {
           <Space size={4}>
             <Typography.Text>{record.fileName || '-'}</Typography.Text>
             {record.locked && <Tag color="orange" size="small" bordered>已锁定</Tag>}
+            {record.backupKind === 'differential' && <Tag color="purple" size="small" bordered>差异</Tag>}
           </Space>
           <Typography.Text type="secondary">{formatBytes(record.fileSize)}</Typography.Text>
           {record.checksum && (

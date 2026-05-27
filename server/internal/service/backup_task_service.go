@@ -57,6 +57,9 @@ type BackupTaskUpsertInput struct {
 	KeepWeekly  int `json:"keepWeekly"`
 	KeepMonthly int `json:"keepMonthly"`
 	KeepYearly  int `json:"keepYearly"`
+	// BackupMode 备份模式：full（默认）/ differential（差异，仅文件类型本机任务）
+	BackupMode           string `json:"backupMode" binding:"omitempty,oneof=full differential"`
+	DiffFullIntervalDays int    `json:"diffFullIntervalDays"`
 	// 备份复制目标存储 ID 列表（3-2-1 规则）
 	ReplicationTargetIDs []uint `json:"replicationTargetIds"`
 	// 维护窗口（CSV，详见 backup/window.go）
@@ -99,6 +102,8 @@ type BackupTaskSummary struct {
 	KeepWeekly              int    `json:"keepWeekly"`
 	KeepMonthly             int    `json:"keepMonthly"`
 	KeepYearly              int    `json:"keepYearly"`
+	BackupMode              string `json:"backupMode"`
+	DiffFullIntervalDays    int    `json:"diffFullIntervalDays"`
 	// 备份复制目标（3-2-1）
 	ReplicationTargetIDs []uint    `json:"replicationTargetIds"`
 	MaintenanceWindows   string    `json:"maintenanceWindows"`
@@ -517,6 +522,14 @@ func (s *BackupTaskService) validateInput(ctx context.Context, existing *model.B
 		return apperror.BadRequest("BACKUP_TASK_REMOTE_ENCRYPT_UNSUPPORTED",
 			"远程节点暂不支持加密备份。请关闭加密，或将任务固定在 Master 本机执行。", nil)
 	}
+	if strings.EqualFold(strings.TrimSpace(input.BackupMode), model.BackupModeDifferential) {
+		if input.Type != model.BackupTaskTypeFile {
+			return apperror.BadRequest("BACKUP_TASK_DIFF_UNSUPPORTED", "差异备份仅支持文件目录类型任务", nil)
+		}
+		if strings.TrimSpace(input.NodePoolTag) != "" || (fixedNode != nil && !fixedNode.IsLocal) {
+			return apperror.BadRequest("BACKUP_TASK_DIFF_REMOTE_UNSUPPORTED", "差异备份当前仅支持本机 Master 执行，请将任务固定在本机或改用全量备份。", nil)
+		}
+	}
 	if input.RetentionDays < 0 {
 		return apperror.BadRequest("BACKUP_TASK_INVALID", "保留天数不能小于 0", nil)
 	}
@@ -687,6 +700,8 @@ func (s *BackupTaskService) buildTask(existing *model.BackupTask, input BackupTa
 		KeepWeekly:              maxInt(0, input.KeepWeekly),
 		KeepMonthly:             maxInt(0, input.KeepMonthly),
 		KeepYearly:              maxInt(0, input.KeepYearly),
+		BackupMode:              normalizeBackupMode(input.BackupMode, input.Type),
+		DiffFullIntervalDays:    diffFullInterval(input.DiffFullIntervalDays),
 		ReplicationTargetIDs:    encodeUintCSV(input.ReplicationTargetIDs),
 		MaintenanceWindows:      strings.TrimSpace(input.MaintenanceWindows),
 		DependsOnTaskIDs:        encodeUintCSV(input.DependsOnTaskIDs),
@@ -783,6 +798,8 @@ func toBackupTaskSummary(item *model.BackupTask) BackupTaskSummary {
 		KeepWeekly:              item.KeepWeekly,
 		KeepMonthly:             item.KeepMonthly,
 		KeepYearly:              item.KeepYearly,
+		BackupMode:              item.BackupMode,
+		DiffFullIntervalDays:    item.DiffFullIntervalDays,
 		ReplicationTargetIDs:    parseUintCSV(item.ReplicationTargetIDs),
 		MaintenanceWindows:      item.MaintenanceWindows,
 		DependsOnTaskIDs:        parseUintCSV(item.DependsOnTaskIDs),
@@ -916,6 +933,22 @@ func decodeExtraConfig(value string) (map[string]any, error) {
 		return nil, err
 	}
 	return result, nil
+}
+
+// normalizeBackupMode 归一化备份模式：仅文件类型可启用差异，其余一律全量（双保险，防绕过校验）。
+func normalizeBackupMode(mode, taskType string) string {
+	if strings.EqualFold(strings.TrimSpace(mode), model.BackupModeDifferential) && normalizeBackupTaskType(taskType) == model.BackupTaskTypeFile {
+		return model.BackupModeDifferential
+	}
+	return model.BackupModeFull
+}
+
+// diffFullInterval 归一化差异模式下的强制全量间隔（天），非正值回退默认 7。
+func diffFullInterval(days int) int {
+	if days <= 0 {
+		return 7
+	}
+	return days
 }
 
 func normalizeBackupTaskType(value string) string {

@@ -3,6 +3,7 @@ package backup
 import (
 	"archive/tar"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -52,6 +53,20 @@ func (r *FileRunner) Run(_ context.Context, task TaskSpec, writer LogWriter) (*R
 	defer tw.Close()
 
 	excludes := normalizeExcludePatterns(task.ExcludePatterns)
+
+	// 差异备份：基于上次全量清单仅打包新增/变更条目并记录删除；
+	// 全量备份：记录完整清单（manifest）供后续差异比对。
+	differential := task.Differential && len(task.BaseManifest.Entries) > 0
+	baseIndex := map[string]ManifestEntry{}
+	seen := map[string]struct{}{}
+	var manifest *Manifest
+	if differential {
+		baseIndex = task.BaseManifest.index()
+		writer.WriteLine(fmt.Sprintf("差异备份模式：基线含 %d 个条目", len(baseIndex)))
+	} else {
+		manifest = &Manifest{Entries: make([]ManifestEntry, 0)}
+	}
+
 	totalFileCount := 0
 	totalDirCount := 0
 
@@ -86,6 +101,16 @@ func (r *FileRunner) Run(_ context.Context, task TaskSpec, writer LogWriter) (*R
 			}
 			if currentPath == sourcePath && currentInfo.IsDir() {
 				return nil
+			}
+
+			entry := entryFromInfo(archiveName, currentInfo)
+			if differential {
+				seen[entry.Path] = struct{}{}
+				if !changedSince(baseIndex, entry) {
+					return nil // 自全量以来未变更，跳过
+				}
+			} else {
+				manifest.Entries = append(manifest.Entries, entry)
 			}
 
 			if currentInfo.IsDir() {
@@ -130,10 +155,16 @@ func (r *FileRunner) Run(_ context.Context, task TaskSpec, writer LogWriter) (*R
 		totalDirCount += dirCount
 	}
 
-	if len(sourcePaths) > 1 {
+	if differential {
+		deletions := deletedPaths(baseIndex, seen)
+		if err := writeDeletionsEntry(tw, deletions); err != nil {
+			return nil, err
+		}
+		writer.WriteLine(fmt.Sprintf("差异备份完成（%d 个目录、%d 个文件变更，删除 %d 项）", totalDirCount, totalFileCount, len(deletions)))
+	} else if len(sourcePaths) > 1 {
 		writer.WriteLine(fmt.Sprintf("全部源路径打包完成（共 %d 个目录，%d 个文件）", totalDirCount, totalFileCount))
 	}
-	return &RunResult{ArtifactPath: artifactPath, FileName: filepath.Base(artifactPath), TempDir: tempDir}, nil
+	return &RunResult{ArtifactPath: artifactPath, FileName: filepath.Base(artifactPath), TempDir: tempDir, Manifest: manifest}, nil
 }
 
 func (r *FileRunner) Restore(_ context.Context, task TaskSpec, artifactPath string, writer LogWriter) error {
@@ -151,6 +182,7 @@ func (r *FileRunner) Restore(_ context.Context, task TaskSpec, artifactPath stri
 	if err := os.MkdirAll(targetParent, 0o755); err != nil {
 		return fmt.Errorf("create restore parent: %w", err)
 	}
+	var pendingDeletions []string
 	tr := tar.NewReader(artifactFile)
 	for {
 		header, err := tr.Next()
@@ -160,13 +192,23 @@ func (r *FileRunner) Restore(_ context.Context, task TaskSpec, artifactPath stri
 		if err != nil {
 			return fmt.Errorf("read tar entry: %w", err)
 		}
+		// 差异归档的删除清单不落地，留待提取完成后统一应用（避免被同批新增条目误删）。
+		if header.Name == deletionsEntryName {
+			data, readErr := io.ReadAll(tr)
+			if readErr != nil {
+				return fmt.Errorf("read deletions entry: %w", readErr)
+			}
+			if jsonErr := json.Unmarshal(data, &pendingDeletions); jsonErr != nil {
+				return fmt.Errorf("parse deletions entry: %w", jsonErr)
+			}
+			continue
+		}
 		cleanName := path.Clean(strings.TrimSpace(header.Name))
 		if cleanName == "." || cleanName == "" {
 			continue
 		}
-		targetPath := filepath.Clean(filepath.Join(targetParent, filepath.FromSlash(cleanName)))
-		parentWithSep := filepath.Clean(targetParent) + string(filepath.Separator)
-		if targetPath != filepath.Clean(targetParent) && !strings.HasPrefix(targetPath, parentWithSep) {
+		targetPath, ok := resolveWithinParent(targetParent, cleanName)
+		if !ok {
 			return fmt.Errorf("tar entry escapes restore path")
 		}
 		switch header.Typeflag {
@@ -191,7 +233,62 @@ func (r *FileRunner) Restore(_ context.Context, task TaskSpec, artifactPath stri
 			}
 		}
 	}
+	if err := applyDeletions(targetParent, pendingDeletions, writer); err != nil {
+		return err
+	}
 	writer.WriteLine("文件恢复完成")
+	return nil
+}
+
+// resolveWithinParent 将归档相对名安全解析为 targetParent 下的绝对路径；
+// 越界（路径穿越）时返回 ok=false。提取与删除共用此校验，杜绝逃逸。
+func resolveWithinParent(targetParent, name string) (string, bool) {
+	targetPath := filepath.Clean(filepath.Join(targetParent, filepath.FromSlash(name)))
+	cleanParent := filepath.Clean(targetParent)
+	if targetPath == cleanParent {
+		return targetPath, true
+	}
+	if !strings.HasPrefix(targetPath, cleanParent+string(filepath.Separator)) {
+		return "", false
+	}
+	return targetPath, true
+}
+
+// writeDeletionsEntry 将差异备份的删除路径列表写入归档特殊条目。
+func writeDeletionsEntry(tw *tar.Writer, deletions []string) error {
+	payload, err := json.Marshal(deletions)
+	if err != nil {
+		return fmt.Errorf("marshal deletions: %w", err)
+	}
+	header := &tar.Header{Name: deletionsEntryName, Mode: 0o600, Size: int64(len(payload)), Typeflag: tar.TypeReg}
+	if err := tw.WriteHeader(header); err != nil {
+		return fmt.Errorf("write deletions header: %w", err)
+	}
+	if _, err := tw.Write(payload); err != nil {
+		return fmt.Errorf("write deletions body: %w", err)
+	}
+	return nil
+}
+
+// applyDeletions 在基线恢复之上删除差异归档记录的路径（仅差异备份恢复时存在）。
+// 每个路径经 resolveWithinParent 校验，越界即报错；目标不存在视为已删除。
+func applyDeletions(targetParent string, deletions []string, writer LogWriter) error {
+	for _, name := range deletions {
+		clean := path.Clean(strings.TrimSpace(name))
+		if clean == "." || clean == "" {
+			continue
+		}
+		targetPath, ok := resolveWithinParent(targetParent, clean)
+		if !ok {
+			return fmt.Errorf("deletion entry escapes restore path")
+		}
+		if err := os.RemoveAll(targetPath); err != nil {
+			return fmt.Errorf("apply deletion %s: %w", clean, err)
+		}
+	}
+	if len(deletions) > 0 {
+		writer.WriteLine(fmt.Sprintf("已应用差异删除 %d 项", len(deletions)))
+	}
 	return nil
 }
 

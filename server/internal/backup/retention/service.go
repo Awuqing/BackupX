@@ -64,6 +64,8 @@ func (s *Service) Cleanup(ctx context.Context, task *model.BackupTask, provider 
 	} else {
 		candidates = selectRecordsToDelete(records, task.RetentionDays, task.MaxBackups, s.now())
 	}
+	// 差异链保护：保留仍被存活差异依赖的全量，避免删除基线后差异无法恢复。
+	candidates = protectDifferentialBases(records, candidates)
 	result := &CleanupResult{}
 	for _, record := range candidates {
 		if strings.TrimSpace(record.StoragePath) != "" {
@@ -95,6 +97,38 @@ func (s *Service) Cleanup(ctx context.Context, task *model.BackupTask, provider 
 	}
 
 	return result, nil
+}
+
+// protectDifferentialBases 从删除候选中剔除「仍被存活差异依赖的全量」，
+// 避免删除基线后其差异备份失去依据、无法恢复。全量仅当其全部差异都已过期/删除时才会被清理。
+func protectDifferentialBases(all []model.BackupRecord, candidates []model.BackupRecord) []model.BackupRecord {
+	deleting := make(map[uint]struct{}, len(candidates))
+	for _, r := range candidates {
+		deleting[r.ID] = struct{}{}
+	}
+	protected := make(map[uint]struct{})
+	for _, r := range all {
+		if r.BackupKind != model.BackupKindDifferential || r.BaseRecordID == 0 {
+			continue
+		}
+		if _, beingDeleted := deleting[r.ID]; beingDeleted {
+			continue // 该差异本身也将被删除，无需保护其基线
+		}
+		protected[r.BaseRecordID] = struct{}{}
+	}
+	if len(protected) == 0 {
+		return candidates
+	}
+	filtered := make([]model.BackupRecord, 0, len(candidates))
+	for _, r := range candidates {
+		if r.BackupKind == model.BackupKindFull {
+			if _, keep := protected[r.ID]; keep {
+				continue
+			}
+		}
+		filtered = append(filtered, r)
+	}
+	return filtered
 }
 
 func selectRecordsToDelete(records []model.BackupRecord, retentionDays int, maxBackups int, now time.Time) []model.BackupRecord {

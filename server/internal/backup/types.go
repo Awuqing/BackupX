@@ -36,6 +36,10 @@ type TaskSpec struct {
 	MaxBackups        int
 	StartedAt         time.Time
 	TempDir           string
+	// Differential 为 true 时执行差异备份：仅打包自 BaseManifest 以来新增/变更的条目，
+	// 并记录被删除的路径。仅文件类型任务支持；BaseManifest 为空时回退为全量。
+	Differential bool
+	BaseManifest Manifest
 }
 
 type RunResult struct {
@@ -44,6 +48,8 @@ type RunResult struct {
 	TempDir      string
 	Size         int64
 	StorageKey   string
+	// Manifest 为全量备份产出的条目清单，供后续差异备份比对；差异备份运行时为 nil。
+	Manifest *Manifest
 }
 
 type LogEvent struct {
@@ -62,7 +68,7 @@ type ProgressInfo struct {
 	BytesSent  int64   `json:"bytesSent"`
 	TotalBytes int64   `json:"totalBytes"`
 	Percent    float64 `json:"percent"`
-	SpeedBps   float64 `json:"speedBps"`   // bytes/sec
+	SpeedBps   float64 `json:"speedBps"` // bytes/sec
 	TargetName string  `json:"targetName"`
 }
 

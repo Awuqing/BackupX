@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { CronInput } from '../CronInput'
 import type { StorageTargetDetail, StorageTargetPayload, StorageTargetSummary } from '../../types/storage-targets'
 import type { StorageConnectionTestResult } from '../../types/storage-targets'
-import type { BackupTaskDetail, BackupTaskPayload, BackupTaskType } from '../../types/backup-tasks'
+import type { BackupMode, BackupTaskDetail, BackupTaskPayload, BackupTaskType } from '../../types/backup-tasks'
 import type { NodeSummary } from '../../types/nodes'
 import { DatabasePicker } from '../common/DatabasePicker'
 import { DirectoryPicker } from '../common/DirectoryPicker'
@@ -69,6 +69,8 @@ function createEmptyDraft(storageTargets?: StorageTargetSummary[]): BackupTaskPa
     keepWeekly: 0,
     keepMonthly: 0,
     keepYearly: 0,
+    backupMode: 'full',
+    diffFullIntervalDays: 7,
     extraConfig: undefined,
     verifyEnabled: false,
     verifyCronExpr: '',
@@ -142,6 +144,8 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       keepWeekly: initialValue.keepWeekly ?? 0,
       keepMonthly: initialValue.keepMonthly ?? 0,
       keepYearly: initialValue.keepYearly ?? 0,
+      backupMode: initialValue.backupMode ?? 'full',
+      diffFullIntervalDays: initialValue.diffFullIntervalDays ?? 7,
       extraConfig: initialValue.extraConfig,
       verifyEnabled: initialValue.verifyEnabled ?? false,
       verifyCronExpr: initialValue.verifyCronExpr ?? '',
@@ -588,6 +592,34 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
           <Typography.Text>压缩策略</Typography.Text>
           <Select value={draft.compression} options={backupCompressionOptions as unknown as { label: string; value: string }[]} onChange={(value) => updateDraft({ compression: value as BackupTaskPayload['compression'] })} />
         </div>
+        {isFileBackupTask(draft.type) && (
+          <div>
+            <Typography.Text>备份模式</Typography.Text>
+            <Select
+              value={draft.backupMode}
+              options={[
+                { label: '全量备份', value: 'full' },
+                { label: '差异备份（仅文件、本机）', value: 'differential' },
+              ]}
+              onChange={(value) => updateDraft({ backupMode: value as BackupMode })}
+            />
+            {draft.backupMode === 'differential' && (
+              <div style={{ marginTop: 8 }}>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  差异备份仅打包自上次全量以来的变更，显著减小体积；超过下列天数将自动重做一次全量以控制差异链长度。恢复时自动按「全量 + 差异」链还原。
+                </Typography.Text>
+                <InputNumber
+                  style={{ width: '100%', marginTop: 4 }}
+                  placeholder="强制全量间隔（天）"
+                  prefix="全量间隔(天)"
+                  min={1}
+                  value={draft.diffFullIntervalDays}
+                  onChange={(value) => updateDraft({ diffFullIntervalDays: Number(value ?? 7) })}
+                />
+              </div>
+            )}
+          </div>
+        )}
         <div>
           <Typography.Text>保留天数</Typography.Text>
           <InputNumber style={{ width: '100%' }} value={draft.retentionDays} min={0} onChange={(value) => updateDraft({ retentionDays: Number(value ?? 0) })} />
