@@ -42,6 +42,9 @@ type TaskSpec struct {
 	BaseManifest Manifest
 	// SelectedPaths 非空时仅恢复这些归档相对路径（及其子项），用于按需（选择性）恢复；仅文件类型生效。
 	SelectedPaths []string
+	// RestoreTargetPath 仅用于恢复：非空时，文件类型恢复将归档解压到该目录，
+	// 而非默认的原始源路径父目录。用于「恢复到指定位置」（迁移/测试/并排恢复）。
+	RestoreTargetPath string
 }
 
 type RunResult struct {

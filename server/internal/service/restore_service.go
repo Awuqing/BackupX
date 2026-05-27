@@ -120,11 +120,13 @@ type RestoreRecordDetail struct {
 // 若任务绑定远程节点：入队 AgentCommand 后立即返回（状态为 running）
 // 若本地：异步执行并立即返回。
 func (s *RestoreService) Start(ctx context.Context, backupRecordID uint, triggeredBy string) (*RestoreRecordDetail, error) {
-	return s.StartSelective(ctx, backupRecordID, nil, triggeredBy)
+	return s.StartSelective(ctx, backupRecordID, nil, "", triggeredBy)
 }
 
-// StartSelective 启动恢复；selectedPaths 非空时仅恢复选中的文件/目录（按需恢复，仅本机文件备份）。
-func (s *RestoreService) StartSelective(ctx context.Context, backupRecordID uint, selectedPaths []string, triggeredBy string) (*RestoreRecordDetail, error) {
+// StartSelective 启动恢复。两个可选项均仅适用于本机文件备份：
+//   - selectedPaths 非空时仅恢复选中的文件/目录（及其子项），用于按需（选择性）恢复；
+//   - targetPath 非空时把归档恢复到该绝对目录而非原始源路径父目录（迁移/测试/并排恢复）。
+func (s *RestoreService) StartSelective(ctx context.Context, backupRecordID uint, selectedPaths []string, targetPath string, triggeredBy string) (*RestoreRecordDetail, error) {
 	record, err := s.records.FindByID(ctx, backupRecordID)
 	if err != nil {
 		return nil, apperror.Internal("BACKUP_RECORD_GET_FAILED", "无法获取备份记录", err)
@@ -153,10 +155,26 @@ func (s *RestoreService) StartSelective(ctx context.Context, backupRecordID uint
 
 	startedAt := s.now()
 	restoreNodeID := s.resolveRestoreNodeID(record, task)
+
+	// 恢复到指定目录：仅文件类型 + 本机执行支持；需为绝对路径。
+	targetPath = strings.TrimSpace(targetPath)
+	if targetPath != "" {
+		if task.Type != model.BackupTaskTypeFile {
+			return nil, apperror.BadRequest("RESTORE_TARGET_UNSUPPORTED", "仅文件类型备份支持恢复到指定目录", nil)
+		}
+		if !filepath.IsAbs(targetPath) {
+			return nil, apperror.BadRequest("RESTORE_TARGET_INVALID", "恢复目录必须是绝对路径", nil)
+		}
+		if s.isRemoteNode(ctx, restoreNodeID) {
+			return nil, apperror.BadRequest("RESTORE_TARGET_REMOTE_UNSUPPORTED", "远程节点恢复暂不支持指定目录，请在该节点本地操作", nil)
+		}
+	}
+
 	restore := &model.RestoreRecord{
 		BackupRecordID: backupRecordID,
 		TaskID:         record.TaskID,
 		NodeID:         restoreNodeID,
+		TargetPath:     targetPath,
 		Status:         model.RestoreRecordStatusRunning,
 		StartedAt:      startedAt,
 		TriggeredBy:    strings.TrimSpace(triggeredBy),
@@ -191,7 +209,7 @@ func (s *RestoreService) StartSelective(ctx context.Context, backupRecordID uint
 
 	// 本地节点：异步执行
 	run := func() {
-		s.executeLocally(context.Background(), restore.ID, task, record, selectedPaths)
+		s.executeLocally(context.Background(), restore.ID, task, record, selectedPaths, targetPath)
 	}
 	s.async(run)
 	return s.getDetail(ctx, restore.ID)
@@ -218,7 +236,7 @@ func (s *RestoreService) resolveRemoteNode(ctx context.Context, nodeID uint) *mo
 }
 
 // executeLocally 在 Master 本地执行恢复。
-func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, task *model.BackupTask, backupRecord *model.BackupRecord, selectedPaths []string) {
+func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, task *model.BackupTask, backupRecord *model.BackupRecord, selectedPaths []string, targetPath string) {
 	s.semaphore <- struct{}{}
 	defer func() { <-s.semaphore }()
 
@@ -246,6 +264,12 @@ func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, tas
 	if len(selectedPaths) > 0 {
 		spec.SelectedPaths = selectedPaths
 		logger.Infof("按需恢复：仅恢复选中的 %d 个路径", len(selectedPaths))
+	}
+	// 恢复到指定目录（已在 StartSelective 校验为文件类型+绝对路径+本机）；
+	// 应用于恢复链中的每个归档（全量铺底与差异覆盖均落到该目录）。
+	if targetPath != "" {
+		spec.RestoreTargetPath = targetPath
+		logger.Infof("恢复到指定目录：%s", targetPath)
 	}
 	runner, runnerErr := s.runnerRegistry.Runner(spec.Type)
 	if runnerErr != nil {

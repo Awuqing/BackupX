@@ -269,6 +269,61 @@ func TestRestoreServiceStart_RejectsCorruptedBackup(t *testing.T) {
 	}
 }
 
+// TestRestoreServiceStart_RestoresToAlternatePath 验证恢复到指定目录：归档落在指定目录，
+// 且相对路径被拒绝。
+func TestRestoreServiceStart_RestoresToAlternatePath(t *testing.T) {
+	h := newRestoreTestHarness(t, false)
+	ctx := context.Background()
+
+	backupDetail, err := h.execution.RunTaskByIDSync(ctx, 1)
+	if err != nil {
+		t.Fatalf("RunTaskByIDSync: %v", err)
+	}
+	if backupDetail.Status != "success" {
+		t.Fatalf("expected backup success, got %s", backupDetail.Status)
+	}
+
+	altDir := filepath.Join(t.TempDir(), "restore-here")
+
+	// 相对路径应被拒绝（且不创建恢复记录）。
+	if _, relErr := h.service.StartSelective(ctx, backupDetail.ID, nil, "relative/path", "tester"); relErr == nil {
+		t.Fatal("relative target path should be rejected")
+	}
+
+	done := make(chan struct{})
+	h.service.async = func(job func()) {
+		go func() {
+			job()
+			close(done)
+		}()
+	}
+	detail, err := h.service.StartSelective(ctx, backupDetail.ID, nil, altDir, "tester")
+	if err != nil {
+		t.Fatalf("StartSelective(altDir): %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(15 * time.Second):
+		t.Fatal("restore did not complete in time")
+	}
+
+	final, err := h.service.Get(ctx, detail.ID)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if final.Status != model.RestoreRecordStatusSuccess {
+		t.Fatalf("expected success, got %s (err=%s)", final.Status, final.ErrorMessage)
+	}
+	// 源目录 basename 为 "source"，归档解压到 altDir/source/index.html。
+	got, err := os.ReadFile(filepath.Join(altDir, "source", "index.html"))
+	if err != nil {
+		t.Fatalf("read restored file at alternate path: %v", err)
+	}
+	if string(got) != "hello-restore" {
+		t.Fatalf("unexpected restored content at alt path: %q", string(got))
+	}
+}
+
 func TestRestoreServiceStart_RemoteNodeEnqueuesCommand(t *testing.T) {
 	h := newRestoreTestHarness(t, true)
 	ctx := context.Background()

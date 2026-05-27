@@ -151,11 +151,14 @@ func (h *BackupRecordHandler) Restore(c *gin.Context) {
 	if subject, exists := c.Get(contextUserSubjectKey); exists {
 		triggeredBy = strings.TrimSpace(fmt.Sprintf("%v", subject))
 	}
+	// 可选请求体：selectedPaths 按需（选择性）恢复；targetPath 恢复到指定目录（仅文件类型本机恢复）。
+	// 无 body 时为整体恢复到原始路径。
 	var body struct {
 		SelectedPaths []string `json:"selectedPaths"`
+		TargetPath    string   `json:"targetPath"`
 	}
-	_ = c.ShouldBindJSON(&body) // body 可选：无 body 为整体恢复，含 selectedPaths 为按需恢复
-	detail, err := h.restoreService.StartSelective(c.Request.Context(), id, body.SelectedPaths, triggeredBy)
+	_ = c.ShouldBindJSON(&body)
+	detail, err := h.restoreService.StartSelective(c.Request.Context(), id, body.SelectedPaths, strings.TrimSpace(body.TargetPath), triggeredBy)
 	if err != nil {
 		response.Error(c, err)
 		return

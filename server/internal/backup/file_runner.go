@@ -185,6 +185,11 @@ func (r *FileRunner) Restore(_ context.Context, task TaskSpec, artifactPath stri
 		restoreSource = task.SourcePaths[0]
 	}
 	targetParent := filepath.Dir(filepath.Clean(strings.TrimSpace(restoreSource)))
+	// 恢复到指定位置：非空时归档解压到用户指定目录，而非原始源父目录。
+	if override := strings.TrimSpace(task.RestoreTargetPath); override != "" {
+		targetParent = filepath.Clean(override)
+		writer.WriteLine(fmt.Sprintf("恢复到指定目录：%s", targetParent))
+	}
 	if err := os.MkdirAll(targetParent, 0o755); err != nil {
 		return fmt.Errorf("create restore parent: %w", err)
 	}
