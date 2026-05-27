@@ -1,7 +1,10 @@
-import { Button, DatePicker, Input, Message, PageHeader, Select, Space, Table, Tag, Typography } from '@arco-design/web-react'
+import { Button, DatePicker, Input, InputNumber, Message, PageHeader, Select, Space, Table, Tag, Typography } from '@arco-design/web-react'
 import type { ColumnProps } from '@arco-design/web-react/es/Table'
 import { useCallback, useEffect, useState } from 'react'
 import { exportAuditLogs, listAuditLogs } from '../../services/audit'
+import { fetchSettings, updateSettings } from '../../services/system'
+import { useAuthStore } from '../../stores/auth'
+import { isAdmin } from '../../utils/permissions'
 import type { AuditLog } from '../../types/audit'
 import { formatDateTime } from '../../utils/format'
 import { resolveErrorMessage } from '../../utils/error'
@@ -112,6 +115,9 @@ export function AuditLogsPage() {
   const [dateRange, setDateRange] = useState<string[] | null>(null)
   const [page, setPage] = useState(1)
   const [exporting, setExporting] = useState(false)
+  const admin = isAdmin(useAuthStore((state) => state.user))
+  const [retentionDays, setRetentionDays] = useState(0)
+  const [savingRetention, setSavingRetention] = useState(false)
 
   const fetchData = useCallback(async (currentPage: number) => {
     setLoading(true)
@@ -138,6 +144,31 @@ export function AuditLogsPage() {
   useEffect(() => {
     void fetchData(page)
   }, [page, fetchData])
+
+  // 管理员加载当前审计日志保留期设置。
+  useEffect(() => {
+    if (!admin) return
+    void (async () => {
+      try {
+        const settings = await fetchSettings()
+        setRetentionDays(Number(settings.audit_retention_days ?? 0) || 0)
+      } catch {
+        /* 读取失败时保持默认 0（永久保留），不打断主流程 */
+      }
+    })()
+  }, [admin])
+
+  async function handleSaveRetention() {
+    setSavingRetention(true)
+    try {
+      await updateSettings({ audit_retention_days: String(retentionDays) })
+      Message.success(retentionDays > 0 ? `已设置：保留最近 ${retentionDays} 天` : '已设置：永久保留')
+    } catch (e) {
+      Message.error(resolveErrorMessage(e, '保存保留期失败'))
+    } finally {
+      setSavingRetention(false)
+    }
+  }
 
   async function handleExport() {
     setExporting(true)
@@ -171,6 +202,27 @@ export function AuditLogsPage() {
         style={{ paddingBottom: 0 }}
         title="审计日志"
         subTitle="记录系统中所有关键操作，保障数据操作链可溯源。支持高级筛选与 CSV 导出（最多 10000 行）。"
+        extra={
+          admin ? (
+            <Space>
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                日志保留期
+              </Typography.Text>
+              <InputNumber
+                style={{ width: 150 }}
+                min={0}
+                max={3650}
+                value={retentionDays}
+                onChange={(value) => setRetentionDays(Number(value) || 0)}
+                suffix="天"
+                placeholder="0=永久"
+              />
+              <Button type="primary" size="small" loading={savingRetention} onClick={() => void handleSaveRetention()}>
+                保存
+              </Button>
+            </Space>
+          ) : undefined
+        }
       />
       {error ? <Typography.Text type="error">{error}</Typography.Text> : null}
       <Space wrap>
