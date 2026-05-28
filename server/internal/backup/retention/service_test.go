@@ -45,6 +45,9 @@ func (r *fakeRecordRepository) ListByTask(_ context.Context, _ uint) ([]model.Ba
 func (r *fakeRecordRepository) ListSuccessfulByTask(_ context.Context, _ uint) ([]model.BackupRecord, error) {
 	return r.records, nil
 }
+func (r *fakeRecordRepository) CountDependentDifferentials(context.Context, uint) (int64, error) {
+	return 0, nil
+}
 func (r *fakeRecordRepository) Count(context.Context) (int64, error)                 { return 0, nil }
 func (r *fakeRecordRepository) CountSince(context.Context, time.Time) (int64, error) { return 0, nil }
 func (r *fakeRecordRepository) CountSuccessSince(context.Context, time.Time) (int64, error) {

@@ -128,13 +128,19 @@ func (r *FileRunner) Run(_ context.Context, task TaskSpec, writer LogWriter) (*R
 			}
 
 			if currentInfo.Mode().IsRegular() {
-				file, err := os.Open(currentPath)
-				if err != nil {
-					return err
-				}
-				defer file.Close()
-				if _, err := io.CopyN(tw, file, currentInfo.Size()); err != nil && err != io.EOF {
-					return err
+				// 每个文件在独立作用域内打开并关闭，避免在大目录树中累积打开的文件句柄。
+				if copyErr := func() error {
+					file, err := os.Open(currentPath)
+					if err != nil {
+						return err
+					}
+					defer file.Close()
+					if _, err := io.CopyN(tw, file, currentInfo.Size()); err != nil && err != io.EOF {
+						return err
+					}
+					return nil
+				}(); copyErr != nil {
+					return copyErr
 				}
 				fileCount++
 				if fileCount%100 == 0 {

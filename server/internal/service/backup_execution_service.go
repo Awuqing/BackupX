@@ -280,6 +280,17 @@ func (s *BackupExecutionService) DeleteRecord(ctx context.Context, recordID uint
 		return apperror.BadRequest("BACKUP_RECORD_LOCKED",
 			"该备份已保留锁定（法律保留），请先解锁再删除", nil)
 	}
+	// 差异链保护：禁止删除仍被差异备份依赖的全量，否则这些差异将无法恢复（与保留清理的保护一致）。
+	if record.BackupKind == model.BackupKindFull {
+		deps, depErr := s.records.CountDependentDifferentials(ctx, record.ID)
+		if depErr != nil {
+			return apperror.Internal("BACKUP_RECORD_DELETE_FAILED", "无法检查差异备份依赖", depErr)
+		}
+		if deps > 0 {
+			return apperror.BadRequest("BACKUP_RECORD_HAS_DEPENDENTS",
+				fmt.Sprintf("该全量备份仍有 %d 个差异备份依赖它，删除会导致这些差异无法恢复。请先删除相关差异备份或等待其过期。", deps), nil)
+		}
+	}
 	if remote, err := s.deleteRemoteLocalDiskObject(ctx, record); err != nil {
 		return err
 	} else if !remote && strings.TrimSpace(record.StoragePath) != "" {
@@ -598,14 +609,19 @@ func (s *BackupExecutionService) resolveDifferentialBase(ctx context.Context, ta
 	cutoff := time.Now().Add(-time.Duration(intervalDays) * 24 * time.Hour)
 	for i := range records {
 		rec := records[i]
-		if rec.BackupKind != model.BackupKindFull || strings.TrimSpace(rec.Manifest) == "" {
+		if rec.BackupKind != model.BackupKindFull {
 			continue
 		}
 		// 最近的全量已超过强制全量间隔 → 触发新全量，限制差异链跨度与单个差异体积。
 		if rec.StartedAt.Before(cutoff) {
 			return 0, backup.Manifest{}, false
 		}
-		manifest, decErr := backup.DecodeManifest([]byte(rec.Manifest))
+		// 列表查询已省略 Manifest 列，这里按需单独加载最近全量的清单（FindByID 含 Manifest）。
+		full, ferr := s.records.FindByID(ctx, rec.ID)
+		if ferr != nil || full == nil || strings.TrimSpace(full.Manifest) == "" {
+			return 0, backup.Manifest{}, false
+		}
+		manifest, decErr := backup.DecodeManifest([]byte(full.Manifest))
 		if decErr != nil || len(manifest.Entries) == 0 {
 			return 0, backup.Manifest{}, false
 		}

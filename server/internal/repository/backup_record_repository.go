@@ -40,6 +40,7 @@ type BackupRecordRepository interface {
 	ListRecent(context.Context, int) ([]model.BackupRecord, error)
 	ListByTask(context.Context, uint) ([]model.BackupRecord, error)
 	ListSuccessfulByTask(context.Context, uint) ([]model.BackupRecord, error)
+	CountDependentDifferentials(context.Context, uint) (int64, error)
 	Count(context.Context) (int64, error)
 	CountSince(context.Context, time.Time) (int64, error)
 	CountSuccessSince(context.Context, time.Time) (int64, error)
@@ -57,7 +58,8 @@ func NewBackupRecordRepository(db *gorm.DB) *GormBackupRecordRepository {
 }
 
 func (r *GormBackupRecordRepository) List(ctx context.Context, options BackupRecordListOptions) ([]model.BackupRecord, error) {
-	query := r.db.WithContext(ctx).Model(&model.BackupRecord{}).Preload("Task").Preload("Task.StorageTarget").Order("started_at desc")
+	// Omit("Manifest")：列表不需要可能很大的清单 JSON，避免每行拖出该 TEXT 列。
+	query := r.db.WithContext(ctx).Model(&model.BackupRecord{}).Omit("Manifest").Preload("Task").Preload("Task.StorageTarget").Order("started_at desc")
 	if options.TaskID != nil {
 		query = query.Where("task_id = ?", *options.TaskID)
 	}
@@ -125,7 +127,7 @@ func (r *GormBackupRecordRepository) ListRecent(ctx context.Context, limit int) 
 		limit = 10
 	}
 	var items []model.BackupRecord
-	if err := r.db.WithContext(ctx).Preload("Task").Preload("Task.StorageTarget").Order("started_at desc").Limit(limit).Find(&items).Error; err != nil {
+	if err := r.db.WithContext(ctx).Omit("Manifest").Preload("Task").Preload("Task.StorageTarget").Order("started_at desc").Limit(limit).Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
@@ -133,7 +135,7 @@ func (r *GormBackupRecordRepository) ListRecent(ctx context.Context, limit int) 
 
 func (r *GormBackupRecordRepository) ListByTask(ctx context.Context, taskID uint) ([]model.BackupRecord, error) {
 	var items []model.BackupRecord
-	if err := r.db.WithContext(ctx).Where("task_id = ?", taskID).Order("id desc").Find(&items).Error; err != nil {
+	if err := r.db.WithContext(ctx).Omit("Manifest").Where("task_id = ?", taskID).Order("id desc").Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
@@ -141,10 +143,19 @@ func (r *GormBackupRecordRepository) ListByTask(ctx context.Context, taskID uint
 
 func (r *GormBackupRecordRepository) ListSuccessfulByTask(ctx context.Context, taskID uint) ([]model.BackupRecord, error) {
 	var items []model.BackupRecord
-	if err := r.db.WithContext(ctx).Where("task_id = ? AND status = ?", taskID, "success").Order("completed_at desc, id desc").Find(&items).Error; err != nil {
+	if err := r.db.WithContext(ctx).Omit("Manifest").Where("task_id = ? AND status = ?", taskID, "success").Order("completed_at desc, id desc").Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil
+}
+
+// CountDependentDifferentials 统计依赖某全量记录（作为基线）的成功差异备份数量。
+func (r *GormBackupRecordRepository) CountDependentDifferentials(ctx context.Context, baseID uint) (int64, error) {
+	var count int64
+	err := r.db.WithContext(ctx).Model(&model.BackupRecord{}).
+		Where("base_record_id = ? AND backup_kind = ? AND status = ?", baseID, model.BackupKindDifferential, model.BackupRecordStatusSuccess).
+		Count(&count).Error
+	return count, err
 }
 
 func (r *GormBackupRecordRepository) Count(ctx context.Context) (int64, error) {
