@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, master]
 
+# 最小权限：构建/测试仅需读取仓库内容，显式声明以收敛默认的可写令牌。
+permissions:
+  contents: read
+
 jobs:
   backend:
     name: Go Build & Test
