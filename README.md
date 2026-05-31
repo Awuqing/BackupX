@@ -94,6 +94,16 @@ See the [development guide](https://awuqing.github.io/BackupX/docs/development/s
 
 Issues and pull requests welcome. Please read the [contributing guide](https://awuqing.github.io/BackupX/docs/development/contributing) before opening a PR — commit messages and PRs on this project are written in Chinese.
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=Awuqing%2FBackupX&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=Awuqing/BackupX&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=Awuqing/BackupX&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=Awuqing/BackupX&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ## License
 
 [Apache License 2.0](LICENSE)
