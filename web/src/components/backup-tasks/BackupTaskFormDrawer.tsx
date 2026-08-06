@@ -9,6 +9,7 @@ import type { NodeSummary } from '../../types/nodes'
 import { DatabasePicker } from '../common/DatabasePicker'
 import { DirectoryPicker } from '../common/DirectoryPicker'
 import { StorageTargetFormDrawer } from '../storage-targets/StorageTargetFormDrawer'
+import { SourceServerSelector } from './SourceServerSelector'
 import {
   backupCompressionOptions,
   backupTaskTypeOptions,
@@ -176,21 +177,6 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
     [storageTargets],
   )
 
-  // 执行节点选项：本地节点显示 "本机 (local)"，远程节点带状态后缀
-  const nodeOptions = useMemo(() => {
-    const list = nodes ?? []
-    return [
-      { label: '本机 (Master)', value: 0 },
-      ...list
-        .filter((item) => !item.isLocal)
-        .map((item) => ({
-          label: `${item.name}${item.status === 'online' ? '' : '（离线）'}`,
-          value: item.id,
-          disabled: item.status !== 'online',
-        })),
-    ]
-  }, [nodes])
-
   function updateDraft(patch: Partial<BackupTaskPayload>) {
     setDraft((current) => ({ ...current, ...patch }))
   }
@@ -312,42 +298,26 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
           <Typography.Text>备份类型</Typography.Text>
           <Select value={draft.type} options={backupTaskTypeOptions as unknown as { label: string; value: string }[]} onChange={(value) => updateTaskType(value as BackupTaskType)} />
         </div>
-        <div>
-          <Typography.Text>执行节点</Typography.Text>
-          <Select
-            value={draft.nodeId ?? 0}
-            options={nodeOptions}
-            onChange={(value) => {
-              const nodeId = Number(value ?? 0)
-              // 固定节点与节点池互斥：切到固定节点时清空 NodePoolTag
-              updateDraft(nodeId > 0
-                ? {
-                  nodeId,
-                  nodePoolTag: '',
-                  backupMode: nodeId !== localNodeId && draft.backupMode === 'repository' ? 'full' : draft.backupMode,
-                }
-                : { nodeId })
-            }}
-          />
-          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
-            任务在所选节点上执行备份与恢复；源路径/数据库以该节点视角解析。远程节点需先在"节点管理"中安装 Agent。
-          </Typography.Paragraph>
-        </div>
-        <div>
-          <Typography.Text>节点池标签（可选）</Typography.Text>
-          <Input
-            placeholder="填写标签后从节点池动态调度（与固定节点互斥）"
-            value={draft.nodePoolTag ?? ''}
-            disabled={(draft.nodeId ?? 0) > 0}
-            onChange={(value) => updateDraft({
-              nodePoolTag: value,
-              backupMode: value.trim() && draft.backupMode === 'repository' ? 'full' : draft.backupMode,
-            })}
-          />
-          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
-            执行节点选"本机 / 未指定"时可启用；从节点 Labels 命中此 tag 的在线节点中按当前运行任务数最少的挑选一台执行。
-          </Typography.Paragraph>
-        </div>
+        <SourceServerSelector
+          nodeId={draft.nodeId ?? 0}
+          nodePoolTag={draft.nodePoolTag ?? ''}
+          localNodeId={localNodeId}
+          nodes={nodes}
+          onNodeChange={(nodeId) => {
+            // 固定源服务器与服务器池互斥；CDC 仓库仍固定在 Master 单写者。
+            updateDraft(nodeId > 0
+              ? {
+                nodeId,
+                nodePoolTag: '',
+                backupMode: nodeId !== localNodeId && draft.backupMode === 'repository' ? 'full' : draft.backupMode,
+              }
+              : { nodeId })
+          }}
+          onNodePoolTagChange={(value) => updateDraft({
+            nodePoolTag: value,
+            backupMode: value.trim() && draft.backupMode === 'repository' ? 'full' : draft.backupMode,
+          })}
+        />
         <div>
           <Typography.Text>Cron 表达式</Typography.Text>
           <CronInput value={draft.cronExpr} onChange={(value) => updateDraft({ cronExpr: value })} />
@@ -602,6 +572,11 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
               </Button>
             )}
           </Space>
+          {((draft.nodeId ?? 0) > 0 && draft.nodeId !== localNodeId) || draft.nodePoolTag?.trim() ? (
+            <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+              远程源服务器会直传 S3、WebDAV 等网络存储；本地磁盘目标启用 Master 中转后，文件经 Agent 认证 API 流式写入中央目录。跨公网部署请为 Master 配置 HTTPS。
+            </Typography.Paragraph>
+          ) : null}
         </div>
         <div>
           <Typography.Text>压缩策略</Typography.Text>

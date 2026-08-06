@@ -34,6 +34,14 @@ const (
 	TypeFTP         = string(ProviderTypeFTP)
 )
 
+const (
+	// TransferModeDirect lets an Agent write to a network-accessible backend.
+	TransferModeDirect = "direct"
+	// TransferModeMasterRelay streams an artifact through the authenticated
+	// Agent API so a remote source can use storage mounted only on the Master.
+	TransferModeMasterRelay = "master_relay"
+)
+
 type ObjectInfo struct {
 	Key       string    `json:"key"`
 	Size      int64     `json:"size"`
@@ -99,7 +107,8 @@ func ParseProviderType(value string) ProviderType {
 }
 
 type LocalDiskConfig struct {
-	BasePath string `json:"basePath"`
+	BasePath    string `json:"basePath"`
+	MasterRelay bool   `json:"masterRelay"`
 }
 
 type S3Config struct {

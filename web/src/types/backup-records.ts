@@ -21,6 +21,7 @@ export interface BackupRecordSummary {
   fileSize: number
   checksum: string
   storagePath: string
+  storageTransferMode?: 'direct' | 'master_relay'
   durationSeconds: number
   errorMessage: string
   startedAt: string
@@ -49,6 +50,7 @@ export interface StorageUploadResultItem {
   status: 'success' | 'failed'
   storagePath?: string
   fileSize?: number
+  transferMode?: 'direct' | 'master_relay'
   error?: string
 }
 

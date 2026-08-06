@@ -26,6 +26,27 @@ BackupX supports Master-Agent mode: backup tasks can be routed to specific nodes
 - **Execution** — Agent reuses the same BackupRunner (file / mysql / postgresql / sqlite / saphana) and uploads directly to storage
 - **Security** — Each node has its own token; the Agent never holds the Master's JWT secret or AES-256 key
 
+## Centralize backups from servers B/C/D into storage M
+
+Use the Master as the control plane and register every source server as an Agent. A task's **Source server** determines where paths and database tools are resolved; its **Storage targets** determine where the resulting artifact is retained.
+
+BackupX chooses the data path per target:
+
+| Destination | Data path |
+| --- | --- |
+| S3, WebDAV, FTP, cloud drive, or another network backend | Agent streams directly to the destination |
+| `local_disk` with **Relay remote backups through Master** enabled (for example storage server M mounted through NFS) | Agent streams through the authenticated Master API; Master writes to its configured local path |
+
+The relay is streaming: the Master does not create a second temporary copy of the entire artifact. The reverse path is used when restoring a Master-local artifact back to its source Agent. Use HTTPS whenever Agent traffic crosses an untrusted network.
+
+To configure the common `A → {B,C,D} → M` topology:
+
+1. Run BackupX Master on A and mount M on A if M is exposed as NFS or another filesystem.
+2. Create a `local_disk` target for that mount and keep **Relay remote backups through Master** enabled, or create an S3/WebDAV target exposed by M. Existing local-disk targets keep their prior Agent-local behavior until this switch is enabled.
+3. Install one Agent on B, C, and D from **Node Management**.
+4. Create a backup task for each source, choose B/C/D under **Source server**, browse that server's paths, and select M as the storage target. A source-server pool label can route identical tasks dynamically.
+5. Verify the per-target result in the backup record. For a Master-local target, the record reports transfer mode `master_relay`; network backends remain `direct`.
+
 ## Walkthrough
 
 ### 0. Set the Master URL for production clusters
@@ -78,7 +99,7 @@ In Step 1 choose "Batch" and paste node names (one per line, max 50). Step 3 sho
 
 ### 5. Route a task to the node
 
-In the **Backup Tasks** page, pick the target node when creating the task. When the task runs:
+In the **Backup Tasks** page, pick the source server when creating the task. When the task runs:
 
 - Local (`nodeId=0`) → Master executes in-process
 - Remote node → Master enqueues the command → Agent claims → Agent runs locally → uploads → reports back

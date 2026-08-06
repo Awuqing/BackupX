@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -137,13 +138,15 @@ func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) er
 	}
 	uploadResults := make([]StorageResultItem, 0, len(spec.StorageTargets))
 	selectedStorageTargetID := uint(0)
+	selectedStorageTransferMode := ""
 	var uploadErrors []string
 	for _, target := range spec.StorageTargets {
-		if err := e.uploadToTarget(ctx, recordID, target, finalPath, storagePath, fileSize, spec.TaskID); err != nil {
+		if err := e.uploadToTarget(ctx, recordID, target, finalPath, storagePath, fileSize, checksum, spec.TaskID); err != nil {
 			uploadResults = append(uploadResults, StorageResultItem{
 				StorageTargetID:   target.ID,
 				StorageTargetName: target.Name,
 				Status:            "failed",
+				TransferMode:      target.TransferMode,
 				Error:             err.Error(),
 			})
 			uploadErrors = append(uploadErrors, fmt.Sprintf("%s: %v", target.Name, err))
@@ -152,6 +155,7 @@ func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) er
 		}
 		if selectedStorageTargetID == 0 {
 			selectedStorageTargetID = target.ID
+			selectedStorageTransferMode = target.TransferMode
 		}
 		uploadResults = append(uploadResults, StorageResultItem{
 			StorageTargetID:   target.ID,
@@ -159,6 +163,7 @@ func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) er
 			Status:            "success",
 			StoragePath:       storagePath,
 			FileSize:          fileSize,
+			TransferMode:      target.TransferMode,
 		})
 		e.appendLog(ctx, recordID, fmt.Sprintf("[agent] 已上传到存储目标 %s\n", target.Name))
 	}
@@ -179,34 +184,40 @@ func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) er
 		Checksum:             checksum,
 		StoragePath:          storagePath,
 		StorageTargetID:      selectedStorageTargetID,
+		StorageTransferMode:  selectedStorageTransferMode,
 		StorageUploadResults: uploadResults,
 		LogAppend:            fmt.Sprintf("[agent] 任务完成，总计 %d 字节\n", fileSize),
 	})
 }
 
 // uploadToTarget 上传单个目标。为保持简化不做上传级重试（rclone 本身已有 low-level 重试）。
-func (e *Executor) uploadToTarget(ctx context.Context, recordID uint, target StorageTargetConfig, filePath, objectKey string, fileSize int64, taskID uint) error {
-	var rawConfig map[string]any
-	if len(target.Config) > 0 {
-		// DecodeRawConfig 通过 json 解析
-		if err := jsonUnmarshalMap(target.Config, &rawConfig); err != nil {
-			return fmt.Errorf("parse storage config: %w", err)
-		}
-	}
-	provider, err := e.storageRegistry.Create(ctx, target.Type, rawConfig)
-	if err != nil {
-		return fmt.Errorf("create provider: %w", err)
-	}
+func (e *Executor) uploadToTarget(ctx context.Context, recordID uint, target StorageTargetConfig, filePath, objectKey string, fileSize int64, checksum string, taskID uint) error {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return fmt.Errorf("open artifact: %w", err)
 	}
-	defer f.Close()
+	if target.TransferMode == storage.TransferModeMasterRelay {
+		uploadErr := e.client.UploadArtifact(ctx, recordID, target.ID, objectKey, fileSize, checksum, f)
+		return errors.Join(uploadErr, f.Close())
+	}
+	var rawConfig map[string]any
+	if len(target.Config) > 0 {
+		// DecodeRawConfig 通过 json 解析
+		if err := jsonUnmarshalMap(target.Config, &rawConfig); err != nil {
+			return errors.Join(fmt.Errorf("parse storage config: %w", err), f.Close())
+		}
+	}
+	provider, err := e.storageRegistry.Create(ctx, target.Type, rawConfig)
+	if err != nil {
+		closeErr := f.Close()
+		return errors.Join(fmt.Errorf("create provider: %w", err), closeErr)
+	}
 	meta := map[string]string{
 		"taskId":   fmt.Sprintf("%d", taskID),
 		"recordId": fmt.Sprintf("%d", recordID),
 	}
-	return provider.Upload(ctx, objectKey, f, fileSize, meta)
+	uploadErr := provider.Upload(ctx, objectKey, f, fileSize, meta)
+	return errors.Join(uploadErr, f.Close())
 }
 
 // appendLog 追加日志到 Master 记录（尽力而为，失败不中断主流程）
@@ -328,7 +339,7 @@ func (e *Executor) DeleteStorageObject(ctx context.Context, targetType string, t
 // ExecuteRestore 处理 restore_record 命令：拉规格 → 下载 → 解压 → 执行 runner.Restore → 上报结果。
 //
 // 与 ExecuteRunTask 对称，但方向相反：
-//   - 下载：通过 spec.Storage 创建 provider → Download(spec.StoragePath)
+//   - 下载：直连共享存储，或通过 Master 中转其本地磁盘对象
 //   - 解密：当前 Agent 不支持加密恢复（密钥未下发），spec.Encrypt=true 会直接失败
 //   - 执行：backup.Registry.Runner(spec.Type).Restore
 //   - 上报：通过 UpdateRestore（status/logAppend）
@@ -357,28 +368,31 @@ func (e *Executor) ExecuteRestore(ctx context.Context, restoreRecordID uint) err
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// 1) 创建 storage provider
-	var rawConfig map[string]any
-	if len(spec.Storage.Config) > 0 {
-		if err := jsonUnmarshalMap(spec.Storage.Config, &rawConfig); err != nil {
-			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解析存储配置失败: %v", err))
-			return err
-		}
-	}
-	provider, err := e.storageRegistry.Create(ctx, spec.Storage.Type, rawConfig)
-	if err != nil {
-		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("创建存储客户端失败: %v", err))
-		return err
-	}
-
-	// 2) 下载
+	// 1) 下载
 	fileName := spec.FileName
 	if strings.TrimSpace(fileName) == "" {
 		fileName = filepath.Base(spec.StoragePath)
 	}
 	artifactPath := filepath.Join(tmpDir, filepath.Base(fileName))
 	e.appendRestoreLog(ctx, restoreRecordID, fmt.Sprintf("[agent] 下载备份文件 %s\n", spec.StoragePath))
-	reader, err := provider.Download(ctx, spec.StoragePath)
+	var reader io.ReadCloser
+	if spec.Storage.TransferMode == storage.TransferModeMasterRelay {
+		reader, err = e.client.DownloadRestoreArtifact(ctx, restoreRecordID)
+	} else {
+		var rawConfig map[string]any
+		if len(spec.Storage.Config) > 0 {
+			if err := jsonUnmarshalMap(spec.Storage.Config, &rawConfig); err != nil {
+				e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解析存储配置失败: %v", err))
+				return err
+			}
+		}
+		provider, providerErr := e.storageRegistry.Create(ctx, spec.Storage.Type, rawConfig)
+		if providerErr != nil {
+			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("创建存储客户端失败: %v", providerErr))
+			return providerErr
+		}
+		reader, err = provider.Download(ctx, spec.StoragePath)
+	}
 	if err != nil {
 		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("下载备份失败: %v", err))
 		return err
@@ -489,8 +503,10 @@ func buildRestoreBackupTaskSpec(spec *RestoreSpec, startedAt time.Time, tempDir 
 }
 
 // writeReaderToLocal 把 reader 写到本地文件（Agent 侧工具函数）。
-func writeReaderToLocal(targetPath string, reader io.ReadCloser) error {
-	defer reader.Close()
+func writeReaderToLocal(targetPath string, reader io.ReadCloser) (err error) {
+	defer func() {
+		err = errors.Join(err, reader.Close())
+	}()
 	if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 		return err
 	}
@@ -498,9 +514,8 @@ func writeReaderToLocal(targetPath string, reader io.ReadCloser) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-	_, err = io.Copy(file, reader)
-	return err
+	_, copyErr := io.Copy(file, reader)
+	return errors.Join(copyErr, file.Close())
 }
 
 // 辅助函数

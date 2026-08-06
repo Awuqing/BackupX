@@ -22,14 +22,16 @@ type BackupRecord struct {
 	Task            BackupTask    `json:"task,omitempty"`
 	StorageTargetID uint          `gorm:"column:storage_target_id;index;not null" json:"storageTargetId"`
 	StorageTarget   StorageTarget `json:"storageTarget,omitempty"`
-	// NodeID 执行该次备份的节点（0 = 本机 Master）。用于集群中识别 local_disk 类型
-	// 存储的归属节点，避免 Master 端试图跨节点访问远程 Agent 的本地存储。
-	NodeID               uint   `gorm:"column:node_id;index;default:0" json:"nodeId"`
-	Status               string `gorm:"size:20;index;not null" json:"status"`
-	FileName             string `gorm:"column:file_name;size:255" json:"fileName"`
-	FileSize             int64  `gorm:"column:file_size;not null;default:0" json:"fileSize"`
-	Checksum             string `gorm:"column:checksum;size:64" json:"checksum"`
-	StoragePath          string `gorm:"column:storage_path;size:500" json:"storagePath"`
+	// NodeID 执行该次备份的节点（0 = 本机 Master）。StorageTransferMode 进一步
+	// 区分远程 Agent 直写与 Master 中转，避免在错误节点访问 local_disk。
+	NodeID      uint   `gorm:"column:node_id;index;default:0" json:"nodeId"`
+	Status      string `gorm:"size:20;index;not null" json:"status"`
+	FileName    string `gorm:"column:file_name;size:255" json:"fileName"`
+	FileSize    int64  `gorm:"column:file_size;not null;default:0" json:"fileSize"`
+	Checksum    string `gorm:"column:checksum;size:64" json:"checksum"`
+	StoragePath string `gorm:"column:storage_path;size:500" json:"storagePath"`
+	// 空值表示旧版 Agent 直写；direct / master_relay 记录新协议的实际数据路径。
+	StorageTransferMode  string `gorm:"column:storage_transfer_mode;size:20" json:"storageTransferMode,omitempty"`
 	StorageUploadResults string `gorm:"column:storage_upload_results;type:text" json:"-"`
 	DurationSeconds      int    `gorm:"column:duration_seconds;not null;default:0" json:"durationSeconds"`
 	// Locked 保留锁定（法律保留）：为 true 时该备份不参与保留期/数量自动清理，

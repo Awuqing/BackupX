@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -125,10 +126,11 @@ type TaskSpec struct {
 
 // StorageTargetConfig 与 service.AgentStorageTargetConfig 对齐
 type StorageTargetConfig struct {
-	ID     uint            `json:"id"`
-	Type   string          `json:"type"`
-	Name   string          `json:"name"`
-	Config json.RawMessage `json:"config"`
+	ID           uint            `json:"id"`
+	Type         string          `json:"type"`
+	Name         string          `json:"name"`
+	Config       json.RawMessage `json:"config"`
+	TransferMode string          `json:"transferMode"`
 }
 
 // GetTaskSpec 拉取任务规格
@@ -149,6 +151,7 @@ type RecordUpdate struct {
 	Checksum             string              `json:"checksum,omitempty"`
 	StoragePath          string              `json:"storagePath,omitempty"`
 	StorageTargetID      uint                `json:"storageTargetId,omitempty"`
+	StorageTransferMode  string              `json:"storageTransferMode,omitempty"`
 	StorageUploadResults []StorageResultItem `json:"storageUploadResults,omitempty"`
 	ErrorMessage         string              `json:"errorMessage,omitempty"`
 	LogAppend            string              `json:"logAppend,omitempty"`
@@ -160,6 +163,7 @@ type StorageResultItem struct {
 	Status            string `json:"status"`
 	StoragePath       string `json:"storagePath,omitempty"`
 	FileSize          int64  `json:"fileSize,omitempty"`
+	TransferMode      string `json:"transferMode,omitempty"`
 	Error             string `json:"error,omitempty"`
 }
 
@@ -167,6 +171,39 @@ type StorageResultItem struct {
 func (c *MasterClient) UpdateRecord(ctx context.Context, recordID uint, update RecordUpdate) error {
 	path := fmt.Sprintf("/api/agent/records/%d", recordID)
 	return c.do(ctx, http.MethodPost, path, update, nil)
+}
+
+// UploadArtifact streams an artifact through the Master for storage targets
+// that are not directly reachable from the Agent.
+func (c *MasterClient) UploadArtifact(ctx context.Context, recordID, targetID uint, objectKey string, size int64, checksum string, reader io.Reader) error {
+	path := fmt.Sprintf("/api/agent/records/%d/artifacts/%d", recordID, targetID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+path, reader)
+	if err != nil {
+		return err
+	}
+	// The executor owns and closes the artifact file. Prevent net/http from
+	// closing that underlying reader when it finishes the request body.
+	req.Body = io.NopCloser(reader)
+	req.ContentLength = size
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-Agent-Token", c.token)
+	req.Header.Set("X-BackupX-Object-Key", objectKey)
+	req.Header.Set("X-BackupX-SHA256", checksum)
+	client := *c.httpClient
+	client.Timeout = 0
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("relay artifact to Master: %w", err)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	closeErr := resp.Body.Close()
+	if readErr != nil || closeErr != nil {
+		return errors.Join(readErr, closeErr)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("relay artifact to Master: http %d: %s", resp.StatusCode, string(data))
+	}
+	return nil
 }
 
 // RestoreSpec 与 service.AgentRestoreSpec 对齐
@@ -208,6 +245,27 @@ func (c *MasterClient) GetRestoreSpec(ctx context.Context, restoreRecordID uint)
 		return nil, err
 	}
 	return &spec, nil
+}
+
+func (c *MasterClient) DownloadRestoreArtifact(ctx context.Context, restoreRecordID uint) (io.ReadCloser, error) {
+	path := fmt.Sprintf("/api/agent/restores/%d/artifact", restoreRecordID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Agent-Token", c.token)
+	client := *c.httpClient
+	client.Timeout = 0
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download relayed artifact from Master: %w", err)
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return resp.Body, nil
+	}
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	closeErr := resp.Body.Close()
+	return nil, errors.Join(fmt.Errorf("download relayed artifact from Master: http %d: %s", resp.StatusCode, string(data)), readErr, closeErr)
 }
 
 // UpdateRestore 上报恢复记录的状态/日志

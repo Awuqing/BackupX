@@ -140,6 +140,11 @@ func validateCrossNodeLocalDisk(ctx context.Context, nodeRepo repository.NodeRep
 	if record == nil || record.NodeID == 0 || nodeRepo == nil {
 		return nil
 	}
+	// 中转模式的对象实际落在 Master 配置的本地磁盘，Master 可以安全访问。
+	// 空值和 direct 均按旧版 Agent 本地落盘处理，保持升级兼容。
+	if record.StorageTransferMode == storage.TransferModeMasterRelay {
+		return nil
+	}
 	node, err := nodeRepo.FindByID(ctx, record.NodeID)
 	if err != nil || node == nil || node.IsLocal {
 		return nil

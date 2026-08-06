@@ -429,6 +429,56 @@ func TestBackupExecutionServiceRestoreRecordRejectsRemoteLocalDisk(t *testing.T)
 	}
 }
 
+func TestBackupExecutionServiceDownloadsMasterRelayedLocalDiskRecord(t *testing.T) {
+	executionService, _, tasks, _, records, _, storageDir := newExecutionTestServices(t)
+	ctx := context.Background()
+	executionService.SetClusterDependencies(&nodeRepoStub{nodes: []model.Node{
+		{ID: 10, Name: "edge-a", Token: "edge-a-token", Status: model.NodeStatusOnline},
+	}}, &fakeDispatcher{})
+	task, err := tasks.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID task returned error: %v", err)
+	}
+	storagePath := "file/2026/05/09/relayed.tar"
+	artifactPath := filepath.Join(storageDir, filepath.FromSlash(storagePath))
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll artifact parent returned error: %v", err)
+	}
+	content := []byte("stored on Master")
+	if err := os.WriteFile(artifactPath, content, 0o600); err != nil {
+		t.Fatalf("WriteFile artifact returned error: %v", err)
+	}
+	completedAt := time.Now().UTC()
+	record := &model.BackupRecord{
+		TaskID:              task.ID,
+		StorageTargetID:     task.StorageTargetID,
+		NodeID:              10,
+		Status:              model.BackupRecordStatusSuccess,
+		FileName:            "relayed.tar",
+		FileSize:            int64(len(content)),
+		StoragePath:         storagePath,
+		StorageTransferMode: storage.TransferModeMasterRelay,
+		StartedAt:           completedAt.Add(-time.Second),
+		CompletedAt:         &completedAt,
+	}
+	if err := records.Create(ctx, record); err != nil {
+		t.Fatalf("Create record returned error: %v", err)
+	}
+
+	download, err := executionService.DownloadRecord(ctx, record.ID)
+	if err != nil {
+		t.Fatalf("DownloadRecord returned error: %v", err)
+	}
+	got, readErr := io.ReadAll(download.Reader)
+	closeErr := download.Reader.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read relayed artifact: read=%v close=%v", readErr, closeErr)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("downloaded content = %q, want %q", got, content)
+	}
+}
+
 func TestBackupExecutionServiceRecordsFirstSuccessfulStorageTarget(t *testing.T) {
 	executionService, _, tasks, targets, records, _, _ := newExecutionTestServices(t)
 	ctx := context.Background()

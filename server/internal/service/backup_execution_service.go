@@ -51,6 +51,7 @@ type StorageUploadResultItem struct {
 	Status            string `json:"status"`
 	StoragePath       string `json:"storagePath,omitempty"`
 	FileSize          int64  `json:"fileSize,omitempty"`
+	TransferMode      string `json:"transferMode,omitempty"`
 	Error             string `json:"error,omitempty"`
 }
 
@@ -408,6 +409,9 @@ func (s *BackupExecutionService) DeleteRecord(ctx context.Context, recordID uint
 
 func (s *BackupExecutionService) deleteRemoteLocalDiskObject(ctx context.Context, record *model.BackupRecord) (bool, error) {
 	if strings.TrimSpace(record.StoragePath) == "" || s.nodeRepo == nil {
+		return false, nil
+	}
+	if record.StorageTransferMode == storage.TransferModeMasterRelay {
 		return false, nil
 	}
 	node, err := s.nodeRepo.FindByID(ctx, record.NodeID)

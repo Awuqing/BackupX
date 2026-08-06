@@ -135,7 +135,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	// Agent 协议服务：命令队列 + 任务下发 + 记录上报
 	agentCmdRepo := repository.NewAgentCommandRepository(db)
 	nodeService.SetAgentCommandRepository(agentCmdRepo)
-	agentService := service.NewAgentService(nodeRepo, backupTaskRepo, backupRecordRepo, storageTargetRepo, agentCmdRepo, configCipher)
+	agentService := service.NewAgentService(nodeRepo, backupTaskRepo, backupRecordRepo, storageTargetRepo, agentCmdRepo, configCipher, storageRegistry)
 	agentService.SetRestoreRepository(restoreRecordRepo)
 	agentService.StartCommandTimeoutMonitor(ctx, 30*time.Second, 10*time.Minute)
 

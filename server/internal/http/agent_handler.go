@@ -156,6 +156,44 @@ func (h *AgentHandler) UpdateRecord(c *gin.Context) {
 	response.Success(c, gin.H{"status": "ok"})
 }
 
+// UploadArtifact streams a remote source artifact into storage mounted only on
+// the Master. The request body is never buffered as a whole in memory or disk.
+func (h *AgentHandler) UploadArtifact(c *gin.Context) {
+	node, err := h.agentService.AuthenticatedNode(c.Request.Context(), extractToken(c))
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	recordID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	targetID, err := strconv.ParseUint(c.Param("targetId"), 10, 32)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	if c.Request.ContentLength < 0 {
+		c.JSON(stdhttp.StatusLengthRequired, gin.H{"code": "CONTENT_LENGTH_REQUIRED", "message": "artifact content length is required"})
+		return
+	}
+	if err := h.agentService.UploadArtifact(
+		c.Request.Context(),
+		node,
+		uint(recordID),
+		uint(targetID),
+		c.GetHeader("X-BackupX-Object-Key"),
+		c.Request.ContentLength,
+		c.GetHeader("X-BackupX-SHA256"),
+		c.Request.Body,
+	); err != nil {
+		response.Error(c, err)
+		return
+	}
+	response.Success(c, gin.H{"status": "ok"})
+}
+
 // GetRestoreSpec Agent 拉取恢复规格。
 func (h *AgentHandler) GetRestoreSpec(c *gin.Context) {
 	if h.restoreService == nil {
@@ -206,6 +244,34 @@ func (h *AgentHandler) UpdateRestore(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"status": "ok"})
+}
+
+// DownloadRestoreArtifact streams a Master-local backup back to its source
+// Agent for restore without exposing the local storage configuration.
+func (h *AgentHandler) DownloadRestoreArtifact(c *gin.Context) {
+	if h.restoreService == nil {
+		c.JSON(stdhttp.StatusServiceUnavailable, gin.H{"code": "RESTORE_SERVICE_DISABLED", "message": "restore service is not enabled"})
+		return
+	}
+	node, err := h.agentService.AuthenticatedNode(c.Request.Context(), extractToken(c))
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	restoreID, err := strconv.ParseUint(c.Param("id"), 10, 32)
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	artifact, err := h.restoreService.DownloadAgentArtifact(c.Request.Context(), node, uint(restoreID))
+	if err != nil {
+		response.Error(c, err)
+		return
+	}
+	c.DataFromReader(stdhttp.StatusOK, artifact.Size, "application/octet-stream", artifact.Reader, nil)
+	if err := artifact.Reader.Close(); err != nil {
+		_ = c.Error(err)
+	}
 }
 
 // Self 返回当前 Agent token 所属节点的状态，供安装脚本末尾探活。

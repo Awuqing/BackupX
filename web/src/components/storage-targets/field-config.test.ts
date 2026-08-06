@@ -4,8 +4,9 @@ import { getStorageTargetFieldConfigs, getStorageTargetTypeLabel } from './field
 describe('storage target field config', () => {
   it('returns local disk field config', () => {
     const fields = getStorageTargetFieldConfigs('local_disk')
-    expect(fields).toHaveLength(1)
+    expect(fields).toHaveLength(2)
     expect(fields[0]?.key).toBe('basePath')
+    expect(fields[1]).toMatchObject({ key: 'masterRelay', type: 'switch' })
   })
 
   it('returns readable type labels', () => {

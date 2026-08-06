@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -601,14 +602,21 @@ func (s *RestoreService) GetAgentRestoreSpec(ctx context.Context, node *model.No
 	if target == nil {
 		return nil, apperror.BadRequest("BACKUP_STORAGE_TARGET_INVALID", "存储目标不存在", nil)
 	}
-	configRaw, err := s.cipher.Decrypt(target.ConfigCiphertext)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt storage config: %w", err)
-	}
 	// 拆开 sourcePaths
 	sourcePaths := []string{}
 	if strings.TrimSpace(task.SourcePaths) != "" {
 		_ = json.Unmarshal([]byte(task.SourcePaths), &sourcePaths)
+	}
+	transferMode := storage.TransferModeDirect
+	if backupRecord.StorageTransferMode == storage.TransferModeMasterRelay {
+		transferMode = storage.TransferModeMasterRelay
+	}
+	var configRaw []byte
+	if transferMode == storage.TransferModeDirect {
+		configRaw, err = s.cipher.Decrypt(target.ConfigCiphertext)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt storage config: %w", err)
+		}
 	}
 	return &AgentRestoreSpec{
 		RestoreRecordID: restore.ID,
@@ -628,15 +636,73 @@ func (s *RestoreService) GetAgentRestoreSpec(ctx context.Context, node *model.No
 		Compression:     task.Compression,
 		Encrypt:         task.Encrypt,
 		Storage: AgentStorageTargetConfig{
-			ID:     target.ID,
-			Type:   target.Type,
-			Name:   target.Name,
-			Config: json.RawMessage(configRaw),
+			ID:           target.ID,
+			Type:         target.Type,
+			Name:         target.Name,
+			Config:       json.RawMessage(configRaw),
+			TransferMode: transferMode,
 		},
 		StoragePath: backupRecord.StoragePath,
 		FileName:    backupRecord.FileName,
 		Checksum:    backupRecord.Checksum,
 	}, nil
+}
+
+type AgentArtifactDownload struct {
+	Reader io.ReadCloser
+	Size   int64
+}
+
+// DownloadAgentArtifact opens a Master-local object for authenticated streaming
+// back to the Agent that owns the restore record.
+func (s *RestoreService) DownloadAgentArtifact(ctx context.Context, node *model.Node, restoreID uint) (*AgentArtifactDownload, error) {
+	if node == nil {
+		return nil, apperror.Unauthorized("RESTORE_RECORD_FORBIDDEN", "恢复记录不属于当前节点", nil)
+	}
+	restore, err := s.restores.FindByID(ctx, restoreID)
+	if err != nil {
+		return nil, err
+	}
+	if restore == nil {
+		return nil, apperror.New(404, "RESTORE_RECORD_NOT_FOUND", "恢复记录不存在", nil)
+	}
+	if restore.NodeID != node.ID {
+		return nil, apperror.Unauthorized("RESTORE_RECORD_FORBIDDEN", "恢复记录不属于当前节点", nil)
+	}
+	if isRestoreRecordTerminal(restore.Status) {
+		return nil, apperror.BadRequest("RESTORE_RECORD_TERMINAL", "恢复记录已结束，不能继续下载产物", nil)
+	}
+	record, err := s.records.FindByID(ctx, restore.BackupRecordID)
+	if err != nil {
+		return nil, err
+	}
+	if record == nil {
+		return nil, apperror.New(404, "BACKUP_RECORD_NOT_FOUND", "源备份记录不存在", nil)
+	}
+	target, err := s.targets.FindByID(ctx, record.StorageTargetID)
+	if err != nil {
+		return nil, err
+	}
+	if target == nil || !strings.EqualFold(target.Type, storage.TypeLocalDisk) || record.StorageTransferMode != storage.TransferModeMasterRelay {
+		return nil, apperror.BadRequest("AGENT_ARTIFACT_RELAY_UNSUPPORTED", "该存储目标应由 Agent 直接下载", nil)
+	}
+	configMap := map[string]any{}
+	if err := s.cipher.DecryptJSON(target.ConfigCiphertext, &configMap); err != nil {
+		return nil, fmt.Errorf("decrypt storage config: %w", err)
+	}
+	provider, err := s.storageRegistry.Create(ctx, target.Type, configMap)
+	if err != nil {
+		return nil, fmt.Errorf("create master relay provider: %w", err)
+	}
+	reader, err := provider.Download(ctx, record.StoragePath)
+	if err != nil {
+		return nil, fmt.Errorf("open master relay artifact: %w", err)
+	}
+	size := record.FileSize
+	if size <= 0 {
+		size = -1
+	}
+	return &AgentArtifactDownload{Reader: reader, Size: size}, nil
 }
 
 // UpdateAgentRestore Agent 回传状态/日志。

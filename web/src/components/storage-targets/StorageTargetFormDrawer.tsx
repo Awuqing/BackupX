@@ -16,7 +16,14 @@ interface StorageTargetFormDrawerProps {
 }
 
 function createEmptyDraft(type: StorageTargetType = 'local_disk'): StorageTargetPayload {
-  return { name: '', type, description: '', enabled: true, config: {}, quotaBytes: 0 }
+  return {
+    name: '',
+    type,
+    description: '',
+    enabled: true,
+    config: type === 'local_disk' ? { masterRelay: true } : {},
+    quotaBytes: 0,
+  }
 }
 
 export function StorageTargetFormDrawer({
@@ -207,7 +214,8 @@ export function StorageTargetFormDrawer({
               return label.toLowerCase().includes(input.toLowerCase())
             }}
             onChange={(value) => {
-              setDraft((c) => ({ ...c, type: value as string, config: {} }))
+              const config: StorageTargetPayload['config'] = value === 'local_disk' ? { masterRelay: true } : {}
+              setDraft((c) => ({ ...c, type: value as string, config }))
               setTestResult(null)
             }}
           >
