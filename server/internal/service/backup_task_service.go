@@ -57,8 +57,8 @@ type BackupTaskUpsertInput struct {
 	KeepWeekly  int `json:"keepWeekly"`
 	KeepMonthly int `json:"keepMonthly"`
 	KeepYearly  int `json:"keepYearly"`
-	// BackupMode 备份模式：full（默认）/ differential（差异，仅文件类型本机任务）
-	BackupMode           string `json:"backupMode" binding:"omitempty,oneof=full differential"`
+	// BackupMode 备份模式：full（默认）/ differential（差异归档）/ repository（CDC 去重仓库）
+	BackupMode           string `json:"backupMode" binding:"omitempty,oneof=full differential repository"`
 	DiffFullIntervalDays int    `json:"diffFullIntervalDays"`
 	// 备份复制目标存储 ID 列表（3-2-1 规则）
 	ReplicationTargetIDs []uint `json:"replicationTargetIds"`
@@ -414,21 +414,50 @@ func (s *BackupTaskService) cleanupRemoteFiles(ctx context.Context, taskID uint)
 	recordCount = len(records)
 	// 缓存 provider 避免同一存储目标重复创建连接
 	providerCache := make(map[uint]storage.StorageProvider)
+	repositoryProviders := make(map[uint]storage.StorageProvider)
 	for _, record := range records {
-		if strings.TrimSpace(record.StoragePath) == "" {
-			continue
+		copies := []StorageUploadResultItem{{
+			StorageTargetID: record.StorageTargetID,
+			Status:          model.BackupRecordStatusSuccess,
+			StoragePath:     record.StoragePath,
+		}}
+		if strings.TrimSpace(record.StorageUploadResults) != "" {
+			var storedCopies []StorageUploadResultItem
+			if unmarshalErr := json.Unmarshal([]byte(record.StorageUploadResults), &storedCopies); unmarshalErr == nil {
+				copies = storedCopies
+			}
 		}
-		provider, ok := providerCache[record.StorageTargetID]
-		if !ok {
-			provider, err = s.resolveStorageProvider(ctx, record.StorageTargetID)
-			if err != nil {
+		seenTargets := make(map[uint]struct{}, len(copies))
+		for _, copy := range copies {
+			if !strings.EqualFold(copy.Status, model.BackupRecordStatusSuccess) || strings.TrimSpace(copy.StoragePath) == "" {
 				continue
 			}
-			providerCache[record.StorageTargetID] = provider
+			if _, seen := seenTargets[copy.StorageTargetID]; seen {
+				continue
+			}
+			seenTargets[copy.StorageTargetID] = struct{}{}
+			provider, ok := providerCache[copy.StorageTargetID]
+			if !ok {
+				provider, err = s.resolveStorageProvider(ctx, copy.StorageTargetID)
+				if err != nil {
+					continue
+				}
+				providerCache[copy.StorageTargetID] = provider
+			}
+			if err := provider.Delete(ctx, copy.StoragePath); err == nil {
+				cleanedFiles++
+				if record.BackupKind == model.BackupKindRepository {
+					repositoryProviders[copy.StorageTargetID] = provider
+				}
+			}
 		}
-		if err := provider.Delete(ctx, record.StoragePath); err == nil {
-			cleanedFiles++
+	}
+	for _, provider := range repositoryProviders {
+		pruned, pruneErr := backup.NewRepositoryStore(s.cipher.Key()).Prune(ctx, provider)
+		if pruneErr != nil {
+			continue
 		}
+		cleanedFiles += pruned.DeletedIndexes + pruned.DeletedPacks
 	}
 	return recordCount, cleanedFiles
 }
@@ -528,6 +557,17 @@ func (s *BackupTaskService) validateInput(ctx context.Context, existing *model.B
 		}
 		if strings.TrimSpace(input.NodePoolTag) != "" || (fixedNode != nil && !fixedNode.IsLocal) {
 			return apperror.BadRequest("BACKUP_TASK_DIFF_REMOTE_UNSUPPORTED", "差异备份当前仅支持本机 Master 执行，请将任务固定在本机或改用全量备份。", nil)
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(input.BackupMode), model.BackupModeRepository) {
+		if input.Type != model.BackupTaskTypeFile {
+			return apperror.BadRequest("BACKUP_TASK_REPOSITORY_UNSUPPORTED", "CDC 仓库模式仅支持文件目录类型任务", nil)
+		}
+		if strings.TrimSpace(input.NodePoolTag) != "" || (fixedNode != nil && !fixedNode.IsLocal) {
+			return apperror.BadRequest("BACKUP_TASK_REPOSITORY_REMOTE_UNSUPPORTED", "CDC 仓库模式当前采用单写者索引，仅支持 Master 本机执行。远程服务器备份请暂用全量模式。", nil)
+		}
+		if len(input.ReplicationTargetIDs) > 0 {
+			return apperror.BadRequest("BACKUP_TASK_REPOSITORY_REPLICATION_UNSUPPORTED", "CDC 仓库快照不能使用对象级复制；请直接为任务选择多个存储目标以生成完整仓库副本。", nil)
 		}
 	}
 	if input.RetentionDays < 0 {
@@ -935,10 +975,17 @@ func decodeExtraConfig(value string) (map[string]any, error) {
 	return result, nil
 }
 
-// normalizeBackupMode 归一化备份模式：仅文件类型可启用差异，其余一律全量（双保险，防绕过校验）。
+// normalizeBackupMode 归一化备份模式：仅文件类型可启用差异或 CDC 仓库，
+// 其余一律全量（双保险，防绕过校验）。
 func normalizeBackupMode(mode, taskType string) string {
-	if strings.EqualFold(strings.TrimSpace(mode), model.BackupModeDifferential) && normalizeBackupTaskType(taskType) == model.BackupTaskTypeFile {
+	if normalizeBackupTaskType(taskType) != model.BackupTaskTypeFile {
+		return model.BackupModeFull
+	}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case model.BackupModeDifferential:
 		return model.BackupModeDifferential
+	case model.BackupModeRepository:
+		return model.BackupModeRepository
 	}
 	return model.BackupModeFull
 }

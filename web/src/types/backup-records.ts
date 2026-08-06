@@ -26,7 +26,7 @@ export interface BackupRecordSummary {
   startedAt: string
   completedAt?: string
   locked: boolean
-  backupKind: 'full' | 'differential'
+  backupKind: 'full' | 'differential' | 'repository'
 }
 
 export interface BackupRecordContentEntry {

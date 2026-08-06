@@ -84,7 +84,7 @@ func New(ctx context.Context, cfg config.Config, version string) (*Application, 
 	// nodeRepo 在下方 Cluster 节点管理区块才实例化，这里延后注入
 	backupRunnerRegistry := backup.NewRegistry(backup.NewFileRunner(), backup.NewSQLiteRunner(), backup.NewMySQLRunner(nil), backup.NewPostgreSQLRunner(nil), backup.NewSAPHANARunner(nil), backup.NewMongoDBRunner(nil))
 	logHub := backup.NewLogHub()
-	retentionService := backupretention.NewService(backupRecordRepo)
+	retentionService := backupretention.NewService(backupRecordRepo, configCipher.Key())
 	notifyRegistry := notify.NewRegistry(notify.NewEmailNotifier(), notify.NewWebhookNotifier(), notify.NewTelegramNotifier())
 	notificationService := service.NewNotificationService(notificationRepo, notifyRegistry, configCipher)
 	authService.SetNotificationService(notificationService)

@@ -321,6 +321,13 @@ func (s *RestoreService) restoreArtifact(ctx context.Context, record *model.Back
 	if err != nil {
 		return fmt.Errorf("创建存储客户端失败：%w", err)
 	}
+	if record.BackupKind == model.BackupKindRepository {
+		logger.Infof("读取 CDC 仓库快照：%s", record.StoragePath)
+		if err := backup.NewRepositoryStore(s.cipher.Key()).Restore(ctx, provider, record.StoragePath, spec, logger); err != nil {
+			return fmt.Errorf("恢复 CDC 仓库快照失败：%w", err)
+		}
+		return nil
+	}
 	recDir, err := os.MkdirTemp(parentTempDir, fmt.Sprintf("rec-%d-*", record.ID))
 	if err != nil {
 		return fmt.Errorf("创建恢复子目录失败：%w", err)
@@ -368,6 +375,9 @@ func (s *RestoreService) buildRestoreChain(ctx context.Context, record *model.Ba
 }
 
 func backupKindLabel(kind string) string {
+	if kind == model.BackupKindRepository {
+		return "CDC 仓库快照"
+	}
 	if kind == model.BackupKindDifferential {
 		return "差异"
 	}

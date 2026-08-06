@@ -251,6 +251,12 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
       if (validPaths.length === 0 && !value.sourcePath.trim()) {
         return '请输入至少一个源路径'
       }
+      if (value.backupMode === 'repository' && (((value.nodeId ?? 0) > 0 && value.nodeId !== localNodeId) || value.nodePoolTag?.trim())) {
+        return 'CDC 仓库模式当前仅支持 Master 本机执行'
+      }
+      if (value.backupMode === 'repository' && value.replicationTargetIds.length > 0) {
+        return 'CDC 仓库模式请直接多选存储目标，不能使用对象级副本复制'
+      }
     }
     if (isSQLiteBackupTask(value.type) && !value.dbPath.trim()) {
       return '请输入 SQLite 数据库路径'
@@ -314,7 +320,13 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
             onChange={(value) => {
               const nodeId = Number(value ?? 0)
               // 固定节点与节点池互斥：切到固定节点时清空 NodePoolTag
-              updateDraft(nodeId > 0 ? { nodeId, nodePoolTag: '' } : { nodeId })
+              updateDraft(nodeId > 0
+                ? {
+                  nodeId,
+                  nodePoolTag: '',
+                  backupMode: nodeId !== localNodeId && draft.backupMode === 'repository' ? 'full' : draft.backupMode,
+                }
+                : { nodeId })
             }}
           />
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
@@ -327,7 +339,10 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
             placeholder="填写标签后从节点池动态调度（与固定节点互斥）"
             value={draft.nodePoolTag ?? ''}
             disabled={(draft.nodeId ?? 0) > 0}
-            onChange={(value) => updateDraft({ nodePoolTag: value })}
+            onChange={(value) => updateDraft({
+              nodePoolTag: value,
+              backupMode: value.trim() && draft.backupMode === 'repository' ? 'full' : draft.backupMode,
+            })}
           />
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
             执行节点选"本机 / 未指定"时可启用；从节点 Labels 命中此 tag 的在线节点中按当前运行任务数最少的挑选一台执行。
@@ -600,8 +615,11 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
               options={[
                 { label: '全量备份', value: 'full' },
                 { label: '差异备份（仅文件、本机）', value: 'differential' },
+                { label: 'CDC 去重仓库（仅文件、本机）', value: 'repository' },
               ]}
-              onChange={(value) => updateDraft({ backupMode: value as BackupMode })}
+              onChange={(value) => updateDraft(value === 'repository'
+                ? { backupMode: value as BackupMode, nodeId: 0, nodePoolTag: '', replicationTargetIds: [] }
+                : { backupMode: value as BackupMode })}
             />
             {draft.backupMode === 'differential' && (
               <div style={{ marginTop: 8 }}>
@@ -617,6 +635,11 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
                   onChange={(value) => updateDraft({ diffFullIntervalDays: Number(value ?? 7) })}
                 />
               </div>
+            )}
+            {draft.backupMode === 'repository' && (
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 8 }}>
+                文件按内容边界切块并写入全局分块池；相同数据跨文件、跨快照只上传一次。新块会合并为 pack，恢复时通过索引按需读取。当前版本采用单写者索引，因此固定在 Master 本机执行；需要多副本时请直接多选上方存储目标。
+              </Typography.Paragraph>
             )}
           </div>
         )}
@@ -736,10 +759,13 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
             value={draft.replicationTargetIds}
             placeholder="选择副本目标（不选 = 不启用复制）"
             options={storageTargetOptions.filter((opt) => !(draft.storageTargetIds ?? []).includes(opt.value as number))}
+            disabled={draft.backupMode === 'repository'}
             onChange={(values: number[]) => updateDraft({ replicationTargetIds: values })}
           />
           <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
-            备份成功后自动镜像到副本存储。满足 3-2-1 规则：至少 2 份副本、至少 1 份异地。建议选不同 provider 的目标。
+            {draft.backupMode === 'repository'
+              ? 'CDC 仓库包含共享 pack 与索引，不能只复制单个快照对象；请在“存储目标”中直接多选以生成完整仓库副本。'
+              : '备份成功后自动镜像到副本存储。满足 3-2-1 规则：至少 2 份副本、至少 1 份异地。建议选不同 provider 的目标。'}
           </Typography.Paragraph>
         </div>
 

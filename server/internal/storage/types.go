@@ -49,6 +49,13 @@ type StorageProvider interface {
 	List(ctx context.Context, prefix string) ([]ObjectInfo, error)
 }
 
+// StorageRangeDownloader is an optional capability used by packed repository
+// backups. Implementations return exactly the requested byte range when the
+// backend supports ranged reads and may transparently fall back to a full read.
+type StorageRangeDownloader interface {
+	DownloadRange(ctx context.Context, objectKey string, offset, length int64) (io.ReadCloser, error)
+}
+
 type ProviderFactory interface {
 	Type() ProviderType
 }
@@ -151,4 +158,3 @@ type FTPConfig struct {
 type StorageDirCleaner interface {
 	RemoveEmptyDirs(ctx context.Context, prefix string) error
 }
-

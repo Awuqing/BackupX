@@ -221,3 +221,66 @@ func TestCleanupDeletesExpiredRecords(t *testing.T) {
 		t.Fatalf("unexpected deleted objects: %#v", provider.deleted)
 	}
 }
+
+func TestCleanupProvidersDeletesEverySuccessfulCopyBeforeRecord(t *testing.T) {
+	now := time.Date(2026, 3, 7, 16, 0, 0, 0, time.UTC)
+	completedNew := now.Add(-time.Hour)
+	completedOld := now.Add(-24 * time.Hour)
+	repo := &fakeRecordRepository{records: []model.BackupRecord{
+		{ID: 2, TaskID: 1, StoragePath: "records/2", Status: model.BackupRecordStatusSuccess, CompletedAt: &completedNew},
+		{
+			ID: 1, TaskID: 1, StoragePath: "records/1", Status: model.BackupRecordStatusSuccess, CompletedAt: &completedOld,
+			StorageUploadResults: `[{"storageTargetId":11,"status":"success","storagePath":"first/1"},{"storageTargetId":12,"status":"success","storagePath":"second/1"},{"storageTargetId":13,"status":"failed"}]`,
+		},
+	}}
+	first := &fakeProvider{}
+	second := &fakeProvider{}
+	service := NewService(repo)
+	service.now = func() time.Time { return now }
+
+	result, err := service.CleanupProviders(context.Background(), &model.BackupTask{ID: 1, MaxBackups: 1}, map[uint]storage.StorageProvider{
+		11: first,
+		12: second,
+	})
+	if err != nil {
+		t.Fatalf("CleanupProviders returned error: %v", err)
+	}
+	if result.DeletedRecords != 1 || result.DeletedObjects != 2 || len(result.Warnings) != 0 {
+		t.Fatalf("unexpected cleanup result: %#v", result)
+	}
+	if len(repo.deleted) != 1 || repo.deleted[0] != 1 {
+		t.Fatalf("unexpected deleted records: %#v", repo.deleted)
+	}
+	if len(first.deleted) != 1 || first.deleted[0] != "first/1" {
+		t.Fatalf("unexpected first-target deletes: %#v", first.deleted)
+	}
+	if len(second.deleted) != 1 || second.deleted[0] != "second/1" {
+		t.Fatalf("unexpected second-target deletes: %#v", second.deleted)
+	}
+}
+
+func TestCleanupProvidersKeepsRecordWhenCopyProviderIsUnavailable(t *testing.T) {
+	now := time.Date(2026, 3, 7, 16, 0, 0, 0, time.UTC)
+	completedNew := now.Add(-time.Hour)
+	completedOld := now.Add(-24 * time.Hour)
+	repo := &fakeRecordRepository{records: []model.BackupRecord{
+		{ID: 2, TaskID: 1, StoragePath: "records/2", Status: model.BackupRecordStatusSuccess, CompletedAt: &completedNew},
+		{
+			ID: 1, TaskID: 1, StoragePath: "records/1", Status: model.BackupRecordStatusSuccess, CompletedAt: &completedOld,
+			StorageUploadResults: `[{"storageTargetId":11,"status":"success","storagePath":"first/1"},{"storageTargetId":12,"status":"success","storagePath":"second/1"}]`,
+		},
+	}}
+	first := &fakeProvider{}
+	service := NewService(repo)
+
+	result, err := service.CleanupProviders(context.Background(), &model.BackupTask{ID: 1, MaxBackups: 1}, map[uint]storage.StorageProvider{11: first})
+	if err != nil {
+		t.Fatalf("CleanupProviders returned error: %v", err)
+	}
+	if result.DeletedRecords != 0 || result.DeletedObjects != 1 || len(result.Warnings) != 1 {
+		t.Fatalf("unexpected safe partial-cleanup result: %#v", result)
+	}
+	if len(repo.deleted) != 0 {
+		t.Fatalf("record must remain until all copies are deleted: %#v", repo.deleted)
+	}
+}

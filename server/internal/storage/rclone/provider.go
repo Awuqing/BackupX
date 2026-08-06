@@ -2,6 +2,7 @@ package rclone
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -68,13 +69,56 @@ func (p *Provider) Download(ctx context.Context, objectKey string) (io.ReadClose
 	return reader, nil
 }
 
+// DownloadRange reads one slice from an object. Most object-storage backends
+// map this to a native HTTP Range request. Backends that reject ranged reads
+// fall back to a full stream while preserving the same interface contract.
+func (p *Provider) DownloadRange(ctx context.Context, objectKey string, offset, length int64) (io.ReadCloser, error) {
+	if offset < 0 || length <= 0 {
+		return nil, fmt.Errorf("rclone download range %s: invalid offset=%d length=%d", objectKey, offset, length)
+	}
+	obj, err := p.rfs.NewObject(ctx, objectKey)
+	if err != nil {
+		return nil, fmt.Errorf("rclone find object %s: %w", objectKey, err)
+	}
+	reader, rangeErr := obj.Open(ctx, &fs.RangeOption{Start: offset, End: offset + length - 1})
+	if rangeErr == nil {
+		return reader, nil
+	}
+	reader, err = obj.Open(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("rclone download range %s (range: %v; fallback: %w)", objectKey, rangeErr, err)
+	}
+	if offset > 0 {
+		if _, err := io.CopyN(io.Discard, reader, offset); err != nil {
+			closeErr := reader.Close()
+			return nil, errors.Join(fmt.Errorf("rclone seek object %s: %w", objectKey, err), closeErr)
+		}
+	}
+	return &limitedReadCloser{Reader: io.LimitReader(reader, length), closer: reader}, nil
+}
+
+type limitedReadCloser struct {
+	io.Reader
+	closer io.Closer
+}
+
+func (r *limitedReadCloser) Close() error {
+	return r.closer.Close()
+}
+
 // Delete 通过 rclone 删除远端对象。
 func (p *Provider) Delete(ctx context.Context, objectKey string) error {
 	obj, err := p.rfs.NewObject(ctx, objectKey)
 	if err != nil {
+		if errors.Is(err, fs.ErrorObjectNotFound) || errors.Is(err, fs.ErrorDirNotFound) {
+			return nil
+		}
 		return fmt.Errorf("rclone find object %s: %w", objectKey, err)
 	}
 	if err := obj.Remove(ctx); err != nil {
+		if errors.Is(err, fs.ErrorObjectNotFound) || errors.Is(err, fs.ErrorDirNotFound) {
+			return nil
+		}
 		return fmt.Errorf("rclone delete %s: %w", objectKey, err)
 	}
 	return nil
@@ -102,6 +146,9 @@ func (p *Provider) List(ctx context.Context, prefix string) ([]storage.ObjectInf
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, fs.ErrorDirNotFound) || errors.Is(err, fs.ErrorObjectNotFound) {
+			return []storage.ObjectInfo{}, nil
+		}
 		return nil, fmt.Errorf("rclone list %s: %w", prefix, err)
 	}
 	return items, nil

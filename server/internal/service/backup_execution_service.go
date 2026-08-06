@@ -5,11 +5,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +64,17 @@ type DownloadedArtifact struct {
 	Reader   io.ReadCloser
 }
 
+type temporaryArtifactReader struct {
+	*os.File
+	directory string
+}
+
+func (r *temporaryArtifactReader) Close() error {
+	closeErr := r.File.Close()
+	removeErr := os.RemoveAll(r.directory)
+	return errors.Join(closeErr, removeErr)
+}
+
 // collectTargetIDs 获取任务关联的所有存储目标 ID
 func collectTargetIDs(task *model.BackupTask) []uint {
 	if len(task.StorageTargets) > 0 {
@@ -102,6 +115,10 @@ type BackupExecutionService struct {
 	bandwidthLimit string // rclone 带宽限制（全局默认，节点配置可覆盖）
 	metrics        *metrics.Metrics
 	taskLocks      sync.Map
+	// repositoryLocks serializes immutable index updates per storage target.
+	// Repository mode is intentionally single-writer in v1 to avoid orphaned
+	// duplicate packs when two local tasks discover the same missing chunk.
+	repositoryLocks sync.Map
 }
 
 // SetMetrics 注入 Prometheus 采集器。nil 时所有埋点退化为 no-op。
@@ -211,6 +228,25 @@ func (s *BackupExecutionService) DownloadRecord(ctx context.Context, recordID ui
 	if err != nil {
 		return nil, err
 	}
+	if record.BackupKind == model.BackupKindRepository {
+		tempDir, err := os.MkdirTemp(s.tempDir, "repository-download-*")
+		if err != nil {
+			return nil, apperror.Internal("BACKUP_RECORD_DOWNLOAD_FAILED", "无法创建 CDC 导出目录", err)
+		}
+		exportName := fmt.Sprintf("backupx-record-%d.tar", record.ID)
+		exportPath := filepath.Join(tempDir, exportName)
+		store := backup.NewRepositoryStore(s.cipher.Key())
+		if err := store.ExportTar(ctx, provider, record.StoragePath, exportPath); err != nil {
+			cleanupErr := os.RemoveAll(tempDir)
+			return nil, apperror.Internal("BACKUP_RECORD_DOWNLOAD_FAILED", "无法从 CDC 仓库导出归档", errors.Join(err, cleanupErr))
+		}
+		file, err := os.Open(exportPath)
+		if err != nil {
+			cleanupErr := os.RemoveAll(tempDir)
+			return nil, apperror.Internal("BACKUP_RECORD_DOWNLOAD_FAILED", "无法打开 CDC 导出归档", errors.Join(err, cleanupErr))
+		}
+		return &DownloadedArtifact{FileName: exportName, Reader: &temporaryArtifactReader{File: file, directory: tempDir}}, nil
+	}
 	reader, err := provider.Download(ctx, record.StoragePath)
 	if err != nil {
 		return nil, apperror.Internal("BACKUP_RECORD_DOWNLOAD_FAILED", "无法下载备份文件", err)
@@ -233,6 +269,16 @@ func (s *BackupExecutionService) RestoreRecord(ctx context.Context, recordID uin
 	}
 	if task == nil {
 		return apperror.New(404, "BACKUP_TASK_NOT_FOUND", "关联的备份任务不存在，无法执行恢复", fmt.Errorf("backup task %d not found", record.TaskID))
+	}
+	if record.BackupKind == model.BackupKindRepository {
+		spec, specErr := s.buildTaskSpec(task, record.StartedAt)
+		if specErr != nil {
+			return specErr
+		}
+		if err := backup.NewRepositoryStore(s.cipher.Key()).Restore(ctx, provider, record.StoragePath, spec, backup.NopLogWriter{}); err != nil {
+			return apperror.Internal("BACKUP_RECORD_RESTORE_FAILED", "从 CDC 仓库恢复备份失败", err)
+		}
+		return nil
 	}
 	tempDir, err := os.MkdirTemp("", "backupx-restore-*")
 	if err != nil {
@@ -290,6 +336,58 @@ func (s *BackupExecutionService) DeleteRecord(ctx context.Context, recordID uint
 			return apperror.BadRequest("BACKUP_RECORD_HAS_DEPENDENTS",
 				fmt.Sprintf("该全量备份仍有 %d 个差异备份依赖它，删除会导致这些差异无法恢复。请先删除相关差异备份或等待其过期。", deps), nil)
 		}
+	}
+	if record.BackupKind == model.BackupKindRepository {
+		copies := []StorageUploadResultItem{{
+			StorageTargetID: record.StorageTargetID,
+			Status:          model.BackupRecordStatusSuccess,
+			StoragePath:     record.StoragePath,
+		}}
+		if strings.TrimSpace(record.StorageUploadResults) != "" {
+			if err := json.Unmarshal([]byte(record.StorageUploadResults), &copies); err != nil {
+				return apperror.Internal("BACKUP_RECORD_DELETE_FAILED", "无法解析 CDC 仓库副本信息，已停止删除以避免遗留数据", err)
+			}
+		}
+		copyPaths := make(map[uint]string, len(copies))
+		for _, copy := range copies {
+			if strings.EqualFold(copy.Status, model.BackupRecordStatusSuccess) && strings.TrimSpace(copy.StoragePath) != "" {
+				copyPaths[copy.StorageTargetID] = copy.StoragePath
+			}
+		}
+		targetIDs := make([]uint, 0, len(copyPaths))
+		for targetID := range copyPaths {
+			targetIDs = append(targetIDs, targetID)
+		}
+		sort.Slice(targetIDs, func(i, j int) bool { return targetIDs[i] < targetIDs[j] })
+		unlocks := make([]func(), 0, len(targetIDs))
+		for _, targetID := range targetIDs {
+			unlocks = append(unlocks, s.acquireRepositoryLock(targetID))
+		}
+		defer func() {
+			for index := len(unlocks) - 1; index >= 0; index-- {
+				unlocks[index]()
+			}
+		}()
+		providers := make(map[uint]storage.StorageProvider, len(targetIDs))
+		for _, targetID := range targetIDs {
+			provider, resolveErr := s.resolveProvider(ctx, targetID)
+			if resolveErr != nil {
+				return resolveErr
+			}
+			if deleteErr := provider.Delete(ctx, copyPaths[targetID]); deleteErr != nil {
+				return apperror.Internal("BACKUP_RECORD_DELETE_FAILED", "无法删除 CDC 仓库快照", deleteErr)
+			}
+			providers[targetID] = provider
+		}
+		for targetID, provider := range providers {
+			if _, pruneErr := backup.NewRepositoryStore(s.cipher.Key()).Prune(ctx, provider); pruneErr != nil {
+				return apperror.Internal("BACKUP_REPOSITORY_PRUNE_FAILED", fmt.Sprintf("无法清理存储目标 %d 的 CDC 仓库；记录暂时保留以便重试", targetID), pruneErr)
+			}
+		}
+		if err := s.records.Delete(ctx, recordID); err != nil {
+			return apperror.Internal("BACKUP_RECORD_DELETE_FAILED", "无法删除备份记录", err)
+		}
+		return nil
 	}
 	if remote, err := s.deleteRemoteLocalDiskObject(ctx, record); err != nil {
 		return err
@@ -383,6 +481,9 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 		} else if perr != nil {
 			return nil, perr
 		}
+	}
+	if strings.EqualFold(task.BackupMode, model.BackupModeRepository) && s.resolveRemoteNode(ctx, resolvedNodeID) != nil {
+		return nil, apperror.BadRequest("BACKUP_TASK_REPOSITORY_REMOTE_UNSUPPORTED", "CDC 仓库模式当前仅支持 Master 本机单写者执行", nil)
 	}
 	startedAt := s.now()
 	// 取第一个存储目标 ID 做兼容
@@ -630,6 +731,141 @@ func (s *BackupExecutionService) resolveDifferentialBase(ctx context.Context, ta
 	return 0, backup.Manifest{}, false
 }
 
+type repositoryTaskResult struct {
+	fileName        string
+	logicalSize     int64
+	checksum        string
+	storagePath     string
+	storageTargetID uint
+	manifestJSON    string
+	uploadResults   []StorageUploadResultItem
+	providers       map[uint]storage.StorageProvider
+}
+
+func (s *BackupExecutionService) executeRepositoryTask(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time, spec backup.TaskSpec, logger *backup.ExecutionLogger) (*repositoryTaskResult, error) {
+	store := backup.NewRepositoryStore(s.cipher.Key())
+	plan, err := store.BuildPlan(ctx, spec, logger)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := plan.Close(); closeErr != nil {
+			logger.Warnf("清理 CDC 临时计划失败：%v", closeErr)
+		}
+	}()
+	manifestBytes, err := backup.EncodeManifest(plan.Manifest)
+	if err != nil {
+		return nil, fmt.Errorf("encode repository manifest: %w", err)
+	}
+	targetIDs := collectTargetIDs(task)
+	if len(targetIDs) == 0 {
+		return nil, fmt.Errorf("没有关联的存储目标")
+	}
+	storageUsage, usageErr := s.storageUsageSnapshot(ctx)
+	if usageErr != nil {
+		logger.Warnf("读取存储目标用量失败，跳过本次软配额校验：%v", usageErr)
+		storageUsage = map[uint]int64{}
+	}
+
+	snapshotKey := store.SnapshotKey(task.ID, recordID, startedAt)
+	result := &repositoryTaskResult{
+		fileName:      filepath.Base(snapshotKey),
+		logicalSize:   plan.LogicalSize,
+		storagePath:   snapshotKey,
+		manifestJSON:  string(manifestBytes),
+		uploadResults: make([]StorageUploadResultItem, 0, len(targetIDs)),
+		providers:     make(map[uint]storage.StorageProvider),
+	}
+	var failures []string
+	for _, targetID := range targetIDs {
+		target, findErr := s.targets.FindByID(ctx, targetID)
+		targetName := fmt.Sprintf("target-%d", targetID)
+		if findErr == nil && target != nil {
+			targetName = target.Name
+		}
+		if findErr != nil || target == nil {
+			message := "存储目标不存在"
+			if findErr != nil {
+				message = findErr.Error()
+			}
+			result.uploadResults = append(result.uploadResults, StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: message})
+			failures = append(failures, fmt.Sprintf("%s: %s", targetName, message))
+			continue
+		}
+		provider, resolveErr := s.resolveProviderForNode(ctx, targetID, task.NodeID)
+		if resolveErr != nil {
+			result.uploadResults = append(result.uploadResults, StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: resolveErr.Error()})
+			failures = append(failures, fmt.Sprintf("%s: %v", targetName, resolveErr))
+			continue
+		}
+		logger.Infof("同步 CDC 仓库到存储目标：%s", targetName)
+		unlock := s.acquireRepositoryLock(targetID)
+		estimatedSize, estimateErr := store.EstimateUploadSize(ctx, provider, plan)
+		if estimateErr != nil {
+			unlock()
+			result.uploadResults = append(result.uploadResults, StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: estimateErr.Error()})
+			failures = append(failures, fmt.Sprintf("%s: %v", targetName, estimateErr))
+			continue
+		}
+		if target.QuotaBytes > 0 && storageUsage[targetID]+estimatedSize > target.QuotaBytes {
+			unlock()
+			message := fmt.Sprintf("超出存储目标配额（%d + 预计 %d > %d）", storageUsage[targetID], estimatedSize, target.QuotaBytes)
+			result.uploadResults = append(result.uploadResults, StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: message})
+			failures = append(failures, fmt.Sprintf("%s: %s", targetName, message))
+			continue
+		}
+		upload, uploadErr := store.Upload(ctx, provider, plan, snapshotKey)
+		unlock()
+		if uploadErr != nil {
+			result.uploadResults = append(result.uploadResults, StorageUploadResultItem{StorageTargetID: targetID, StorageTargetName: targetName, Status: "failed", Error: uploadErr.Error()})
+			failures = append(failures, fmt.Sprintf("%s: %v", targetName, uploadErr))
+			logger.Warnf("存储目标 %s CDC 仓库同步失败：%v", targetName, uploadErr)
+			continue
+		}
+		result.uploadResults = append(result.uploadResults, StorageUploadResultItem{
+			StorageTargetID: targetID, StorageTargetName: targetName, Status: "success",
+			StoragePath: upload.SnapshotKey, FileSize: upload.UploadedBytes,
+		})
+		result.providers[targetID] = provider
+		if result.storageTargetID == 0 {
+			result.storageTargetID = targetID
+			result.checksum = upload.Checksum
+		}
+		logger.Infof("存储目标 %s CDC 同步完成：新块 %d/%d，复用 %d bytes，实际上传 %d bytes", targetName, upload.NewChunks, upload.UniqueChunks, upload.ReusedBytes, upload.UploadedBytes)
+	}
+	if result.storageTargetID == 0 {
+		return nil, fmt.Errorf("所有存储目标 CDC 仓库同步均失败：%s", strings.Join(failures, "; "))
+	}
+	if len(failures) > 0 {
+		logger.Warnf("部分存储目标 CDC 仓库同步失败：%s", strings.Join(failures, "; "))
+	}
+	if s.dependentsResolver != nil {
+		go func(upstreamID uint, upstreamName string) {
+			dependents, resolveErr := s.dependentsResolver.TriggerDependents(context.Background(), upstreamID)
+			if resolveErr != nil {
+				logger.Warnf("解析任务 %s 的下游依赖失败：%v", upstreamName, resolveErr)
+				return
+			}
+			for _, dependentID := range dependents {
+				if _, runErr := s.RunTaskByID(context.Background(), dependentID); runErr != nil {
+					logger.Warnf("触发下游任务 #%d 失败（上游: %s）：%v", dependentID, upstreamName, runErr)
+				} else {
+					logger.Infof("已触发下游任务 #%d（上游: %s）", dependentID, upstreamName)
+				}
+			}
+		}(task.ID, task.Name)
+	}
+	return result, nil
+}
+
+func (s *BackupExecutionService) acquireRepositoryLock(targetID uint) func() {
+	created := &sync.Mutex{}
+	actual, _ := s.repositoryLocks.LoadOrStore(targetID, created)
+	lock := actual.(*sync.Mutex)
+	lock.Lock()
+	return lock.Unlock
+}
+
 func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time) {
 	// 节点级并发限流：当任务绑定节点且节点配置了 MaxConcurrent>0，
 	// 该节点上所有任务共享一个节点专属 semaphore，互相排队
@@ -658,18 +894,33 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	backupKind := model.BackupKindFull
 	var baseRecordID uint
 	var manifestJSON string
+	var repositoryProviders map[uint]storage.StorageProvider
 	completeRecord := func() {
+		readyForRepositoryRetention := status == model.BackupRecordStatusSuccess
 		if finalizeErr := s.finalizeRecord(ctx, task, recordID, startedAt, status, errMessage, logger.String(), fileName, fileSize, checksum, storagePath, selectedStorageTargetID); finalizeErr != nil {
 			logger.Errorf("写回备份记录失败：%v", finalizeErr)
+			readyForRepositoryRetention = false
 		}
 		// 采集任务执行结果到 Prometheus（耗时 + 产出字节 + 状态计数）
 		s.metrics.ObserveTaskRun(task.Type, status, time.Since(startedAt).Seconds(), fileSize)
 		// 写入多目标上传结果
 		if len(uploadResults) > 0 {
-			if resultsJSON, marshalErr := json.Marshal(uploadResults); marshalErr == nil {
-				if record, findErr := s.records.FindByID(ctx, recordID); findErr == nil && record != nil {
-					record.StorageUploadResults = string(resultsJSON)
-					_ = s.records.Update(ctx, record)
+			resultsJSON, marshalErr := json.Marshal(uploadResults)
+			if marshalErr != nil {
+				logger.Warnf("序列化多目标上传结果失败：%v", marshalErr)
+				readyForRepositoryRetention = false
+			} else if record, findErr := s.records.FindByID(ctx, recordID); findErr != nil || record == nil {
+				if findErr != nil {
+					logger.Warnf("读取备份记录以写回多目标结果失败：%v", findErr)
+				} else {
+					logger.Warnf("备份记录 #%d 不存在，无法写回多目标结果", recordID)
+				}
+				readyForRepositoryRetention = false
+			} else {
+				record.StorageUploadResults = string(resultsJSON)
+				if updateErr := s.records.Update(ctx, record); updateErr != nil {
+					logger.Warnf("写回多目标上传结果失败：%v", updateErr)
+					readyForRepositoryRetention = false
 				}
 			}
 		}
@@ -681,6 +932,36 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 				record.Manifest = manifestJSON
 				if updErr := s.records.Update(ctx, record); updErr != nil {
 					logger.Warnf("写回差异链信息失败：%v", updErr)
+					readyForRepositoryRetention = false
+				}
+			} else {
+				if findErr != nil {
+					logger.Warnf("读取备份记录以写回备份类型失败：%v", findErr)
+				} else {
+					logger.Warnf("备份记录 #%d 不存在，无法写回备份类型", recordID)
+				}
+				readyForRepositoryRetention = false
+			}
+		}
+		if readyForRepositoryRetention && backupKind == model.BackupKindRepository && s.retention != nil && len(repositoryProviders) > 0 {
+			targetIDs := make([]uint, 0, len(repositoryProviders))
+			for targetID := range repositoryProviders {
+				targetIDs = append(targetIDs, targetID)
+			}
+			sort.Slice(targetIDs, func(i, j int) bool { return targetIDs[i] < targetIDs[j] })
+			unlocks := make([]func(), 0, len(targetIDs))
+			for _, targetID := range targetIDs {
+				unlocks = append(unlocks, s.acquireRepositoryLock(targetID))
+			}
+			cleanupResult, cleanupErr := s.retention.CleanupProviders(ctx, task, repositoryProviders)
+			for index := len(unlocks) - 1; index >= 0; index-- {
+				unlocks[index]()
+			}
+			if cleanupErr != nil {
+				logger.Warnf("执行 CDC 仓库保留策略失败：%v", cleanupErr)
+			} else {
+				for _, warning := range cleanupResult.Warnings {
+					logger.Warnf("CDC 仓库保留策略警告：%s", warning)
 				}
 			}
 		}
@@ -699,6 +980,26 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	if err != nil {
 		errMessage = err.Error()
 		logger.Errorf("构建任务运行时配置失败：%v", err)
+		return
+	}
+	if task.Type == model.BackupTaskTypeFile && strings.EqualFold(task.BackupMode, model.BackupModeRepository) {
+		backupKind = model.BackupKindRepository
+		repositoryResult, repositoryErr := s.executeRepositoryTask(ctx, task, recordID, startedAt, spec, logger)
+		if repositoryErr != nil {
+			errMessage = repositoryErr.Error()
+			logger.Errorf("执行 CDC 仓库备份失败：%v", repositoryErr)
+			return
+		}
+		fileName = repositoryResult.fileName
+		fileSize = repositoryResult.logicalSize
+		checksum = repositoryResult.checksum
+		storagePath = repositoryResult.storagePath
+		selectedStorageTargetID = repositoryResult.storageTargetID
+		uploadResults = repositoryResult.uploadResults
+		repositoryProviders = repositoryResult.providers
+		manifestJSON = repositoryResult.manifestJSON
+		status = model.BackupRecordStatusSuccess
+		logger.Infof("CDC 仓库备份执行完成")
 		return
 	}
 	// 差异备份：解析基线全量，命中则切换为差异模式（仅本机文件任务）。

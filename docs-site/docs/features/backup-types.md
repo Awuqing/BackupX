@@ -12,12 +12,22 @@ When a task is routed to a remote Agent, the source tools and paths are resolved
 
 ## File / Directory
 
-Tars (and optionally gzips) one or more filesystem paths.
+File tasks offer three backup modes:
+
+- **Full archive** — writes a self-contained tar artifact on every run
+- **Differential archive** — writes only changes since the current full baseline and periodically refreshes that baseline
+- **CDC repository** — splits content with stable 512 KiB / 1 MiB / 4 MiB boundaries, stores new chunks in immutable 32 MiB packs, and writes a small snapshot manifest for each run
+
+The CDC repository deduplicates identical content across files and snapshots. Restore, selective restore, verification, download-as-tar, retention, and garbage collection all resolve data through the repository index. Compression and encryption are applied per chunk; encrypted repositories use keyed chunk IDs so plaintext hashes are not exposed.
+
+Repository mode currently uses a single-writer index and therefore runs on the Master only. To keep repository copies on multiple backends, select multiple primary storage targets on the task. Object-level replication is intentionally disabled because a snapshot manifest without its shared packs and indexes is not a complete backup.
+
+Common file-task options:
 
 - **Source** accepts multiple paths — one per line in the UI
 - **Exclude patterns** accept gitignore-style globs
 - Supports following symlinks, preserving permissions
-- Output is a single `.tar` or `.tar.gz` artifact
+- Full and differential modes output `.tar`, `.tar.gz`, or `.tar.zst` artifacts
 
 ## MySQL
 

@@ -1,7 +1,7 @@
 export type BackupTaskType = 'file' | 'mysql' | 'sqlite' | 'postgresql' | 'saphana' | 'mongodb'
 export type BackupTaskStatus = 'idle' | 'running' | 'success' | 'failed'
 export type BackupCompression = 'gzip' | 'zstd' | 'none'
-export type BackupMode = 'full' | 'differential'
+export type BackupMode = 'full' | 'differential' | 'repository'
 
 export interface BackupTaskSummary {
   id: number
