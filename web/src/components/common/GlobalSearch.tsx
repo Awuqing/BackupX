@@ -1,5 +1,5 @@
 import { Empty, Input, Modal, Space, Spin, Tag, Typography } from '@arco-design/web-react'
-import { IconSearch } from '@arco-design/web-react/icon'
+import { IconSearch } from '../icons'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { globalSearch, type SearchKind, type SearchResult, type SearchResultItem } from '../../services/search'

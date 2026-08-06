@@ -1,5 +1,5 @@
 import { Badge, Button, Drawer, Empty, Notification, Space, Tag, Typography } from '@arco-design/web-react'
-import { IconNotification } from '@arco-design/web-react/icon'
+import { IconNotification } from '../icons'
 import { useEffect, useState } from 'react'
 import { useEventStream, type SystemEvent } from '../../hooks/useEventStream'
 import { useEventStore } from '../../stores/events'

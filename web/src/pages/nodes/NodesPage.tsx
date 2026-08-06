@@ -5,7 +5,7 @@ import {
 } from '@arco-design/web-react'
 import {
   IconPlus, IconDelete, IconDesktop, IconCloudDownload, IconEdit, IconMore,
-} from '@arco-design/web-react/icon'
+} from '../../components/icons'
 import type { NodeSummary } from '../../types/nodes'
 import { listNodes, deleteNode, updateNode, rotateNodeToken } from '../../services/nodes'
 import { fetchSystemInfo } from '../../services/system'

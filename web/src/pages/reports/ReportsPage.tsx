@@ -1,5 +1,5 @@
 import { Button, Card, Grid, Message, Select, Space, Statistic, Table, Tag, Typography } from '@arco-design/web-react'
-import { IconDownload, IconRefresh } from '@arco-design/web-react/icon'
+import { IconDownload, IconRefresh } from '../../components/icons'
 import { useCallback, useEffect, useState } from 'react'
 import { downloadComplianceCSV, fetchComplianceReport } from '../../services/reports'
 import type { ComplianceReport, ComplianceRisk, ComplianceTaskRow } from '../../types/reports'

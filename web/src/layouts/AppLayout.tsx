@@ -21,7 +21,7 @@ import {
   IconDesktop,
   IconList,
   IconFilePdf,
-} from '@arco-design/web-react/icon'
+} from '../components/icons'
 import { useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {

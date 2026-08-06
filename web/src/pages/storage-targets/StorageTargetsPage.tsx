@@ -18,6 +18,7 @@ import { formatBytes } from '../../utils/format'
 import type { StorageConnectionTestResult, StorageTargetDetail, StorageTargetPayload, StorageTargetSummary } from '../../types/storage-targets'
 import { getStorageTargetTypeLabel } from '../../components/storage-targets/field-config'
 import { StorageTargetFormDrawer } from '../../components/storage-targets/StorageTargetFormDrawer'
+import { StorageTargetName } from '../../components/storage-targets/StorageTargetName'
 
 function resolveErrorMessage(error: unknown) {
   if (axios.isAxiosError(error)) {
@@ -224,7 +225,7 @@ export function StorageTargetsPage() {
                   <Space size="large" align="start" style={{ marginBottom: 16, width: '100%', justifyContent: 'space-between' }}>
                     <div>
                       <Typography.Title heading={6} style={{ marginBottom: 4 }}>
-                        {target.starred ? '★ ' : ''}{target.name}
+                        <StorageTargetName name={target.name} starred={target.starred} />
                       </Typography.Title>
                       <Space>
                         {getStorageTargetTypeLabel(target.type) && <Tag color="arcoblue" bordered>{getStorageTargetTypeLabel(target.type)}</Tag>}

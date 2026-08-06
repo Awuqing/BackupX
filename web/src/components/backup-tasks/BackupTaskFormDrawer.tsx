@@ -1,5 +1,5 @@
 import { Alert, Button, Divider, Drawer, Input, InputNumber, Select, Space, Steps, Switch, Typography, Grid } from '@arco-design/web-react'
-import { IconDelete, IconPlus } from '@arco-design/web-react/icon'
+import { IconDelete, IconPlus } from '../icons'
 import { useEffect, useMemo, useState } from 'react'
 import { CronInput } from '../CronInput'
 import type { StorageTargetDetail, StorageTargetPayload, StorageTargetSummary } from '../../types/storage-targets'
@@ -9,6 +9,7 @@ import type { NodeSummary } from '../../types/nodes'
 import { DatabasePicker } from '../common/DatabasePicker'
 import { DirectoryPicker } from '../common/DirectoryPicker'
 import { StorageTargetFormDrawer } from '../storage-targets/StorageTargetFormDrawer'
+import { StorageTargetName } from '../storage-targets/StorageTargetName'
 import { SourceServerSelector } from './SourceServerSelector'
 import {
   backupCompressionOptions,
@@ -169,7 +170,7 @@ export function BackupTaskFormDrawer({ visible, loading, initialValue, storageTa
         return 0
       })
       return sorted.map((item) => ({
-        label: item.starred ? `★ ${item.name}` : item.name,
+        label: <StorageTargetName name={item.name} starred={item.starred} />,
         value: item.id,
         disabled: !item.enabled,
       }))
