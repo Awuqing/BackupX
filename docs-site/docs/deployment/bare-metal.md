@@ -10,20 +10,21 @@ description: systemd + Nginx deployment from the prebuilt release tarball or sou
 
 ```bash
 # Download the matching tarball
-curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-v1.6.0-linux-amd64.tar.gz
+curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-linux-amd64.tar.gz
 
 # Extract and install
-tar xzf backupx-v*-linux-amd64.tar.gz && cd backupx-*
+tar xzf backupx-linux-amd64.tar.gz && cd backupx-*-linux-amd64
 sudo ./install.sh
 ```
 
 The installer performs these steps automatically:
 
 1. Creates a system user `backupx`
-2. Copies the binary to `/opt/backupx/`
-3. Generates a default `config.yaml` with safe JWT/encryption secrets
+2. Copies the binary to `/opt/backupx/bin/backupx` and the web console to `/opt/backupx/web`
+3. Installs the default configuration at `/etc/backupx/config.yaml`
 4. Installs `backupx.service` (systemd), enabled at boot
 5. (Optional) installs an Nginx site file — see [Nginx Reverse Proxy](./nginx)
+6. Verifies the first-setup API before reporting success
 
 For multi-node clusters, edit `/etc/backupx/config.yaml` after installation and set the Master URL that remote Agents can reach:
 
@@ -63,11 +64,13 @@ After=network.target
 [Service]
 Type=simple
 User=backupx
+Group=backupx
 WorkingDirectory=/opt/backupx
-ExecStart=/opt/backupx/backupx --config /opt/backupx/config.yaml
+ExecStart=/opt/backupx/bin/backupx -config /etc/backupx/config.yaml
 Restart=on-failure
-RestartSec=5s
-LimitNOFILE=65536
+RestartSec=5
+NoNewPrivileges=true
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
@@ -79,17 +82,20 @@ Typical operations:
 sudo systemctl status backupx
 sudo journalctl -u backupx -f    # live logs
 sudo systemctl restart backupx
+curl -fsS http://127.0.0.1:8340/api/auth/setup/status
 ```
+
+Open `http://your-server:8340`, switch to English if desired, and create the first administrator on the **System setup** screen. For a custom listen port, run the installer with a matching `HEALTH_URL`.
 
 ## Password reset
 
 If the admin password is lost:
 
 ```bash
-/opt/backupx/backupx reset-password \
+/opt/backupx/bin/backupx reset-password \
   --username admin \
   --password 'newpass123' \
-  --config /opt/backupx/config.yaml
+  --config /etc/backupx/config.yaml
 ```
 
 Docker equivalent:
