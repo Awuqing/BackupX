@@ -141,8 +141,9 @@ func TestExecuteRunTaskRelaysMasterLocalDiskTarget(t *testing.T) {
 			if got := r.Header.Get("X-BackupX-SHA256"); got != fmt.Sprintf("%x", digest[:]) {
 				t.Fatalf("relay checksum header = %q", got)
 			}
-			if r.Header.Get("X-BackupX-Object-Key") == "" || r.ContentLength != int64(len(body)) {
-				t.Fatalf("invalid relay metadata: key=%q length=%d body=%d", r.Header.Get("X-BackupX-Object-Key"), r.ContentLength, len(body))
+			objectKey := r.Header.Get("X-BackupX-Object-Key")
+			if !strings.Contains(objectKey, "/records/99/") || r.ContentLength != int64(len(body)) {
+				t.Fatalf("invalid relay metadata: key=%q length=%d body=%d", objectKey, r.ContentLength, len(body))
 			}
 			relayed = append([]byte(nil), body...)
 			writeAgentEnvelope(t, w, map[string]string{"status": "ok"})

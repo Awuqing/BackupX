@@ -2,16 +2,19 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"strings"
 	"time"
 
 	"backupx/server/internal/apperror"
+	"backupx/server/internal/backup"
 	"backupx/server/internal/model"
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage"
@@ -282,12 +285,13 @@ func (s *AgentService) UploadArtifact(ctx context.Context, node *model.Node, rec
 	if !masterRelay {
 		return apperror.BadRequest("AGENT_ARTIFACT_RELAY_UNSUPPORTED", "该本地磁盘目标配置为 Agent 直接写入", nil)
 	}
-	cleanKey := path.Clean(strings.TrimSpace(objectKey))
-	if cleanKey == "." || path.IsAbs(cleanKey) || strings.HasPrefix(cleanKey, "../") || cleanKey != objectKey || strings.Contains(objectKey, "\\") {
-		return apperror.BadRequest("AGENT_ARTIFACT_INVALID_PATH", "中转上传对象路径不安全", nil)
+	cleanKey, keyErr := s.validateArtifactKey(record, task, objectKey, true)
+	if keyErr != nil {
+		return keyErr
 	}
-	checksumBytes, checksumErr := hex.DecodeString(strings.TrimSpace(checksum))
-	if size < 0 || checksumErr != nil || len(checksumBytes) != 32 {
+	checksum = strings.TrimSpace(checksum)
+	checksumBytes, checksumErr := hex.DecodeString(checksum)
+	if size < 0 || size == math.MaxInt64 || checksumErr != nil || len(checksumBytes) != sha256.Size {
 		return apperror.BadRequest("AGENT_ARTIFACT_INVALID", "中转上传需要有效的大小和 SHA-256", checksumErr)
 	}
 	if target.QuotaBytes > 0 {
@@ -302,8 +306,8 @@ func (s *AgentService) UploadArtifact(ctx context.Context, node *model.Node, rec
 				break
 			}
 		}
-		if currentUsed+size > target.QuotaBytes {
-			return apperror.BadRequest("BACKUP_STORAGE_QUOTA_EXCEEDED", fmt.Sprintf("超出存储目标配额（%d + %d > %d）", currentUsed, size, target.QuotaBytes), nil)
+		if currentUsed >= target.QuotaBytes || size > target.QuotaBytes-currentUsed {
+			return apperror.BadRequest("BACKUP_STORAGE_QUOTA_EXCEEDED", fmt.Sprintf("超出存储目标配额（当前 %d，新增 %d，配额 %d）", currentUsed, size, target.QuotaBytes), nil)
 		}
 	}
 	provider, err := s.registry.Create(ctx, target.Type, configMap)
@@ -380,22 +384,19 @@ func (s *AgentService) UpdateRecord(ctx context.Context, node *model.Node, recor
 		allowedTargets[targetID] = struct{}{}
 	}
 	targetCache := make(map[uint]*model.StorageTarget)
-	validateTransferMode := func(targetID uint, transferMode string) error {
+	validateTransferMode := func(targetID uint, transferMode string) (string, error) {
 		if _, ok := allowedTargets[targetID]; !ok {
-			return apperror.Unauthorized("BACKUP_STORAGE_TARGET_FORBIDDEN", "存储目标不属于该任务", nil)
-		}
-		if transferMode == "" {
-			return nil
+			return "", apperror.Unauthorized("BACKUP_STORAGE_TARGET_FORBIDDEN", "存储目标不属于该任务", nil)
 		}
 		target := targetCache[targetID]
 		if target == nil {
 			var findErr error
 			target, findErr = s.storageRepo.FindByID(ctx, targetID)
 			if findErr != nil {
-				return findErr
+				return "", findErr
 			}
 			if target == nil {
-				return apperror.BadRequest("BACKUP_STORAGE_TARGET_INVALID", "存储目标不存在", nil)
+				return "", apperror.BadRequest("BACKUP_STORAGE_TARGET_INVALID", "存储目标不存在", nil)
 			}
 			targetCache[targetID] = target
 		}
@@ -403,31 +404,73 @@ func (s *AgentService) UpdateRecord(ctx context.Context, node *model.Node, recor
 		if strings.EqualFold(target.Type, storage.TypeLocalDisk) {
 			var localConfig storage.LocalDiskConfig
 			if err := s.cipher.DecryptJSON(target.ConfigCiphertext, &localConfig); err != nil {
-				return fmt.Errorf("decrypt storage config: %w", err)
+				return "", fmt.Errorf("decrypt storage config: %w", err)
 			}
 			if localConfig.MasterRelay {
 				expectedMode = storage.TransferModeMasterRelay
 			}
 		}
-		if transferMode != expectedMode {
-			return apperror.BadRequest("AGENT_STORAGE_TRANSFER_MODE_INVALID", "Agent 上报的存储传输模式与目标配置不一致", nil)
+		if transferMode != "" && transferMode != expectedMode {
+			return "", apperror.BadRequest("AGENT_STORAGE_TRANSFER_MODE_INVALID", "Agent 上报的存储传输模式与目标配置不一致", nil)
 		}
-		return nil
+		return expectedMode, nil
 	}
+	selectedTransferMode := ""
 	if update.StorageTargetID > 0 {
 		if _, ok := allowedTargets[update.StorageTargetID]; !ok {
 			return apperror.Unauthorized("BACKUP_STORAGE_TARGET_FORBIDDEN", "存储目标不属于该任务", nil)
 		}
-		if err := validateTransferMode(update.StorageTargetID, update.StorageTransferMode); err != nil {
-			return err
+		var modeErr error
+		selectedTransferMode, modeErr = validateTransferMode(update.StorageTargetID, update.StorageTransferMode)
+		if modeErr != nil {
+			return modeErr
 		}
 	} else if update.StorageTransferMode != "" {
 		return apperror.BadRequest("AGENT_STORAGE_TRANSFER_MODE_INVALID", "传输模式缺少对应的存储目标", nil)
 	}
-	for _, result := range update.StorageUploadResults {
-		if err := validateTransferMode(result.StorageTargetID, result.TransferMode); err != nil {
+	for index := range update.StorageUploadResults {
+		result := &update.StorageUploadResults[index]
+		expectedMode, err := validateTransferMode(result.StorageTargetID, result.TransferMode)
+		if err != nil {
 			return err
 		}
+		if result.FileSize < 0 || (result.Status != "" && result.Status != "success" && result.Status != "failed") {
+			return apperror.BadRequest("AGENT_ARTIFACT_INVALID", "Agent 上报的存储结果无效", nil)
+		}
+		if result.StoragePath != "" {
+			normalizedPath, err := s.validateArtifactKey(record, task, result.StoragePath, expectedMode == storage.TransferModeMasterRelay)
+			if err != nil {
+				return err
+			}
+			result.StoragePath = normalizedPath
+		}
+		result.TransferMode = expectedMode
+	}
+	if update.StoragePath != "" {
+		if update.StorageTargetID == 0 {
+			return apperror.BadRequest("AGENT_ARTIFACT_INVALID_PATH", "存储路径缺少对应的存储目标", nil)
+		}
+		cleanStoragePath, err := s.validateArtifactKey(record, task, update.StoragePath, selectedTransferMode == storage.TransferModeMasterRelay)
+		if err != nil {
+			return err
+		}
+		if update.FileName != "" && path.Base(cleanStoragePath) != update.FileName {
+			return apperror.BadRequest("AGENT_ARTIFACT_INVALID_PATH", "Agent 上报的文件名与存储路径不一致", nil)
+		}
+		update.StoragePath = cleanStoragePath
+	}
+	if update.Status != "" && update.Status != model.BackupRecordStatusRunning && update.Status != model.BackupRecordStatusSuccess && update.Status != model.BackupRecordStatusFailed {
+		return apperror.BadRequest("BACKUP_RECORD_STATUS_INVALID", "Agent 上报的备份状态无效", nil)
+	}
+	if update.FileSize < 0 || (update.FileName != "" && (path.Base(update.FileName) != update.FileName || strings.Contains(update.FileName, "\\"))) {
+		return apperror.BadRequest("AGENT_ARTIFACT_INVALID", "Agent 上报的备份文件信息无效", nil)
+	}
+	if update.Checksum != "" {
+		checksumBytes, checksumErr := hex.DecodeString(strings.TrimSpace(update.Checksum))
+		if checksumErr != nil || len(checksumBytes) != sha256.Size {
+			return apperror.BadRequest("AGENT_ARTIFACT_INVALID", "Agent 上报的 SHA-256 无效", checksumErr)
+		}
+		update.Checksum = strings.ToLower(strings.TrimSpace(update.Checksum))
 	}
 	if update.Status != "" {
 		record.Status = update.Status
@@ -446,9 +489,7 @@ func (s *AgentService) UpdateRecord(ctx context.Context, node *model.Node, recor
 	}
 	if update.StorageTargetID > 0 {
 		record.StorageTargetID = update.StorageTargetID
-	}
-	if update.StorageTransferMode != "" {
-		record.StorageTransferMode = update.StorageTransferMode
+		record.StorageTransferMode = selectedTransferMode
 	}
 	if len(update.StorageUploadResults) > 0 {
 		if resultsJSON, marshalErr := json.Marshal(update.StorageUploadResults); marshalErr == nil {
@@ -482,6 +523,27 @@ func (s *AgentService) UpdateRecord(ctx context.Context, node *model.Node, recor
 		}
 	}
 	return nil
+}
+
+func (s *AgentService) validateArtifactKey(record *model.BackupRecord, task *model.BackupTask, objectKey string, requireRecordNamespace bool) (string, error) {
+	if record == nil || task == nil {
+		return "", apperror.BadRequest("AGENT_ARTIFACT_INVALID_PATH", "无法确认中转对象归属", nil)
+	}
+	rawKey := objectKey
+	cleanKey := path.Clean(rawKey)
+	fileName := path.Base(cleanKey)
+	if rawKey == "" || strings.TrimSpace(rawKey) != rawKey || cleanKey == "." || path.IsAbs(cleanKey) || strings.HasPrefix(cleanKey, "../") || cleanKey != rawKey || strings.Contains(rawKey, "\\") || fileName == "." || fileName == "/" {
+		return "", apperror.BadRequest("AGENT_ARTIFACT_INVALID_PATH", "中转上传对象路径不安全", nil)
+	}
+	expectedKey := backup.BuildRecordStorageKey(task.Type, record.StartedAt, record.ID, fileName)
+	if requireRecordNamespace {
+		legacyKey := backup.BuildStorageKey(task.Type, record.StartedAt, fileName)
+		if cleanKey != expectedKey && cleanKey != legacyKey {
+			return "", apperror.BadRequest("AGENT_ARTIFACT_INVALID_PATH", "中转上传对象不属于当前备份记录", nil)
+		}
+		return expectedKey, nil
+	}
+	return cleanKey, nil
 }
 
 func recordBelongsToNode(record *model.BackupRecord, task *model.BackupTask, nodeID uint) bool {

@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"backupx/server/internal/backup"
 	"backupx/server/internal/config"
 	"backupx/server/internal/database"
 	"backupx/server/internal/logger"
@@ -103,16 +104,21 @@ func TestAgentServicePooledTaskUsesRecordNodeForSpecAndRecordUpdates(t *testing.
 	if _, err := svc.GetTaskSpec(ctx, other, 1); err == nil {
 		t.Fatal("expected non-owner node to be forbidden from pooled task spec")
 	}
+	record, err := records.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID record returned error: %v", err)
+	}
+	storagePath := backup.BuildRecordStorageKey("file", record.StartedAt, record.ID, "backup.tar.gz")
 
 	if err := svc.UpdateRecord(ctx, owner, 1, AgentRecordUpdate{
 		Status:              model.BackupRecordStatusSuccess,
 		FileName:            "backup.tar.gz",
 		FileSize:            123,
-		StoragePath:         "tasks/1/backup.tar.gz",
+		StoragePath:         storagePath,
 		StorageTargetID:     1,
 		StorageTransferMode: storage.TransferModeMasterRelay,
 		StorageUploadResults: []StorageUploadResultItem{
-			{StorageTargetID: 1, StorageTargetName: "local", Status: "success", StoragePath: "tasks/1/backup.tar.gz", FileSize: 123, TransferMode: storage.TransferModeMasterRelay},
+			{StorageTargetID: 1, StorageTargetName: "local", Status: "success", StoragePath: storagePath, FileSize: 123, TransferMode: storage.TransferModeMasterRelay},
 		},
 	}); err != nil {
 		t.Fatalf("owner UpdateRecord returned error: %v", err)
@@ -139,12 +145,16 @@ func TestAgentServicePooledTaskUsesRecordNodeForSpecAndRecordUpdates(t *testing.
 }
 
 func TestAgentServiceRelaysRemoteArtifactToMasterLocalDisk(t *testing.T) {
-	svc, _, _, _, owner, other := newAgentServicePoolTestHarness(t)
+	svc, _, records, _, owner, other := newAgentServicePoolTestHarness(t)
 	ctx := context.Background()
 	payload := []byte("artifact from remote source server")
 	digest := sha256.Sum256(payload)
 	checksum := fmt.Sprintf("%x", digest[:])
-	objectKey := "file/2026/08/06/remote-source.tar"
+	record, err := records.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID record returned error: %v", err)
+	}
+	objectKey := backup.BuildRecordStorageKey("file", record.StartedAt, record.ID, "remote-source.tar")
 
 	if err := svc.UploadArtifact(ctx, owner, 1, 1, objectKey, int64(len(payload)), checksum, bytes.NewReader(payload)); err != nil {
 		t.Fatalf("UploadArtifact returned error: %v", err)
@@ -165,13 +175,92 @@ func TestAgentServiceRelaysRemoteArtifactToMasterLocalDisk(t *testing.T) {
 	if !bytes.Equal(stored, payload) {
 		t.Fatalf("relayed artifact differs: got %q", stored)
 	}
-	if err := svc.UploadArtifact(ctx, other, 1, 1, "file/forbidden.tar", int64(len(payload)), checksum, bytes.NewReader(payload)); err == nil {
+	if err := svc.UploadArtifact(ctx, other, 1, 1, objectKey, int64(len(payload)), checksum, bytes.NewReader(payload)); err == nil {
 		t.Fatal("expected a different node to be forbidden from relaying the artifact")
+	}
+
+	legacyPayload := []byte("artifact from an older Agent")
+	legacyDigest := sha256.Sum256(legacyPayload)
+	legacyKey := backup.BuildStorageKey("file", record.StartedAt, "legacy-agent.tar")
+	canonicalKey := backup.BuildRecordStorageKey("file", record.StartedAt, record.ID, "legacy-agent.tar")
+	if err := svc.UploadArtifact(ctx, owner, record.ID, target.ID, legacyKey, int64(len(legacyPayload)), fmt.Sprintf("%x", legacyDigest[:]), bytes.NewReader(legacyPayload)); err != nil {
+		t.Fatalf("UploadArtifact legacy key returned error: %v", err)
+	}
+	stored, err = os.ReadFile(filepath.Join(basePath, filepath.FromSlash(canonicalKey)))
+	if err != nil || !bytes.Equal(stored, legacyPayload) {
+		t.Fatalf("legacy Agent artifact was not normalized: data=%q err=%v", stored, err)
+	}
+	if _, err := os.Stat(filepath.Join(basePath, filepath.FromSlash(legacyKey))); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("legacy object key should not be written directly: %v", err)
+	}
+	if err := svc.UpdateRecord(ctx, owner, record.ID, AgentRecordUpdate{
+		Status:          model.BackupRecordStatusSuccess,
+		FileName:        "legacy-agent.tar",
+		FileSize:        int64(len(legacyPayload)),
+		Checksum:        fmt.Sprintf("%x", legacyDigest[:]),
+		StoragePath:     legacyKey,
+		StorageTargetID: target.ID,
+		StorageUploadResults: []StorageUploadResultItem{{
+			StorageTargetID: target.ID,
+			Status:          "success",
+			StoragePath:     legacyKey,
+			FileSize:        int64(len(legacyPayload)),
+		}},
+	}); err != nil {
+		t.Fatalf("UpdateRecord legacy key returned error: %v", err)
+	}
+	updated, err := records.FindByID(ctx, record.ID)
+	if err != nil {
+		t.Fatalf("FindByID updated record returned error: %v", err)
+	}
+	if updated.StoragePath != canonicalKey || updated.StorageTransferMode != storage.TransferModeMasterRelay || !strings.Contains(updated.StorageUploadResults, canonicalKey) {
+		t.Fatalf("legacy Agent record was not normalized: %#v", updated)
+	}
+}
+
+func TestAgentServiceRejectsArtifactOutsideRecordNamespace(t *testing.T) {
+	svc, _, records, _, owner, _ := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	record, err := records.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID record returned error: %v", err)
+	}
+	target, err := svc.storageRepo.FindByID(ctx, 1)
+	if err != nil || target == nil {
+		t.Fatalf("FindByID target: target=%#v err=%v", target, err)
+	}
+	config := map[string]any{}
+	if err := svc.cipher.DecryptJSON(target.ConfigCiphertext, &config); err != nil {
+		t.Fatalf("DecryptJSON target config: %v", err)
+	}
+	basePath, _ := config["basePath"].(string)
+	victimKey := backup.BuildRecordStorageKey("file", record.StartedAt, record.ID+1, "victim.tar")
+	victimPath := filepath.Join(basePath, filepath.FromSlash(victimKey))
+	if err := os.MkdirAll(filepath.Dir(victimPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll victim parent: %v", err)
+	}
+	if err := os.WriteFile(victimPath, []byte("keep me"), 0o600); err != nil {
+		t.Fatalf("WriteFile victim: %v", err)
+	}
+	payload := []byte("overwrite")
+	digest := sha256.Sum256(payload)
+	if err := svc.UploadArtifact(ctx, owner, record.ID, target.ID, victimKey, int64(len(payload)), fmt.Sprintf("%x", digest[:]), bytes.NewReader(payload)); err == nil {
+		t.Fatal("expected another record namespace to be rejected")
+	}
+	stored, err := os.ReadFile(victimPath)
+	if err != nil {
+		t.Fatalf("ReadFile victim: %v", err)
+	}
+	if string(stored) != "keep me" {
+		t.Fatalf("victim object changed: %q", stored)
+	}
+	if err := svc.UpdateRecord(ctx, owner, record.ID, AgentRecordUpdate{StoragePath: victimKey, StorageTargetID: target.ID, StorageTransferMode: storage.TransferModeMasterRelay}); err == nil {
+		t.Fatal("expected another record namespace in status update to be rejected")
 	}
 }
 
 func TestAgentServiceKeepsExistingLocalDiskTargetsAgentLocal(t *testing.T) {
-	svc, _, _, _, owner, _ := newAgentServicePoolTestHarness(t)
+	svc, _, records, _, owner, _ := newAgentServicePoolTestHarness(t)
 	ctx := context.Background()
 	target, err := svc.storageRepo.FindByID(ctx, 1)
 	if err != nil || target == nil {
@@ -195,7 +284,12 @@ func TestAgentServiceKeepsExistingLocalDiskTargetsAgentLocal(t *testing.T) {
 	}
 	payload := []byte("must not be relayed")
 	digest := sha256.Sum256(payload)
-	err = svc.UploadArtifact(ctx, owner, 1, 1, "file/legacy.tar", int64(len(payload)), fmt.Sprintf("%x", digest[:]), bytes.NewReader(payload))
+	record, findErr := records.FindByID(ctx, 1)
+	if findErr != nil {
+		t.Fatalf("FindByID record returned error: %v", findErr)
+	}
+	objectKey := backup.BuildRecordStorageKey("file", record.StartedAt, record.ID, "legacy.tar")
+	err = svc.UploadArtifact(ctx, owner, 1, 1, objectKey, int64(len(payload)), fmt.Sprintf("%x", digest[:]), bytes.NewReader(payload))
 	if err == nil {
 		t.Fatal("expected relay upload to be rejected for an Agent-local target")
 	}

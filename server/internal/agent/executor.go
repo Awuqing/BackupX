@@ -124,7 +124,7 @@ func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) er
 	}
 	fileName := filepath.Base(finalPath)
 	fileSize := info.Size()
-	storagePath := backup.BuildStorageKey(spec.Type, startedAt, fileName)
+	storagePath := backup.BuildRecordStorageKey(spec.Type, startedAt, recordID, fileName)
 
 	// 5) 计算 checksum（一次读一次）并上传到所有目标
 	checksum, err := computeFileSHA256(finalPath)
