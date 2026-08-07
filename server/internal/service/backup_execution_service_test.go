@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -152,6 +153,108 @@ func TestBackupExecutionServiceRunTaskByIDSync(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(storageDir, filepath.FromSlash(detail.StoragePath))); err != nil {
 		t.Fatalf("expected artifact in local storage: %v", err)
+	}
+}
+
+func TestBackupExecutionServiceRepositoryModeRoundTrip(t *testing.T) {
+	executionService, recordService, tasks, _, records, sourceDir, storageDir := newExecutionTestServices(t)
+	ctx := context.Background()
+	task, err := tasks.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID task returned error: %v", err)
+	}
+	task.BackupMode = model.BackupModeRepository
+	task.Compression = "zstd"
+	if err := tasks.Update(ctx, task); err != nil {
+		t.Fatalf("Update repository task returned error: %v", err)
+	}
+	large := make([]byte, 4<<20)
+	for index := range large {
+		large[index] = byte((index * 31) % 251)
+	}
+	largePath := filepath.Join(sourceDir, "large.bin")
+	if err := os.WriteFile(largePath, large, 0o640); err != nil {
+		t.Fatalf("write large fixture: %v", err)
+	}
+
+	first, err := executionService.RunTaskByIDSync(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("first repository backup returned error: %v", err)
+	}
+	if first.Status != model.BackupRecordStatusSuccess || first.BackupKind != model.BackupKindRepository {
+		t.Fatalf("unexpected first repository record: %#v", first)
+	}
+	if !strings.HasPrefix(first.StoragePath, ".backupx/repository/v1/snapshots/") {
+		t.Fatalf("unexpected repository snapshot path: %s", first.StoragePath)
+	}
+
+	large[2<<20] ^= 0xff
+	if err := os.WriteFile(largePath, large, 0o640); err != nil {
+		t.Fatalf("modify large fixture: %v", err)
+	}
+	second, err := executionService.RunTaskByIDSync(ctx, task.ID)
+	if err != nil {
+		t.Fatalf("second repository backup returned error: %v", err)
+	}
+	stored, err := records.FindByID(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("FindByID repository record returned error: %v", err)
+	}
+	if stored == nil || stored.BackupKind != model.BackupKindRepository || stored.Manifest == "" {
+		t.Fatalf("repository metadata was not persisted: %#v", stored)
+	}
+
+	download, err := recordService.Download(ctx, second.ID)
+	if err != nil {
+		t.Fatalf("export repository snapshot returned error: %v", err)
+	}
+	exported, readErr := io.ReadAll(download.Reader)
+	closeErr := download.Reader.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read repository export: read=%v close=%v", readErr, closeErr)
+	}
+	if len(exported) == 0 || !strings.HasSuffix(download.FileName, ".tar") {
+		t.Fatalf("unexpected repository export: name=%s size=%d", download.FileName, len(exported))
+	}
+
+	if err := os.WriteFile(largePath, bytes.Repeat([]byte{0}, len(large)), 0o640); err != nil {
+		t.Fatalf("damage source before restore: %v", err)
+	}
+	if err := executionService.RestoreRecord(ctx, second.ID); err != nil {
+		t.Fatalf("restore repository record returned error: %v", err)
+	}
+	restored, err := os.ReadFile(largePath)
+	if err != nil {
+		t.Fatalf("read restored source: %v", err)
+	}
+	if !bytes.Equal(restored, large) {
+		t.Fatalf("repository restore did not reproduce the source")
+	}
+
+	if err := recordService.Delete(ctx, first.ID); err != nil {
+		t.Fatalf("delete first repository record: %v", err)
+	}
+	if err := recordService.Delete(ctx, second.ID); err != nil {
+		t.Fatalf("delete second repository record: %v", err)
+	}
+	packRoot := filepath.Join(storageDir, filepath.FromSlash(".backupx/repository/v1/packs"))
+	remainingPacks := 0
+	if err := filepath.Walk(packRoot, func(_ string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if info != nil && !info.IsDir() {
+			remainingPacks++
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("inspect repository packs: %v", err)
+	}
+	if remainingPacks != 0 {
+		t.Fatalf("repository prune left %d packs after deleting all snapshots", remainingPacks)
 	}
 }
 
@@ -323,6 +426,56 @@ func TestBackupExecutionServiceRestoreRecordRejectsRemoteLocalDisk(t *testing.T)
 	}
 	if !strings.Contains(err.Error(), "Master 无法跨节点访问") {
 		t.Fatalf("expected cross-node local_disk error, got %v", err)
+	}
+}
+
+func TestBackupExecutionServiceDownloadsMasterRelayedLocalDiskRecord(t *testing.T) {
+	executionService, _, tasks, _, records, _, storageDir := newExecutionTestServices(t)
+	ctx := context.Background()
+	executionService.SetClusterDependencies(&nodeRepoStub{nodes: []model.Node{
+		{ID: 10, Name: "edge-a", Token: "edge-a-token", Status: model.NodeStatusOnline},
+	}}, &fakeDispatcher{})
+	task, err := tasks.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatalf("FindByID task returned error: %v", err)
+	}
+	storagePath := "file/2026/05/09/relayed.tar"
+	artifactPath := filepath.Join(storageDir, filepath.FromSlash(storagePath))
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll artifact parent returned error: %v", err)
+	}
+	content := []byte("stored on Master")
+	if err := os.WriteFile(artifactPath, content, 0o600); err != nil {
+		t.Fatalf("WriteFile artifact returned error: %v", err)
+	}
+	completedAt := time.Now().UTC()
+	record := &model.BackupRecord{
+		TaskID:              task.ID,
+		StorageTargetID:     task.StorageTargetID,
+		NodeID:              10,
+		Status:              model.BackupRecordStatusSuccess,
+		FileName:            "relayed.tar",
+		FileSize:            int64(len(content)),
+		StoragePath:         storagePath,
+		StorageTransferMode: storage.TransferModeMasterRelay,
+		StartedAt:           completedAt.Add(-time.Second),
+		CompletedAt:         &completedAt,
+	}
+	if err := records.Create(ctx, record); err != nil {
+		t.Fatalf("Create record returned error: %v", err)
+	}
+
+	download, err := executionService.DownloadRecord(ctx, record.ID)
+	if err != nil {
+		t.Fatalf("DownloadRecord returned error: %v", err)
+	}
+	got, readErr := io.ReadAll(download.Reader)
+	closeErr := download.Reader.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read relayed artifact: read=%v close=%v", readErr, closeErr)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatalf("downloaded content = %q, want %q", got, content)
 	}
 }
 

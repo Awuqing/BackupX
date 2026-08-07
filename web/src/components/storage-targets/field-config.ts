@@ -7,6 +7,7 @@ import type { StorageTargetFieldConfig, StorageTargetType } from '../../types/st
 const BUILTIN_FIELD_CONFIG: Record<string, StorageTargetFieldConfig[]> = {
   local_disk: [
     { key: 'basePath', label: '基础目录', type: 'input', required: true, placeholder: '/data/backups', description: 'BackupX 将在该目录下创建和管理备份文件。' },
+    { key: 'masterRelay', label: '远程备份经 Master 中转', type: 'switch', description: '开启后，远程 Agent 会把产物流式传给 Master 并写入上述目录；关闭则沿用 Agent 本机目录。' },
   ],
   s3: [
     { key: 'endpoint', label: 'Endpoint', type: 'input', required: true, placeholder: 'https://s3.amazonaws.com' },

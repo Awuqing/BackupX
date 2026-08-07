@@ -26,6 +26,27 @@ BackupX 支持 Master-Agent 模式：备份任务可以指定在哪个节点执�
 - **执行** — Agent 复用 BackupRunner（file / mysql / postgresql / sqlite / saphana）并直接上传到存储
 - **安全** — 每个节点独立 Token；Agent 不持有 Master 的 JWT 密钥或 AES-256 加密密钥
 
+## 把 B/C/D 服务器集中备份到 M
+
+Master 作为控制面，每台源服务器安装一个 Agent。任务里的 **源服务器** 决定源路径和数据库工具在哪台机器解析，**存储目标** 决定备份产物最终保留在哪里。
+
+BackupX 会根据目标类型选择数据路径：
+
+| 目标 | 数据路径 |
+| --- | --- |
+| S3、WebDAV、FTP、云盘或其他网络后端 | Agent 直接流式上传到目标 |
+| 启用 **远程备份经 Master 中转** 的 `local_disk`（例如通过 NFS 挂载的存储服务器 M） | Agent 通过认证后的 Master API 流式中转，由 Master 写入配置目录 |
+
+中转过程不会在 Master 上额外落一份完整临时文件。把 Master 本地磁盘中的备份恢复到源 Agent 时会走反向流式通道。Agent 与 Master 之间跨越不可信网络时必须配置 HTTPS。
+
+典型的 `A → {B,C,D} → M` 拓扑按以下步骤配置：
+
+1. 在 A 运行 BackupX Master；如果 M 以 NFS 等文件系统提供存储，先把 M 挂载到 A。
+2. 为该挂载点创建 `local_disk` 目标并保持 **远程备份经 Master 中转** 开启；如果 M 提供 S3/WebDAV，也可直接创建对应网络目标。升级前已有的本地磁盘目标会继续沿用 Agent 本机落盘，手动开启该选项后才切换到中央目录。
+3. 从 **节点管理** 分别在 B、C、D 安装 Agent。
+4. 为每台源服务器创建任务，在 **源服务器** 选择 B/C/D，浏览该服务器的路径，再把 M 选为存储目标。相同任务也可用源服务器池标签动态调度。
+5. 在备份记录中检查逐目标结果。Master 本地磁盘目标会记录 `master_relay` 中转模式，网络后端仍为 `direct` 直传。
+
 ## 一键部署步骤
 
 ### 0. 为生产集群设置 Master 对外 URL
@@ -78,7 +99,7 @@ Docker 模式使用同一组环境变量约定：`BACKUPX_AGENT_MASTER`、`BACKU
 
 ### 5. 把任务路由到该节点
 
-在 **备份任务** 页面新建任务时选择对应节点。任务触发时：
+在 **备份任务** 页面新建任务时选择对应源服务器。任务触发时：
 
 - 本机 / 未指定（`nodeId=0`）：Master 进程内直接执行
 - 远程节点：Master 写入命令队列 → Agent 拉取 → Agent 本地执行 → 上传 → 回报

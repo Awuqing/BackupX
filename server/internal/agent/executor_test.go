@@ -1,7 +1,10 @@
 package agent
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -106,6 +109,150 @@ func TestExecuteRunTaskRecordsPerTargetUploadResults(t *testing.T) {
 	}
 	if finalUpdate.StoragePath == "" || finalUpdate.FileSize <= 0 || finalUpdate.Checksum == "" {
 		t.Fatalf("expected artifact metadata in final update, got %#v", finalUpdate)
+	}
+}
+
+func TestExecuteRunTaskRelaysMasterLocalDiskTarget(t *testing.T) {
+	sourceDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceDir, "index.html"), []byte("centralize me"), 0o644); err != nil {
+		t.Fatalf("WriteFile returned error: %v", err)
+	}
+	var relayed []byte
+	var finalUpdate RecordUpdate
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/agent/tasks/1":
+			writeAgentEnvelope(t, w, TaskSpec{
+				TaskID:      1,
+				Name:        "remote-source",
+				Type:        "file",
+				SourcePath:  sourceDir,
+				Compression: "gzip",
+				StorageTargets: []StorageTargetConfig{{
+					ID: 11, Name: "master-disk", Type: storage.TypeLocalDisk, TransferMode: storage.TransferModeMasterRelay,
+				}},
+			})
+		case r.Method == http.MethodPut && r.URL.Path == "/api/agent/records/99/artifacts/11":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("ReadAll relayed body: %v", err)
+			}
+			digest := sha256.Sum256(body)
+			if got := r.Header.Get("X-BackupX-SHA256"); got != fmt.Sprintf("%x", digest[:]) {
+				t.Fatalf("relay checksum header = %q", got)
+			}
+			objectKey := r.Header.Get("X-BackupX-Object-Key")
+			if !strings.Contains(objectKey, "/records/99/") || r.ContentLength != int64(len(body)) {
+				t.Fatalf("invalid relay metadata: key=%q length=%d body=%d", objectKey, r.ContentLength, len(body))
+			}
+			relayed = append([]byte(nil), body...)
+			writeAgentEnvelope(t, w, map[string]string{"status": "ok"})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/agent/records/99":
+			var update RecordUpdate
+			if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+				t.Fatalf("Decode update returned error: %v", err)
+			}
+			if update.Status != "" {
+				finalUpdate = update
+			}
+			writeAgentEnvelope(t, w, map[string]string{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	executor := NewExecutor(NewMasterClient(server.URL, "token", false), filepath.Join(t.TempDir(), "tmp"))
+	if err := executor.ExecuteRunTask(context.Background(), 1, 99); err != nil {
+		t.Fatalf("ExecuteRunTask returned error: %v", err)
+	}
+	if len(relayed) == 0 {
+		t.Fatal("expected artifact bytes to be streamed through Master")
+	}
+	if finalUpdate.Status != "success" || finalUpdate.StorageTransferMode != storage.TransferModeMasterRelay {
+		t.Fatalf("unexpected final relay update: %#v", finalUpdate)
+	}
+	if len(finalUpdate.StorageUploadResults) != 1 || finalUpdate.StorageUploadResults[0].TransferMode != storage.TransferModeMasterRelay {
+		t.Fatalf("unexpected relay target result: %#v", finalUpdate.StorageUploadResults)
+	}
+}
+
+func TestExecuteRestoreDownloadsMasterRelayedArtifact(t *testing.T) {
+	var archive bytes.Buffer
+	tarWriter := tar.NewWriter(&archive)
+	content := []byte("restored through Master")
+	header := &tar.Header{Name: "site/index.html", Mode: 0o644, Size: int64(len(content)), Typeflag: tar.TypeReg}
+	if err := tarWriter.WriteHeader(header); err != nil {
+		t.Fatalf("WriteHeader returned error: %v", err)
+	}
+	if _, err := tarWriter.Write(content); err != nil {
+		t.Fatalf("Write returned error: %v", err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatalf("Close returned error: %v", err)
+	}
+	artifact := append([]byte(nil), archive.Bytes()...)
+	digest := sha256.Sum256(artifact)
+	restoreRoot := t.TempDir()
+	restoreSource := filepath.Join(restoreRoot, "site")
+	artifactRequests := 0
+	var finalUpdate RestoreUpdate
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/agent/restores/77/spec":
+			writeAgentEnvelope(t, w, RestoreSpec{
+				RestoreRecordID: 77,
+				BackupRecordID:  99,
+				TaskID:          1,
+				TaskName:        "remote-source",
+				Type:            "file",
+				SourcePath:      restoreSource,
+				Storage: StorageTargetConfig{
+					ID: 11, Name: "master-disk", Type: storage.TypeLocalDisk, TransferMode: storage.TransferModeMasterRelay,
+				},
+				StoragePath: "BackupX/file/site.tar",
+				FileName:    "site.tar",
+				Checksum:    fmt.Sprintf("%x", digest[:]),
+			})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/agent/restores/77/artifact":
+			artifactRequests++
+			if r.Header.Get("X-Agent-Token") != "token" {
+				t.Fatalf("missing Agent token on relay download")
+			}
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(artifact)))
+			_, _ = w.Write(artifact)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/agent/restores/77":
+			var update RestoreUpdate
+			if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+				t.Fatalf("Decode update returned error: %v", err)
+			}
+			if update.Status != "" {
+				finalUpdate = update
+			}
+			writeAgentEnvelope(t, w, map[string]string{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	executor := NewExecutor(NewMasterClient(server.URL, "token", false), filepath.Join(t.TempDir(), "tmp"))
+	if err := executor.ExecuteRestore(context.Background(), 77); err != nil {
+		t.Fatalf("ExecuteRestore returned error: %v", err)
+	}
+	if artifactRequests != 1 {
+		t.Fatalf("expected one relay artifact request, got %d", artifactRequests)
+	}
+	restored, err := os.ReadFile(filepath.Join(restoreRoot, "site", "index.html"))
+	if err != nil {
+		t.Fatalf("ReadFile returned error: %v", err)
+	}
+	if string(restored) != string(content) {
+		t.Fatalf("restored content = %q, want %q", restored, content)
+	}
+	if finalUpdate.Status != "success" {
+		t.Fatalf("unexpected final restore update: %#v", finalUpdate)
 	}
 }
 

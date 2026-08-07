@@ -1,5 +1,5 @@
 import { Alert, Avatar, Card, Empty, Grid, PageHeader, Space, Table, Tag, Typography } from '@arco-design/web-react'
-import { IconCheckCircle, IconDesktop, IconHistory, IconSafe, IconSave, IconStorage } from '@arco-design/web-react/icon'
+import { IconCheckCircle, IconDesktop, IconHistory, IconSafe, IconSave, IconStorage } from '../../components/icons'
 import ReactEChartsCore from 'echarts-for-react/lib/core'
 import * as echarts from 'echarts/core'
 import { BarChart, LineChart, PieChart } from 'echarts/charts'

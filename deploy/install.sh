@@ -14,7 +14,13 @@ if [ -f "$SCRIPT_DIR/backupx" ] && [ -d "$SCRIPT_DIR/web" ]; then
     CONFIG_TEMPLATE="${CONFIG_TEMPLATE:-$SCRIPT_DIR/config.example.yaml}"
     NGINX_SOURCE="${NGINX_SOURCE:-$SCRIPT_DIR/nginx.conf}"
 else
-    BIN_SOURCE="${BIN_SOURCE:-$PROJECT_ROOT/server/backupx}"
+    SOURCE_BIN_DEFAULT="$PROJECT_ROOT/server/bin/backupx"
+    # Keep compatibility with contributors who built the historical path by
+    # hand, while matching the canonical `make build` output first.
+    if [ ! -f "$SOURCE_BIN_DEFAULT" ] && [ -f "$PROJECT_ROOT/server/backupx" ]; then
+        SOURCE_BIN_DEFAULT="$PROJECT_ROOT/server/backupx"
+    fi
+    BIN_SOURCE="${BIN_SOURCE:-$SOURCE_BIN_DEFAULT}"
     WEB_SOURCE="${WEB_SOURCE:-$PROJECT_ROOT/web/dist}"
     CONFIG_TEMPLATE="${CONFIG_TEMPLATE:-$PROJECT_ROOT/server/config.example.yaml}"
     NGINX_SOURCE="${NGINX_SOURCE:-$PROJECT_ROOT/deploy/nginx.conf}"
@@ -27,8 +33,9 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 if [ ! -f "$BIN_SOURCE" ]; then
-    echo "未找到后端二进制：$BIN_SOURCE" >&2
-    echo "源码树安装请先执行：cd \"$PROJECT_ROOT/server\" && go build -o backupx ./cmd/backupx" >&2
+    echo "Backend binary not found / 未找到后端二进制：$BIN_SOURCE" >&2
+    echo "源码树安装请先在仓库根目录执行 make build（产物：server/bin/backupx）。" >&2
+    echo "For a source install, run 'make build' in the repository root first." >&2
     echo "发布包安装请确认当前目录包含 ./backupx、./web 和 ./install.sh。" >&2
     exit 1
 fi
@@ -92,6 +99,41 @@ fi
 systemctl daemon-reload
 systemctl enable --now "$SERVICE_NAME"
 
+# systemctl may return before the process has opened its HTTP listener. Verify
+# the same unauthenticated endpoint used by the first-administrator screen so a
+# broken bare-metal install cannot print a false success message.
+HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8340/api/auth/setup/status}"
+READY=0
+ATTEMPT=1
+while [ "$ATTEMPT" -le 30 ]; do
+    if systemctl is-active --quiet "$SERVICE_NAME"; then
+        if command -v curl >/dev/null 2>&1; then
+            if curl -fsS --max-time 2 "$HEALTH_URL" >/dev/null 2>&1; then
+                READY=1
+                break
+            fi
+        elif command -v wget >/dev/null 2>&1; then
+            if wget -q -T 2 -O /dev/null "$HEALTH_URL"; then
+                READY=1
+                break
+            fi
+        else
+            echo "Warning / 警告：未找到 curl 或 wget，仅验证 systemd 服务状态。" >&2
+            READY=1
+            break
+        fi
+    fi
+    ATTEMPT=$((ATTEMPT + 1))
+    sleep 1
+done
+
+if [ "$READY" -ne 1 ]; then
+    echo "BackupX did not become ready at $HEALTH_URL / 服务未通过就绪检查。" >&2
+    systemctl status "$SERVICE_NAME" --no-pager >&2 || true
+    journalctl -u "$SERVICE_NAME" -n 50 --no-pager >&2 || true
+    exit 1
+fi
+
 if [ -d "/etc/nginx/conf.d" ] && [ -f "$NGINX_SOURCE" ]; then
     install -m 0644 "$NGINX_SOURCE" "/etc/nginx/conf.d/$SERVICE_NAME.conf"
     if command -v nginx >/dev/null 2>&1; then
@@ -110,6 +152,11 @@ cat <<MESSAGE
 
 Web 控制台已由后端直接托管，无需额外的 nginx 反向代理即可访问：
   http://<本机IP>:8340
+
+首次访问 / First sign-in:
+  1. 打开上面的地址，并可在登录页右上角选择 中文 或 English。
+  2. 页面显示“系统初始化 / System setup”时，创建首个管理员用户名和密码。
+  3. 如果未显示初始化表单，请先检查：$HEALTH_URL
 
 （如已安装 nginx，脚本会自动写入反向代理配置，可继续用 80 端口访问。）
 

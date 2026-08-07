@@ -55,10 +55,11 @@ sudo ./install.sh        # 创建系统用户、安装到 /opt/backupx、配置 
 安装脚本会自动：
 
 1. 创建 `backupx` 系统用户
-2. 安装二进制到 `/opt/backupx/backupx`
-3. 生成 `/opt/backupx/config.yaml`（含安全默认值）
+2. 安装二进制到 `/opt/backupx/bin/backupx`，并把 Web 控制台安装到 `/opt/backupx/web`
+3. 生成 `/etc/backupx/config.yaml`（含安全默认值）
 4. 注册并启用 `backupx.service` systemd 单元
 5. （可选）配置 Nginx 反向代理
+6. 等待 `/api/auth/setup/status` 就绪；启动失败时输出 systemd 诊断并返回非零状态
 
 ## 从源码构建
 
@@ -67,16 +68,17 @@ sudo ./install.sh        # 创建系统用户、安装到 /opt/backupx、配置 
 ```bash
 git clone https://github.com/Awuqing/BackupX.git && cd BackupX
 make build
-# 或使用国内镜像加速构建 Docker
-make docker-cn
+sudo ./deploy/install.sh
 ```
 
 `make build` 完成后，二进制位于 `server/bin/backupx`，构建好的 Web UI 位于 `web/dist/`。
+安装脚本会直接使用这两个路径，不需要 Docker 运行时。如果已有配置修改了默认端口，可覆盖就绪检查地址，例如：`sudo HEALTH_URL=http://127.0.0.1:9000/api/auth/setup/status ./deploy/install.sh`。
 
 ## 验证安装
 
 ```bash
-backupx --version           # 输出如 v1.6.0
+/opt/backupx/bin/backupx --version
+curl -fsS http://127.0.0.1:8340/api/auth/setup/status
 ```
 
-打开浏览器访问 `http://your-server:8340`，会进入初始化管理员账户页面。
+打开浏览器访问 `http://your-server:8340`，可在右上角选择 **中文** 或 **English**。全新数据库会显示“系统初始化 / System setup”，在这里创建首个管理员用户名和密码。如果没有出现初始化表单，请先重试上面的状态接口，不要直接尝试登录。

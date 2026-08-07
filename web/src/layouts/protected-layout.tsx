@@ -9,7 +9,7 @@ import {
   IconDashboard,
   IconInfoCircle,
   IconPoweroff,
-} from '@arco-design/web-react/icon';
+} from '../components/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 
 import { useAuthStore } from '../stores/auth';

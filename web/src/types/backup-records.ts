@@ -21,12 +21,13 @@ export interface BackupRecordSummary {
   fileSize: number
   checksum: string
   storagePath: string
+  storageTransferMode?: 'direct' | 'master_relay'
   durationSeconds: number
   errorMessage: string
   startedAt: string
   completedAt?: string
   locked: boolean
-  backupKind: 'full' | 'differential'
+  backupKind: 'full' | 'differential' | 'repository'
 }
 
 export interface BackupRecordContentEntry {
@@ -49,6 +50,7 @@ export interface StorageUploadResultItem {
   status: 'success' | 'failed'
   storagePath?: string
   fileSize?: number
+  transferMode?: 'direct' | 'master_relay'
   error?: string
 }
 

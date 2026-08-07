@@ -12,9 +12,11 @@ const (
 )
 
 const (
-	// BackupModeFull 全量模式（默认）；BackupModeDifferential 差异模式（仅文件类型本机任务）。
+	// BackupModeFull 全量模式（默认）；BackupModeDifferential 差异归档；
+	// BackupModeRepository 为 CDC 内容寻址仓库模式（仅文件类型本机任务）。
 	BackupModeFull         = "full"
 	BackupModeDifferential = "differential"
+	BackupModeRepository   = "repository"
 )
 
 const (
@@ -55,7 +57,8 @@ type BackupTask struct {
 	Compression   string `gorm:"size:10;not null;default:'gzip'" json:"compression"`
 	Encrypt       bool   `gorm:"not null;default:false" json:"encrypt"`
 	MaxBackups    int    `gorm:"column:max_backups;not null;default:10" json:"maxBackups"`
-	// BackupMode 备份模式：full（全量，默认）/ differential（差异）。差异仅支持本机文件任务。
+	// BackupMode 备份模式：full（全量，默认）/ differential（差异归档）/
+	// repository（FastCDC 分块、全局去重快照）。后两者仅支持本机文件任务。
 	BackupMode string `gorm:"column:backup_mode;size:16;not null;default:'full'" json:"backupMode"`
 	// DiffFullIntervalDays 差异模式下强制全量的间隔（天）：最近全量超过该天数则本次自动改为全量，
 	// 限制差异链跨度与单个差异体积。默认 7。

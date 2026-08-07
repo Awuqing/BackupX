@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Typography, Button, Space, Collapse, Spin, Message, Tag } from '@arco-design/web-react'
-import { IconCopy, IconRefresh } from '@arco-design/web-react/icon'
+import { IconCopy, IconRefresh } from '../../../components/icons'
 import { fetchScriptPreview } from '../../../services/nodes'
 import type { InstallTokenResult, InstallMode } from '../../../types/nodes'
 import { buildAgentDownloadCommand, buildAgentInstallCommand, buildEmbeddedAgentInstallCommand } from '../installCommands'

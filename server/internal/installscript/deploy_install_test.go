@@ -39,3 +39,23 @@ func TestDeployInstallScriptSupportsReleasePackageLayout(t *testing.T) {
 		}
 	}
 }
+
+func TestDeployInstallScriptSupportsSourceBuildAndVerifiesFirstSetup(t *testing.T) {
+	scriptPath := filepath.Join("..", "..", "..", "deploy", "install.sh")
+	data, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(data)
+	for _, want := range []string{
+		`SOURCE_BIN_DEFAULT="$PROJECT_ROOT/server/bin/backupx"`,
+		`For a source install, run 'make build' in the repository root first.`,
+		`HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8340/api/auth/setup/status}"`,
+		`systemctl is-active --quiet "$SERVICE_NAME"`,
+		`System setup`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Fatalf("install.sh missing %q", want)
+		}
+	}
+}

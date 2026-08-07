@@ -60,11 +60,15 @@ docker run -d --name backupx -p 8340:8340 -v backupx-data:/app/data awuqing/back
 # 或使用预编译包
 curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-linux-amd64.tar.gz
 tar xzf backupx-*.tar.gz && cd backupx-* && sudo ./install.sh
+
+# 或从源码构建并裸机安装（无需 Docker）
+git clone https://github.com/Awuqing/BackupX.git && cd BackupX
+make build && sudo ./deploy/install.sh
 ```
 
 ARM64 主机请下载 `backupx-linux-arm64.tar.gz`。预编译包内包含 `backupx`、`web/`、`config.example.yaml` 和 `install.sh`，请在解压后的目录内执行 `install.sh`。
 
-打开 `http://your-server:8340`，创建管理员账户，按 [5 分钟快速开始](https://awuqing.github.io/BackupX/zh-Hans/docs/getting-started/quick-start) 完成首次备份。
+打开 `http://your-server:8340`，在初始化页选择中文或 English 并创建首个管理员账户，按 [5 分钟快速开始](https://awuqing.github.io/BackupX/zh-Hans/docs/getting-started/quick-start) 完成首次备份。
 
 ## 文档
 

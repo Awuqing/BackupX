@@ -1,8 +1,10 @@
 import { Button, Checkbox, Form, Input, Space, Typography, Message } from '@arco-design/web-react'
-import { IconCloud, IconLock, IconSafe, IconUser } from '@arco-design/web-react/icon'
-import { useEffect, useState } from 'react'
+import { BackupServerIllustration, IconCloud, IconLock, IconSafe, IconUser } from '../../components/icons'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
+import { LanguageSwitcher } from '../../components/common/LanguageSwitcher'
 import { beginWebAuthnLogin, fetchSetupStatus, sendLoginOtp } from '../../services/auth'
 import { useAuthStore } from '../../stores/auth'
 import { getWebAuthnAssertion } from '../../utils/webauthn'
@@ -20,17 +22,8 @@ interface LoginFormValues {
   rememberDevice?: boolean
 }
 
-function resolveErrorMessage(error: unknown) {
-  if (axios.isAxiosError(error)) {
-    return error.response?.data?.message ?? '请求失败，请稍后重试'
-  }
-  if (error instanceof Error) {
-    return error.message
-  }
-  return '请求失败，请稍后重试'
-}
-
 export function LoginPage() {
+  const { t, i18n } = useTranslation()
   const navigate = useNavigate()
   const authStatus = useAuthStore((state) => state.status)
   const doLogin = useAuthStore((state) => state.login)
@@ -40,6 +33,25 @@ export function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [mfaActionLoading, setMfaActionLoading] = useState('')
   const [twoFactorRequired, setTwoFactorRequired] = useState(false)
+  const [setupStatusFailed, setSetupStatusFailed] = useState(false)
+  const setupStatusRequest = useRef(0)
+
+  function resolveErrorMessage(error: unknown) {
+    if (axios.isAxiosError(error)) {
+      const code = error.response?.data?.code
+      const translationKey = code ? `auth.errors.${code}` : ''
+      if (translationKey && i18n.exists(translationKey)) {
+        return t(translationKey)
+      }
+      if (i18n.resolvedLanguage === 'zh-CN' && error.response?.data?.message) {
+        return error.response.data.message
+      }
+    }
+    if (error instanceof Error && i18n.resolvedLanguage === 'zh-CN') {
+      return error.message
+    }
+    return t('auth.requestFailed')
+  }
 
   function resetTwoFactorPrompt() {
     if (!twoFactorRequired) {
@@ -56,30 +68,36 @@ export function LoginPage() {
     }
   }, [authStatus, navigate])
 
-  useEffect(() => {
-    let mounted = true
-    void (async () => {
-      try {
-        const result = await fetchSetupStatus()
-        if (mounted) {
-          setInitialized(result.initialized)
-        }
-      } catch {
-        if (mounted) {
-          setInitialized(true)
-        }
+  const loadSetupStatus = useCallback(async () => {
+    const requestID = ++setupStatusRequest.current
+    setInitialized(null)
+    setSetupStatusFailed(false)
+    try {
+      const result = await fetchSetupStatus()
+      if (requestID === setupStatusRequest.current) {
+        setInitialized(result.initialized)
       }
-    })()
-    return () => {
-      mounted = false
+    } catch {
+      // Do not guess that an unreachable fresh install is initialized. That
+      // would hide the first-administrator form behind an impossible login.
+      if (requestID === setupStatusRequest.current) {
+        setSetupStatusFailed(true)
+      }
     }
   }, [])
+
+  useEffect(() => {
+    void loadSetupStatus()
+    return () => {
+      setupStatusRequest.current++
+    }
+  }, [loadSetupStatus])
 
   const handleSetup = async (values: SetupFormValues) => {
     setLoading(true)
     try {
       await doSetup(values)
-      Message.success('初始化完成，正在进入控制台')
+      Message.success(t('auth.setupSuccess'))
       navigate('/dashboard', { replace: true })
     } catch (error) {
       Message.error(resolveErrorMessage(error))
@@ -96,7 +114,7 @@ export function LoginPage() {
         trustedDeviceName: values.rememberDevice ? navigator.userAgent.slice(0, 120) : undefined,
       })
       setTwoFactorRequired(false)
-      Message.success('登录成功')
+      Message.success(t('auth.loginSuccess'))
       navigate('/dashboard', { replace: true })
     } catch (error) {
       if (axios.isAxiosError(error)) {
@@ -116,7 +134,7 @@ export function LoginPage() {
   function readLoginCredentials(): (LoginFormValues & { username: string; password: string }) | null {
     const values = loginForm.getFieldsValue()
     if (!values.username?.trim() || !values.password?.trim()) {
-      Message.error('请先输入用户名和密码')
+      Message.error(t('auth.credentialsRequired'))
       return null
     }
     return {
@@ -132,7 +150,7 @@ export function LoginPage() {
     setMfaActionLoading(channel)
     try {
       await sendLoginOtp({ username: values.username, password: values.password, channel })
-      Message.success(channel === 'email' ? '邮件验证码已发送' : '短信验证码已发送')
+      Message.success(channel === 'email' ? t('auth.emailCodeSent') : t('auth.smsCodeSent'))
     } catch (error) {
       Message.error(resolveErrorMessage(error))
     } finally {
@@ -156,7 +174,7 @@ export function LoginPage() {
         trustedDeviceName: navigator.userAgent.slice(0, 120),
       })
       setTwoFactorRequired(false)
-      Message.success('登录成功')
+      Message.success(t('auth.loginSuccess'))
       navigate('/dashboard', { replace: true })
     } catch (error) {
       Message.error(resolveErrorMessage(error))
@@ -165,128 +183,124 @@ export function LoginPage() {
     }
   }
 
+  const pageTitle = initialized === null
+    ? t('auth.setupStatusTitle')
+    : initialized
+      ? t('auth.welcomeTitle')
+      : t('auth.setupTitle')
+  const pageSubtitle = initialized === null
+    ? setupStatusFailed ? t('auth.statusErrorDescription') : t('auth.checkingStatus')
+    : initialized
+      ? t('auth.welcomeSubtitle')
+      : t('auth.setupSubtitle')
+
   return (
     <div className="login-shell">
       <div className="login-bg" />
       <div className="login-container">
         <div className="login-banner">
-          {/* Background decorative circles for the banner */}
-          <div style={{ position: 'absolute', width: 400, height: 400, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', top: -100, right: -100 }} />
-          <div style={{ position: 'absolute', width: 300, height: 300, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', bottom: -50, left: -50 }} />
-          
           <div className="login-banner-inner">
-            <svg width="320" height="320" viewBox="0 0 320 320" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ marginBottom: 16 }}>
-              {/* Outer pulsing rings */}
-              <circle cx="160" cy="160" r="120" fill="white" fillOpacity="0.05">
-                <animate attributeName="r" values="115;125;115" dur="4s" repeatCount="indefinite"/>
-                <animate attributeName="fill-opacity" values="0.03;0.08;0.03" dur="4s" repeatCount="indefinite"/>
-              </circle>
-              <circle cx="160" cy="160" r="80" fill="white" fillOpacity="0.1">
-                <animate attributeName="r" values="75;85;75" dur="3s" repeatCount="indefinite"/>
-              </circle>
-              
-              <g>
-                <animateTransform attributeName="transform" type="translate" values="0,0; 0,-8; 0,0" dur="5s" repeatCount="indefinite"/>
-                {/* Layer 1 (Top) */}
-                <path d="M120 120C120 111.163 137.909 104 160 104C182.091 104 200 111.163 200 120V144C200 152.837 182.091 160 160 160C137.909 160 120 152.837 120 144V120Z" fill="white" fillOpacity="0.95"/>
-                <ellipse cx="160" cy="120" rx="40" ry="16" fill="white"/>
-                
-                {/* Layer 2 (Middle) */}
-                <path d="M120 152C120 143.163 137.909 136 160 136C182.091 136 200 143.163 200 152V176C200 184.837 182.091 192 160 192C137.909 192 120 184.837 120 176V152Z" fill="white" fillOpacity="0.75"/>
-                <ellipse cx="160" cy="152" rx="40" ry="16" fill="white" fillOpacity="0.9"/>
+            <BackupServerIllustration style={{ marginBottom: 16 }} />
 
-                {/* Layer 3 (Bottom) */}
-                <path d="M120 184C120 175.163 137.909 168 160 168C182.091 168 200 175.163 200 184V208C200 216.837 182.091 224 160 224C137.909 224 120 216.837 120 208V184Z" fill="white" fillOpacity="0.5"/>
-                <ellipse cx="160" cy="184" rx="40" ry="16" fill="white" fillOpacity="0.6"/>
-                
-                {/* Glowing Dots Output - Animated */}
-                <g fill="var(--color-primary-6, #165dff)">
-                  <circle cx="140" cy="120" r="4">
-                    <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" begin="0s" repeatCount="indefinite"/>
-                  </circle>
-                  <circle cx="140" cy="152" r="4">
-                    <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" begin="0.6s" repeatCount="indefinite"/>
-                  </circle>
-                  <circle cx="140" cy="184" r="4">
-                    <animate attributeName="opacity" values="0.3;1;0.3" dur="2s" begin="1.2s" repeatCount="indefinite"/>
-                  </circle>
-                </g>
-                
-                {/* Connecting Data Line */}
-                <path d="M160 120V152V184" stroke="var(--color-primary-6, #165dff)" strokeWidth="2" strokeDasharray="4 4" opacity="0.6">
-                  <animate attributeName="stroke-dashoffset" from="16" to="0" dur="1s" repeatCount="indefinite" />
-                </path>
-              </g>
-            </svg>
-
-            <Typography.Title heading={2} style={{ color: 'white', marginTop: 0, marginBottom: 12, fontWeight: 700 }}>
-              守护您的数据资产
+            <Typography.Title heading={2} style={{ color: 'white', marginTop: 0, marginBottom: 12 }}>
+              {t('auth.bannerTitle')}
             </Typography.Title>
             <Typography.Text style={{ color: 'rgba(255,255,255,0.75)', fontSize: 16 }}>
-              安全、可靠、高效的企业级服务器备份管理平台
+              {t('auth.bannerSubtitle')}
             </Typography.Text>
           </div>
         </div>
         
         <div className="login-form-wrapper">
           <Space direction="vertical" size="large" style={{ width: '100%' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+              <LanguageSwitcher />
+            </div>
             <div style={{ paddingBottom: 8 }}>
               <div style={{ display: 'inline-flex', alignItems: 'center', marginBottom: 16 }}>
-                <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 10, background: 'linear-gradient(135deg, var(--color-primary-5) 0%, var(--color-primary-7) 100%)', marginRight: 12 }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 36, height: 36, borderRadius: 4, background: 'var(--color-primary-6)', marginRight: 12 }}>
                   <IconCloud style={{ fontSize: 20, color: 'white' }} />
                 </div>
-                <Typography.Title heading={4} style={{ margin: 0, fontWeight: 700 }}>
+                <Typography.Title heading={4} style={{ margin: 0 }}>
                   BackupX
                 </Typography.Title>
               </div>
-              <Typography.Title heading={3} style={{ marginTop: 0, marginBottom: 8, fontWeight: 600 }}>
-                {initialized === false ? '系统初始化' : '欢迎回来'}
+              <Typography.Title heading={3} style={{ marginTop: 0, marginBottom: 8 }}>
+                {pageTitle}
               </Typography.Title>
               <Typography.Paragraph type="secondary" style={{ marginBottom: 0, fontSize: 14 }}>
-                {initialized === false ? '请设定首个管理员账户以启动系统。' : '请输入管理员账户信息登录控制台。'}
+                {pageSubtitle}
               </Typography.Paragraph>
             </div>
 
-            {initialized === false ? (
+            {initialized === null ? (
+              setupStatusFailed ? (
+                <div>
+                  <Typography.Text>{t('auth.statusErrorTitle')}</Typography.Text>
+                  <div style={{ marginTop: 12 }}>
+                    <Button type="primary" loading={loading} onClick={() => void loadSetupStatus()}>
+                      {t('auth.retry')}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Typography.Text type="secondary">{t('auth.checkingStatus')}</Typography.Text>
+              )
+            ) : initialized === false ? (
               <Form<SetupFormValues> layout="vertical" onSubmit={handleSetup}>
-                <Form.Item field="displayName" label="显示名称" rules={[{ required: true, minLength: 1 }]}>
-                  <Input placeholder="请输入显示名称" prefix={<IconUser />} size="large" />
+                <Form.Item field="displayName" label={t('auth.displayName')} rules={[{ required: true, minLength: 1, message: t('auth.validation.displayNameRequired') }]}>
+                  <Input autoComplete="name" placeholder={t('auth.displayNamePlaceholder')} prefix={<IconUser />} size="large" />
                 </Form.Item>
-                <Form.Item field="username" label="用户名" rules={[{ required: true, minLength: 3 }]}>
-                  <Input placeholder="请输入管理员用户名" prefix={<IconUser />} size="large" />
+                <Form.Item field="username" label={t('auth.username')} rules={[
+                  { required: true, message: t('auth.validation.usernameRequired') },
+                  { minLength: 3, message: t('auth.validation.usernameLength') },
+                ]}>
+                  <Input autoComplete="username" placeholder={t('auth.usernamePlaceholder')} prefix={<IconUser />} size="large" />
                 </Form.Item>
-                <Form.Item field="password" label="密码" rules={[{ required: true, minLength: 8 }]}>
-                  <Input.Password placeholder="请输入至少 8 位密码" prefix={<IconLock />} size="large" />
+                <Form.Item field="password" label={t('auth.password')} rules={[
+                  { required: true, message: t('auth.validation.passwordRequired') },
+                  { minLength: 8, message: t('auth.validation.passwordLength') },
+                ]}>
+                  <Input.Password autoComplete="new-password" placeholder={t('auth.setupPasswordPlaceholder')} prefix={<IconLock />} size="large" />
                 </Form.Item>
-                <Button long type="primary" htmlType="submit" loading={loading} size="large" style={{ borderRadius: 8, height: 44, marginTop: 8 }}>
-                  初始化并登录
+                <Button long type="primary" htmlType="submit" loading={loading} size="large" style={{ borderRadius: 4, height: 44, marginTop: 8 }}>
+                  {t('auth.setupSubmit')}
                 </Button>
               </Form>
             ) : (
               <Form<LoginFormValues> form={loginForm} layout="vertical" onSubmit={handleLogin}>
-                <Form.Item field="username" label="用户名" rules={[{ required: true, minLength: 3 }]}>
-                  <Input placeholder="请输入用户名" prefix={<IconUser />} size="large" onChange={resetTwoFactorPrompt} />
+                <Form.Item field="username" label={t('auth.username')} rules={[
+                  { required: true, message: t('auth.validation.usernameRequired') },
+                  { minLength: 3, message: t('auth.validation.usernameLength') },
+                ]}>
+                  <Input autoComplete="username" placeholder={t('auth.usernamePlaceholder')} prefix={<IconUser />} size="large" onChange={resetTwoFactorPrompt} />
                 </Form.Item>
-                <Form.Item field="password" label="密码" rules={[{ required: true, minLength: 8 }]}>
-                  <Input.Password placeholder="请输入密码" prefix={<IconLock />} size="large" onChange={resetTwoFactorPrompt} />
+                <Form.Item field="password" label={t('auth.password')} rules={[
+                  { required: true, message: t('auth.validation.passwordRequired') },
+                  { minLength: 8, message: t('auth.validation.passwordLength') },
+                ]}>
+                  <Input.Password autoComplete="current-password" placeholder={t('auth.passwordPlaceholder')} prefix={<IconLock />} size="large" onChange={resetTwoFactorPrompt} />
                 </Form.Item>
                 {twoFactorRequired && (
                   <>
-                    <Form.Item field="twoFactorCode" label="验证码或恢复码" rules={[{ required: true, minLength: 6, maxLength: 32 }]}>
-                      <Input placeholder="请输入 TOTP、恢复码、邮件或短信验证码" prefix={<IconSafe />} size="large" maxLength={32} />
+                    <Form.Item field="twoFactorCode" label={t('auth.mfaCode')} rules={[
+                      { required: true, message: t('auth.validation.mfaRequired') },
+                      { minLength: 6, maxLength: 32, message: t('auth.validation.mfaLength') },
+                    ]}>
+                      <Input autoComplete="one-time-code" placeholder={t('auth.mfaCodePlaceholder')} prefix={<IconSafe />} size="large" maxLength={32} />
                     </Form.Item>
                     <Space wrap style={{ marginTop: -8, marginBottom: 8 }}>
-                      <Button loading={mfaActionLoading === 'email'} onClick={() => void handleSendOTP('email')}>发送邮件验证码</Button>
-                      <Button loading={mfaActionLoading === 'sms'} onClick={() => void handleSendOTP('sms')}>发送短信验证码</Button>
-                      <Button loading={mfaActionLoading === 'webauthn'} onClick={() => void handleWebAuthnLogin()}>使用通行密钥</Button>
+                      <Button loading={mfaActionLoading === 'email'} onClick={() => void handleSendOTP('email')}>{t('auth.sendEmailCode')}</Button>
+                      <Button loading={mfaActionLoading === 'sms'} onClick={() => void handleSendOTP('sms')}>{t('auth.sendSmsCode')}</Button>
+                      <Button loading={mfaActionLoading === 'webauthn'} onClick={() => void handleWebAuthnLogin()}>{t('auth.usePasskey')}</Button>
                     </Space>
                     <Form.Item field="rememberDevice" triggerPropName="checked">
-                      <Checkbox>信任此设备 30 天</Checkbox>
+                      <Checkbox>{t('auth.trustDevice')}</Checkbox>
                     </Form.Item>
                   </>
                 )}
-                <Button long type="primary" htmlType="submit" loading={loading} size="large" style={{ borderRadius: 8, height: 44, marginTop: 16 }}>
-                  {twoFactorRequired ? '验证并登录' : '登录'}
+                <Button long type="primary" htmlType="submit" loading={loading} size="large" style={{ borderRadius: 4, height: 44, marginTop: 16 }}>
+                  {twoFactorRequired ? t('auth.verifyAndLogin') : t('auth.login')}
                 </Button>
               </Form>
             )}

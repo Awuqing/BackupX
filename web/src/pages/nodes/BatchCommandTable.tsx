@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { Table, Button, Space, Message, Typography, Tag } from '@arco-design/web-react'
-import { IconCopy, IconDownload, IconRefresh } from '@arco-design/web-react/icon'
+import { IconCopy, IconDownload, IconRefresh } from '../../components/icons'
 
 const { Text } = Typography
 

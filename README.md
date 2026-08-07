@@ -60,11 +60,15 @@ docker run -d --name backupx -p 8340:8340 -v backupx-data:/app/data awuqing/back
 # Or prebuilt archive
 curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-linux-amd64.tar.gz
 tar xzf backupx-*.tar.gz && cd backupx-* && sudo ./install.sh
+
+# Or build and install on bare metal without Docker
+git clone https://github.com/Awuqing/BackupX.git && cd BackupX
+make build && sudo ./deploy/install.sh
 ```
 
 For ARM64 hosts, use `backupx-linux-arm64.tar.gz`. The archive contains `backupx`, `web/`, `config.example.yaml`, and `install.sh`; run `install.sh` from the extracted directory.
 
-Open `http://your-server:8340`, create the admin account, then follow the [5-minute Quick Start](https://awuqing.github.io/BackupX/docs/getting-started/quick-start).
+Open `http://your-server:8340`, choose English or Chinese on the setup screen, create the first administrator account, then follow the [5-minute Quick Start](https://awuqing.github.io/BackupX/docs/getting-started/quick-start).
 
 ## Documentation
 
