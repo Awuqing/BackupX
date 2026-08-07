@@ -237,7 +237,7 @@ func (s *BackupExecutionService) DownloadRecord(ctx context.Context, recordID ui
 		exportName := fmt.Sprintf("backupx-record-%d.tar", record.ID)
 		exportPath := filepath.Join(tempDir, exportName)
 		store := backup.NewRepositoryStore(s.cipher.Key())
-		if err := store.ExportTar(ctx, provider, record.StoragePath, exportPath); err != nil {
+		if err := store.ExportTar(ctx, provider, record.StoragePath, record.Checksum, exportPath); err != nil {
 			cleanupErr := os.RemoveAll(tempDir)
 			return nil, apperror.Internal("BACKUP_RECORD_DOWNLOAD_FAILED", "无法从 CDC 仓库导出归档", errors.Join(err, cleanupErr))
 		}
@@ -276,7 +276,7 @@ func (s *BackupExecutionService) RestoreRecord(ctx context.Context, recordID uin
 		if specErr != nil {
 			return specErr
 		}
-		if err := backup.NewRepositoryStore(s.cipher.Key()).Restore(ctx, provider, record.StoragePath, spec, backup.NopLogWriter{}); err != nil {
+		if err := backup.NewRepositoryStore(s.cipher.Key()).Restore(ctx, provider, record.StoragePath, record.Checksum, spec, backup.NopLogWriter{}); err != nil {
 			return apperror.Internal("BACKUP_RECORD_RESTORE_FAILED", "从 CDC 仓库恢复备份失败", err)
 		}
 		return nil

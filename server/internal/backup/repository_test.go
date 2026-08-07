@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -149,7 +150,13 @@ func TestRepositoryRoundTripDedupAndPrune(t *testing.T) {
 	restoreRoot := filepath.Join(tempDir, "restore")
 	restoreTask := task
 	restoreTask.RestoreTargetPath = restoreRoot
-	if err := store.Restore(ctx, provider, secondKey, restoreTask, NopLogWriter{}); err != nil {
+	if err := store.Restore(ctx, provider, secondKey, strings.Repeat("0", sha256.Size*2), restoreTask, NopLogWriter{}); err == nil {
+		t.Fatal("restore accepted a mismatched snapshot checksum")
+	}
+	if err := store.Restore(ctx, provider, secondKey, "", restoreTask, NopLogWriter{}); err == nil {
+		t.Fatal("restore accepted a missing snapshot checksum")
+	}
+	if err := store.Restore(ctx, provider, secondKey, secondResult.Checksum, restoreTask, NopLogWriter{}); err != nil {
 		t.Fatalf("restore snapshot: %v", err)
 	}
 	restored, err := os.ReadFile(filepath.Join(restoreRoot, filepath.Base(sourceDir), "primary.bin"))
@@ -181,6 +188,153 @@ func TestRepositoryRoundTripDedupAndPrune(t *testing.T) {
 	}
 	if objects, err := provider.List(ctx, repositoryPackPrefix); err != nil || len(objects) != 0 {
 		t.Fatalf("packs remain after prune: objects=%v err=%v", objects, err)
+	}
+}
+
+func TestRepositoryRestoreRejectsUnsafeSnapshotMetadata(t *testing.T) {
+	cases := []struct {
+		name    string
+		entries []repositoryEntry
+	}{
+		{
+			name:    "path traversal",
+			entries: []repositoryEntry{{Path: "../escape", Kind: "directory", Mode: 0o755}},
+		},
+		{
+			name: "entry below symlink",
+			entries: []repositoryEntry{
+				{Path: "link", Kind: "symlink", Mode: 0o777, LinkTarget: "inside"},
+				{Path: "link/payload", Kind: "file", Mode: 0o600, Size: 1, Chunks: []string{"p-" + strings.Repeat("0", sha256.Size*2)}},
+			},
+		},
+		{
+			name:    "escaping symlink target",
+			entries: []repositoryEntry{{Path: "escape", Kind: "symlink", Mode: 0o777, LinkTarget: "../outside"}},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := NewRepositoryStore(nil)
+			provider := newMemoryRepositoryProvider()
+			snapshot := repositorySnapshot{
+				Version:     repositoryFormatVersion,
+				TaskID:      1,
+				CreatedAt:   time.Now().UTC(),
+				Compression: "none",
+				Entries:     tc.entries,
+			}
+			data, err := store.encodeSnapshot(snapshot)
+			if err != nil {
+				t.Fatalf("encodeSnapshot returned error: %v", err)
+			}
+			key := store.SnapshotKey(1, 1, snapshot.CreatedAt)
+			if err := provider.Upload(ctx, key, bytes.NewReader(data), int64(len(data)), nil); err != nil {
+				t.Fatalf("Upload snapshot returned error: %v", err)
+			}
+			digest := sha256.Sum256(data)
+			task := TaskSpec{SourcePath: filepath.Join(t.TempDir(), "source"), RestoreTargetPath: filepath.Join(t.TempDir(), "restore")}
+			if err := store.Restore(ctx, provider, key, fmt.Sprintf("%x", digest[:]), task, NopLogWriter{}); err == nil {
+				t.Fatal("restore accepted unsafe snapshot metadata")
+			}
+		})
+	}
+}
+
+func TestRepositoryRestorePreservesDirectoryWhenSnapshotContainsSymlink(t *testing.T) {
+	ctx := context.Background()
+	store := NewRepositoryStore(nil)
+	provider := newMemoryRepositoryProvider()
+	snapshot := repositorySnapshot{
+		Version:     repositoryFormatVersion,
+		TaskID:      1,
+		CreatedAt:   time.Now().UTC(),
+		Compression: "none",
+		Entries:     []repositoryEntry{{Path: "link", Kind: "symlink", Mode: 0o777, LinkTarget: "inside"}},
+	}
+	data, err := store.encodeSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("encodeSnapshot returned error: %v", err)
+	}
+	key := store.SnapshotKey(1, 1, snapshot.CreatedAt)
+	if err := provider.Upload(ctx, key, bytes.NewReader(data), int64(len(data)), nil); err != nil {
+		t.Fatalf("Upload snapshot returned error: %v", err)
+	}
+	digest := sha256.Sum256(data)
+	restoreRoot := filepath.Join(t.TempDir(), "restore")
+	markerPath := filepath.Join(restoreRoot, "link", "keep.txt")
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll marker parent: %v", err)
+	}
+	if err := os.WriteFile(markerPath, []byte("keep"), 0o600); err != nil {
+		t.Fatalf("WriteFile marker: %v", err)
+	}
+	task := TaskSpec{SourcePath: filepath.Join(t.TempDir(), "source"), RestoreTargetPath: restoreRoot}
+	if err := store.Restore(ctx, provider, key, fmt.Sprintf("%x", digest[:]), task, NopLogWriter{}); err == nil {
+		t.Fatal("restore replaced an existing directory with a symlink")
+	}
+	if data, err := os.ReadFile(markerPath); err != nil || string(data) != "keep" {
+		t.Fatalf("existing directory content changed: data=%q err=%v", data, err)
+	}
+}
+
+func TestRepositoryRejectsOversizedChunkLocation(t *testing.T) {
+	ctx := context.Background()
+	store := NewRepositoryStore(nil)
+	provider := newMemoryRepositoryProvider()
+	chunkID := "p-" + strings.Repeat("0", sha256.Size*2)
+	packID := strings.Repeat("a", sha256.Size*2)
+	segment := repositoryIndexSegment{
+		Version: repositoryFormatVersion,
+		Pack:    fmt.Sprintf("%s/%s/%s.pack", repositoryPackPrefix, packID[:2], packID),
+		Chunks: map[string]repositoryChunkLocation{
+			chunkID: {Pack: fmt.Sprintf("%s/%s/%s.pack", repositoryPackPrefix, packID[:2], packID), Offset: 0, Length: repositoryMaxEncoded + 1, PlainSize: 1, Compression: "none"},
+		},
+	}
+	data, err := json.Marshal(segment)
+	if err != nil {
+		t.Fatalf("Marshal index returned error: %v", err)
+	}
+	indexKey := fmt.Sprintf("%s/%s.json", repositoryIndexPrefix, packID)
+	if err := provider.Upload(ctx, indexKey, bytes.NewReader(data), int64(len(data)), nil); err != nil {
+		t.Fatalf("Upload index returned error: %v", err)
+	}
+	if _, err := store.loadIndex(ctx, provider); err == nil {
+		t.Fatal("loadIndex accepted an oversized encoded chunk")
+	}
+}
+
+func TestRepositoryRejectsIndexPackMismatch(t *testing.T) {
+	ctx := context.Background()
+	store := NewRepositoryStore(nil)
+	provider := newMemoryRepositoryProvider()
+	chunkID := "p-" + strings.Repeat("0", sha256.Size*2)
+	indexID := strings.Repeat("a", sha256.Size*2)
+	otherPackID := strings.Repeat("b", sha256.Size*2)
+	expectedPack := fmt.Sprintf("%s/%s/%s.pack", repositoryPackPrefix, indexID[:2], indexID)
+	segment := repositoryIndexSegment{
+		Version: repositoryFormatVersion,
+		Pack:    expectedPack,
+		Chunks: map[string]repositoryChunkLocation{
+			chunkID: {
+				Pack:        fmt.Sprintf("%s/%s/%s.pack", repositoryPackPrefix, otherPackID[:2], otherPackID),
+				Offset:      0,
+				Length:      1,
+				PlainSize:   1,
+				Compression: "none",
+			},
+		},
+	}
+	data, err := json.Marshal(segment)
+	if err != nil {
+		t.Fatalf("Marshal index returned error: %v", err)
+	}
+	indexKey := fmt.Sprintf("%s/%s.json", repositoryIndexPrefix, indexID)
+	if err := provider.Upload(ctx, indexKey, bytes.NewReader(data), int64(len(data)), nil); err != nil {
+		t.Fatalf("Upload index returned error: %v", err)
+	}
+	if _, err := store.loadIndex(ctx, provider); err == nil {
+		t.Fatal("loadIndex accepted a chunk location pointing to a different pack")
 	}
 }
 

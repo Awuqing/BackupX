@@ -324,7 +324,7 @@ func (s *RestoreService) restoreArtifact(ctx context.Context, record *model.Back
 	}
 	if record.BackupKind == model.BackupKindRepository {
 		logger.Infof("读取 CDC 仓库快照：%s", record.StoragePath)
-		if err := backup.NewRepositoryStore(s.cipher.Key()).Restore(ctx, provider, record.StoragePath, spec, logger); err != nil {
+		if err := backup.NewRepositoryStore(s.cipher.Key()).Restore(ctx, provider, record.StoragePath, record.Checksum, spec, logger); err != nil {
 			return fmt.Errorf("恢复 CDC 仓库快照失败：%w", err)
 		}
 		return nil
