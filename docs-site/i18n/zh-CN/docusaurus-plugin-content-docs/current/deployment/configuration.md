@@ -15,7 +15,11 @@ server:
   host: "0.0.0.0"             # BACKUPX_SERVER_HOST
   port: 8340                  # BACKUPX_SERVER_PORT
   mode: "release"             # release | debug
-  external_url: ""            # BACKUPX_SERVER_EXTERNAL_URL — Agent 安装脚本使用的 Master 对外 URL
+  external_url: ""            # BACKUPX_SERVER_EXTERNAL_URL — 稳定的 Master 对外 URL
+  trusted_proxies:             # BACKUPX_SERVER_TRUSTED_PROXIES — 准确的代理 IP/CIDR
+    - "127.0.0.1"
+    - "::1"
+  web_root: ""                # BACKUPX_SERVER_WEB_ROOT — 前端构建目录
 
 database:
   path: "./data/backupx.db"   # BACKUPX_DATABASE_PATH — 内嵌 SQLite
@@ -48,6 +52,7 @@ log:
 |--------|----------|
 | `server.port` | `BACKUPX_SERVER_PORT` |
 | `server.external_url` | `BACKUPX_SERVER_EXTERNAL_URL` |
+| `server.trusted_proxies` | `BACKUPX_SERVER_TRUSTED_PROXIES`（环境变量使用逗号分隔） |
 | `security.jwt_expire` | `BACKUPX_SECURITY_JWT_EXPIRE` |
 | `log.level` | `BACKUPX_LOG_LEVEL` |
 | `backup.max_concurrent` | `BACKUPX_BACKUP_MAX_CONCURRENT` |
@@ -64,3 +69,18 @@ server:
 ```
 
 BackupX 会用这个地址渲染一键 Agent 安装脚本和 docker-compose 片段。该地址必须能被所有 Agent 主机访问。只有在 `X-Forwarded-Proto` / `X-Forwarded-Host` 可靠且正好指向 Agent 可访问地址时，才建议留空。
+
+代理或 SSH 堡垒机场景可在安装向导中为单个 Agent 设置运行地址。公开安装链接仍使用 `server.external_url`，生成的 Agent 配置则使用该覆盖地址。
+
+## 可信反向代理
+
+BackupX 只接受 `server.trusted_proxies` 中来源提供的客户端转发头。默认仅允许本机 Nginx。代理运行在其他容器或主机时，加入准确 IP 或网段：
+
+```yaml
+server:
+  trusted_proxies:
+    - "127.0.0.1"
+    - "172.18.0.0/16"
+```
+
+不要配置 `0.0.0.0/0`，因为登录限流、安装令牌限流和审计日志都依赖客户端地址。BackupX 直接暴露且不应信任任何转发头时可设置空列表。

@@ -15,7 +15,11 @@ server:
   host: "0.0.0.0"             # BACKUPX_SERVER_HOST
   port: 8340                  # BACKUPX_SERVER_PORT
   mode: "release"             # release | debug
-  external_url: ""            # BACKUPX_SERVER_EXTERNAL_URL — public Master URL for Agent install scripts
+  external_url: ""            # BACKUPX_SERVER_EXTERNAL_URL — stable public Master URL
+  trusted_proxies:             # BACKUPX_SERVER_TRUSTED_PROXIES — exact proxy IPs/CIDRs
+    - "127.0.0.1"
+    - "::1"
+  web_root: ""                # BACKUPX_SERVER_WEB_ROOT — built frontend directory
 
 database:
   path: "./data/backupx.db"   # BACKUPX_DATABASE_PATH — embedded SQLite
@@ -48,6 +52,7 @@ The environment wins when both file and env are set. All dot-paths become unders
 |------------|--------------|
 | `server.port` | `BACKUPX_SERVER_PORT` |
 | `server.external_url` | `BACKUPX_SERVER_EXTERNAL_URL` |
+| `server.trusted_proxies` | `BACKUPX_SERVER_TRUSTED_PROXIES` (comma-separated for env) |
 | `security.jwt_expire` | `BACKUPX_SECURITY_JWT_EXPIRE` |
 | `log.level` | `BACKUPX_LOG_LEVEL` |
 | `backup.max_concurrent` | `BACKUPX_BACKUP_MAX_CONCURRENT` |
@@ -64,3 +69,18 @@ server:
 ```
 
 This value is used when BackupX renders one-click Agent install scripts and docker-compose snippets. It must be reachable from every Agent host. Leave it empty only when `X-Forwarded-Proto` / `X-Forwarded-Host` are reliable and point to the same URL that Agents can access.
+
+The install wizard can set an Agent-specific runtime URL for a proxy or SSH-bastion node. The public install link continues to use `server.external_url`, while the generated Agent config uses that override.
+
+## Trusted reverse proxies
+
+BackupX trusts forwarded client-address headers only from `server.trusted_proxies`. The default permits loopback Nginx only. If a reverse proxy runs in another container or host, add its exact IP or subnet:
+
+```yaml
+server:
+  trusted_proxies:
+    - "127.0.0.1"
+    - "172.18.0.0/16"
+```
+
+Do not configure `0.0.0.0/0`: client addresses feed authentication throttling, install-token throttling, and audit records. Set an empty list when BackupX is exposed directly and should trust no forwarded headers.

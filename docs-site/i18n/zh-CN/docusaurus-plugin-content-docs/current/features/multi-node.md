@@ -1,155 +1,227 @@
 ---
 sidebar_position: 4
 title: 多节点集群
-description: Master-Agent 模式 — 通过 HTTP 长轮询把备份路由到远程服务器。
+description: 通过直连 HTTPS、正向代理或 SSH 堡垒机部署 BackupX Agent。
 ---
 
 # 多节点集群
 
-BackupX 支持 Master-Agent 模式：备份任务可以指定在哪个节点执行，Agent 在本地完成备份并直接上传到存储。所有连接都由 Agent 主动发起，所以远程服务器只需要出站 HTTP 访问权限。
+BackupX 使用一个单活 Master 作为控制面，在每台源服务器运行 Agent。所有连接都由 Agent 主动发起：每 15 秒上报心跳，每 5 秒轮询命令，不需要为 Agent 开放入站端口。
 
-## 架构
+## 架构与边界
 
+```text
+[Web 控制台] ────────> [单活 Master + SQLite]
+                              ^
+                              | Agent 主动 HTTP(S) 轮询
+                    +---------+---------+
+                    |         |         |
+                 [Agent B] [Agent C] [Agent D]
+                    |         |         |
+                    +----> 存储目标
 ```
-[Web 控制台] ─── JWT ──→ [Master (backupx)]
-                              ↑  ↓
-                              │  │ HTTP 长轮询（Token 认证）
-                              │  ↓
-                         [Agent (backupx agent)]   ← 运行在远程服务器
-                              ↓
-                       [70+ 存储后端]
-```
 
-- **协议** — HTTP 长轮询，Agent 主动发起所有连接
-- **心跳** — Agent 每 15s 上报一次；Master 超过 45s 未收到心跳即判为离线
-- **下发** — Master 把 `run_task` 命令写入队列，Agent 轮询拉取
-- **执行** — Agent 复用 BackupRunner（file / mysql / postgresql / sqlite / saphana）并直接上传到存储
-- **安全** — 每个节点独立 Token；Agent 不持有 Master 的 JWT 密钥或 AES-256 加密密钥
+- 每个节点有独立 Agent Token，Agent 不持有 Master 的 JWT 密钥或配置加密密钥。
+- Master 超过 45 秒未收到心跳即把节点标记为离线。
+- Master 持久化命令，Agent 领取后在本机执行。
+- 网络存储通常由 Agent 直传；Master 本地存储可显式启用认证流式中转。
 
-## 把 B/C/D 服务器集中备份到 M
+:::warning Master 只能单活
+内置 SQLite 不是共享多写数据库。同一个数据目录只能运行一个 Master。控制面高可用应采用主备主机、持久卷快照以及稳定 DNS 或虚拟 IP，故障时确保旧 Master 停止后再启动备用实例。不要让多个 Master 副本同时挂载 `/app/data` 或同一个 `backupx.db`。
+:::
 
-Master 作为控制面，每台源服务器安装一个 Agent。任务里的 **源服务器** 决定源路径和数据库工具在哪台机器解析，**存储目标** 决定备份产物最终保留在哪里。
+BackupX 会设置 5 秒 SQLite busy timeout，并为命令队列建立查询索引，降低 Agent 并发轮询及任务更新时的锁竞争。数据库应位于本地文件系统或块存储。采用文件复制备份控制面时，先停止 Master 再复制整个数据目录；运行期间不要只复制 `backupx.db`。
 
-BackupX 会根据目标类型选择数据路径：
+## 选择网络路径
 
-| 目标 | 数据路径 |
-| --- | --- |
-| S3、WebDAV、FTP、云盘或其他网络后端 | Agent 直接流式上传到目标 |
-| 启用 **远程备份经 Master 中转** 的 `local_disk`（例如通过 NFS 挂载的存储服务器 M） | Agent 通过认证后的 Master API 流式中转，由 Master 写入配置目录 |
+| 场景 | Agent Master 地址 | Agent 代理 URL | 说明 |
+| --- | --- | --- | --- |
+| 可路由内网或公网服务 | `https://backup.example.com` | 留空 | 推荐，只需放行出站 TCP 443 |
+| 企业正向代理 | `https://backup.example.com` | `http://proxy.internal:3128` | 支持 HTTP(S) 与 SOCKS5(H) |
+| 通过堡垒机建立 SSH 动态转发 | `https://backup.internal` | `socks5h://127.0.0.1:1080` | 保留 TLS 主机名，并通过隧道解析内网 DNS |
+| SSH 固定本地转发 | `http://127.0.0.1:18340` | 留空 | HTTP 链路位于 SSH 内，只能绑定回环地址 |
 
-中转过程不会在 Master 上额外落一份完整临时文件。把 Master 本地磁盘中的备份恢复到源 Agent 时会走反向流式通道。Agent 与 Master 之间跨越不可信网络时必须配置 HTTPS。
+私有 PKI 场景请填写目标节点上预置的 PEM CA 证书绝对路径。生产环境不要使用 `--insecure-tls`。
 
-典型的 `A → {B,C,D} → M` 拓扑按以下步骤配置：
+未配置显式代理时，Agent 到 Master 的 HTTP 流量会遵循 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。systemd 服务通常不会继承交互式 Shell 环境，因此 systemd 部署应在安装向导或 Agent YAML 中明确配置代理。
 
-1. 在 A 运行 BackupX Master；如果 M 以 NFS 等文件系统提供存储，先把 M 挂载到 A。
-2. 为该挂载点创建 `local_disk` 目标并保持 **远程备份经 Master 中转** 开启；如果 M 提供 S3/WebDAV，也可直接创建对应网络目标。升级前已有的本地磁盘目标会继续沿用 Agent 本机落盘，手动开启该选项后才切换到中央目录。
-3. 从 **节点管理** 分别在 B、C、D 安装 Agent。
-4. 为每台源服务器创建任务，在 **源服务器** 选择 B/C/D，浏览该服务器的路径，再把 M 选为存储目标。相同任务也可用源服务器池标签动态调度。
-5. 在备份记录中检查逐目标结果。Master 本地磁盘目标会记录 `master_relay` 中转模式，网络后端仍为 `direct` 直传。
+## 准备 Master
 
-## 一键部署步骤
+生成命令前先设置稳定地址：
 
-### 0. 为生产集群设置 Master 对外 URL
-
-生成 Agent 安装命令前，请先确认 Master URL 对所有目标主机稳定可达。
-
-如果 BackupX 部署在 Docker、Nginx、负载均衡或外层反向代理后面，请在 Master 配置 `server.external_url` 或环境变量 `BACKUPX_SERVER_EXTERNAL_URL`：
-
-```yaml title="config.yaml"
+```yaml title="/etc/backupx/config.yaml"
 server:
   external_url: "https://backup.example.com"
+  trusted_proxies:
+    - "127.0.0.1"
+    - "::1"
+    # 代理不在本机时，只加入准确的代理 IP 或网段。
+    # - "172.18.0.0/16"
 ```
 
-该 URL 会写入 systemd 单元、前台运行命令和 docker-compose 片段。如果地址不正确，Agent 可能安装成功但始终离线，因为它会持续轮询一个内网地址或仅浏览器可访问的地址。
+`external_url` 是默认安装入口和 Agent 运行地址。受限节点可以让目标机侧生成的安装 URL 与 Agent 运行地址同时改用隧道或内网地址，浏览器仍继续访问公网地址。
 
-### 1. 打开安装向导
+跨不可信网络必须使用 HTTPS。Master 中转上传还要求反向代理关闭请求缓冲并允许大请求体，详见 [Nginx 反向代理](../deployment/nginx)。
 
-Web 控制台 → **节点管理** → **添加节点**，打开三步向导：
+Agent 必须直接配置最终 API 地址，不能依赖 HTTP 跳转到 HTTPS。Agent 会主动拒绝重定向，避免认证 Token 被转发到非预期主机。
 
-- **第一步 · 节点信息**：填写节点名称；或切换"批量创建"粘贴多行名称（每行一个，最多 50 个）
-- **第二步 · 部署参数**：选择安装模式（`systemd` 推荐、`Docker`、`前台运行` 调试用）、架构（默认自动检测）、Agent 版本（默认跟随 Master 版本）、有效期（5 分钟 / 15 分钟 / 1 小时 / 24 小时）、下载源（`GitHub` 直连或 `ghproxy` 镜像，国内服务器建议后者）
-- **第三步 · 安装命令**：一条一键安装命令 + 实时倒计时。点击复制，粘贴到目标机以 root 权限执行。默认命令会嵌入已渲染的安装脚本，目标机无需再通过反向代理访问 `/api/install/:token`；公开安装 URL 仍作为备用路径保留。
+## 部署 Agent
 
-### 2. 目标机一条命令完成
+打开 **节点管理 → 添加节点**：
 
-请直接使用 Web 控制台生成的命令。该命令会把安装脚本写入临时文件，校验 `BACKUPX_AGENT_INSTALL_V1` 魔数，再以 root 权限执行。
+1. 输入单个节点名，或在批量模式输入最多 50 个名称。
+2. 选择 systemd、Docker 或前台模式，以及架构、Agent Release、命令有效期和下载源。
+3. 选择 **直连** 或 **代理或堡垒机**。受限网络可填写节点专用 Master 地址、代理 URL 或私有 CA 路径。
+4. 把生成的命令复制到目标机，以 root 权限执行。
 
-脚本会自动：
+备份和恢复宿主机文件时推荐 systemd，因为 Agent 需要访问任意本地路径。Docker Agent 只能看到显式挂载的目录；分配文件任务前，应使用只读备份源 volume，并为恢复目标单独配置范围受限的可写挂载。
 
-1. 检测操作系统与架构（`uname -m`）
-2. 从 GitHub Release（或 ghproxy 镜像）下载匹配的 `backupx` 二进制
-3. 安装到 `/opt/backupx-agent`，创建系统用户 `backupx`
-4. 写入 `/etc/systemd/system/backupx-agent.service`（token 已烧入环境变量）
-5. 执行 `systemctl enable --now backupx-agent`
-6. 轮询 `/api/v1/agent/self`，直到 Master 确认 `status: online`（最多 30 秒）
+主命令通过一次性入口下载安装器，并在执行前校验脚本标记。向导会把所选 Agent 地址、显式代理和私有 CA 同时绑定到下载命令与安装后的 Agent 配置。如果目标网络仍无法访问安装入口，使用页面单独展示的嵌入式备用命令。嵌入式命令包含长期节点 Token，必须按密钥管理。
 
-Docker 模式使用同一组环境变量约定：`BACKUPX_AGENT_MASTER`、`BACKUPX_AGENT_TOKEN` 和 `BACKUPX_AGENT_TEMP_DIR=/var/lib/backupx-agent/tmp`。容器启动后，安装脚本同样会探测 `/api/v1/agent/self`；如果节点没有上线，会输出 `docker ps` 与 `docker logs --tail=100 backupx-agent` 排查命令，并以非零状态退出。
+安装器会：
 
-如果使用 URL 备用命令时 `curl` 输出 HTML，或 shell 报 `Syntax error: newline unexpected`，说明安装 URL 被 Web 控制台接管而不是转发到后端。需要确保 `/api/install/` 或 `/install/` 至少一个路径能转发到 BackupX 后端，或改用控制台生成的嵌入式命令。
+1. 检测 `linux/amd64` 或 `linux/arm64`。
+2. 配置显式代理时始终通过该代理下载 Release；否则使用主机的正常直连或环境代理路径，并在该版本提供 SHA-256 旁车文件时进行校验。
+3. 以 `0600` 权限写入 `/etc/backupx-agent/config.yaml` 和 `/etc/backupx-agent/agent.token`。
+4. 不把 Token 写入 systemd unit 或 Docker 环境元数据。
+5. 启动 Agent，并在 30 秒内轮询 `/api/v1/agent/self`。
+6. 节点未上线时返回非零状态，并输出 systemd 或 Docker 排查命令。
 
-脚本是幂等的：升级或重装只需重新生成一条安装命令再跑一次。一次性安装链接在 TTL 到期或被首次消费后立即作废。
+旧版本如果没有校验文件，会显示兼容性警告后继续安装；新版本应始终发布并校验该文件。
 
-### 3. 随时轮换 Agent Token
+### systemd 安装结果
 
-节点操作列（︙）→ **重新生成 Token**。新 Token 一次性显示，旧 Token 24 小时内仍有效，便于滚动替换无需停机。24 小时后旧 Token 被拒绝。
-
-### 4. 批量部署
-
-第一步选"批量创建"粘贴节点名（每行一个，最多 50 个）。第三步显示每个节点对应的命令表格，底部「导出 .sh」可打包为单个 shell 文件，方便 SSH 循环或 Ansible 任务。
-
-### 5. 把任务路由到该节点
-
-在 **备份任务** 页面新建任务时选择对应源服务器。任务触发时：
-
-- 本机 / 未指定（`nodeId=0`）：Master 进程内直接执行
-- 远程节点：Master 写入命令队列 → Agent 拉取 → Agent 本地执行 → 上传 → 回报
-
-节点列表会展示 Agent 健康与命令队列状态：pending/dispatched 深度、运行中的长任务、超时数、最旧活跃命令年龄和最近 Agent 错误。同样的队列深度、运行中命令数和超时快照会导出为 Prometheus 指标：
-
-- `backupx_agent_command_queue_depth`
-- `backupx_agent_command_running`
-- `backupx_agent_command_timeout_total`
-
-## 已知限制
-
-- **加密备份仅支持 Master 本机执行**：Agent 不持有 Master 的 AES-256 密钥。创建或更新任务时，如果 `encrypt: true` 且选择了远程节点或节点池，会在入口直接拒绝
-- **目录浏览超时**：远程目录浏览通过命令队列做同步 RPC，默认 15s 超时
-- **派发命令超时**：Agent 领取但未完成的命令超过 10 分钟会被置 `timeout`
-
-## CLI 参考
-
+```yaml title="/etc/backupx-agent/config.yaml"
+master: "https://backup.example.com"
+tokenFile: "/etc/backupx-agent/agent.token"
+heartbeatInterval: "15s"
+pollInterval: "5s"
+tempDir: "/var/lib/backupx-agent/tmp"
+proxyUrl: ""
+caCertFile: ""
 ```
-backupx agent --help
-  -master string    Master URL
-  -token string     Agent 认证令牌
-  -config string    YAML 配置文件路径（优先级高于环境变量）
-  -temp-dir string  本地临时目录（默认 /tmp/backupx-agent）
-  -insecure-tls     跳过 TLS 证书校验（仅测试用）
-```
-
-## systemd 单元
 
 ```ini title="/etc/systemd/system/backupx-agent.service"
 [Unit]
 Description=BackupX Agent
-After=network.target
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
-User=backupx
-Environment="BACKUPX_AGENT_MASTER=https://master.example.com"
-Environment="BACKUPX_AGENT_TOKEN=your-token"
-ExecStart=/opt/backupx/backupx agent
+ExecStart=/opt/backupx-agent/backupx agent --config /etc/backupx-agent/config.yaml
 Restart=on-failure
 RestartSec=10s
+TimeoutStopSec=30s
+UMask=0077
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-启用并启动：
+Agent 以 root 运行，因为文件备份和恢复路径可能属于任意系统用户。应严格限制谁能创建任务，以及谁能修改 root 所有的 Agent 配置。
+
+## SSH 堡垒机示例
+
+内网 Master 使用 HTTPS 时优先采用 SOCKS 隧道，这样 Master 主机名与证书校验保持不变。
+
+先创建专用 SSH 账户，预置私钥和已经人工核对指纹的 `known_hosts`，再创建：
+
+```sshconfig title="/etc/backupx-agent/ssh_config"
+Host backupx-bastion
+    HostName bastion.example.com
+    User backupx-tunnel
+    IdentityFile /etc/backupx-agent/tunnel_ed25519
+    IdentitiesOnly yes
+    BatchMode yes
+    UserKnownHostsFile /etc/backupx-agent/known_hosts
+    StrictHostKeyChecking yes
+    DynamicForward 127.0.0.1:1080
+    ExitOnForwardFailure yes
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+```
+
+```ini title="/etc/systemd/system/backupx-agent-tunnel.service"
+[Unit]
+Description=BackupX Agent SSH tunnel
+After=network-online.target
+Wants=network-online.target
+Before=backupx-agent.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ssh -NT -F /etc/backupx-agent/ssh_config backupx-bastion
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+再添加依赖覆写，让隧道不可用时 Agent 关闭失败而不是绕过堡垒机：
+
+```ini title="/etc/systemd/system/backupx-agent.service.d/tunnel.conf"
+[Unit]
+Requires=backupx-agent-tunnel.service
+After=backupx-agent-tunnel.service
+```
 
 ```bash
-sudo systemctl enable --now backupx-agent
-sudo journalctl -u backupx-agent -f
+sudo systemctl daemon-reload
+sudo systemctl enable --now backupx-agent-tunnel backupx-agent
 ```
+
+在安装向导中保留内网 HTTPS Master 地址，把代理填写为 `socks5h://127.0.0.1:1080`。启用服务前必须通过独立渠道核对堡垒机 Host Key。
+
+## 集中存储数据路径
+
+| 目标 | 数据路径 |
+| --- | --- |
+| S3、WebDAV、FTP、云盘或其他网络后端 | Agent 直接流式上传到目标 |
+| 启用 **远程备份经 Master 中转** 的 `local_disk` | Agent 通过认证 Master API 流式上传，Master 写入本地挂载 |
+
+中转不会在 Master 上额外创建一份完整临时副本，恢复时走反向流式通道。Nginx 必须关闭请求缓冲，才能保持该特性。
+
+## 运维
+
+```bash
+sudo systemctl status backupx-agent
+sudo journalctl -u backupx-agent -n 100 --no-pager
+sudo /opt/backupx-agent/backupx agent --config /etc/backupx-agent/config.yaml
+```
+
+从节点操作菜单轮换 Token 后，在 24 小时重叠窗口内更新 `/etc/backupx-agent/agent.token` 并重启服务。
+
+建议监控：
+
+- `backupx_agent_command_queue_depth`
+- `backupx_agent_command_running`
+- `backupx_agent_command_timeout_total`
+- `backupx_node_online`
+
+## CLI 参考
+
+```text
+backupx agent --help
+  -master string       Master 地址
+  -token string        Agent Token
+  -token-file string   从文件读取 Agent Token
+  -config string       YAML 配置文件路径
+  -temp-dir string     本地临时目录
+  -proxy-url string    HTTP(S) 或 SOCKS5(H) 代理
+  -ca-cert string      用于校验 Master 的 PEM CA 证书
+  -insecure-tls        跳过 TLS 校验（仅测试）
+```
+
+环境变量：`BACKUPX_AGENT_MASTER`、`BACKUPX_AGENT_TOKEN`、`BACKUPX_AGENT_TOKEN_FILE`、`BACKUPX_AGENT_HEARTBEAT`、`BACKUPX_AGENT_POLL`、`BACKUPX_AGENT_TEMP_DIR`、`BACKUPX_AGENT_PROXY_URL`、`BACKUPX_AGENT_CA_CERT_FILE`、`BACKUPX_AGENT_INSECURE_TLS`。
+
+## 已知限制
+
+- Master 使用内置 SQLite，只支持单活。
+- 加密备份仅支持 Master 本机执行，因为 Agent 不持有 Master 加密密钥。
+- 远程目录浏览是同步队列 RPC，默认超时 15 秒。
+- Agent 领取后长期不更新的命令会由 Master 超时监控处理。

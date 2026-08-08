@@ -93,7 +93,7 @@ const FEATURES: FeatureItem[] = [
     title: <Translate id="feat.cluster.title">Multi-Node Cluster</Translate>,
     description: (
       <Translate id="feat.cluster.desc">
-        Master-Agent via HTTP long-polling. Agents run tasks locally and upload directly to storage — no reverse connectivity.
+        Outbound-only Master-Agent polling with proxy, private-CA, and SSH-bastion support. No reverse connectivity is required.
       </Translate>
     ),
     icon: <NetworkIcon />,

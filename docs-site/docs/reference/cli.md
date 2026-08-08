@@ -32,11 +32,14 @@ backupx agent --master http://master:8340 --token <token>
 |------|-------------|
 | `--master <url>` | Master URL |
 | `--token <token>` | Agent auth token |
+| `--token-file <path>` | Read the Agent Token from a file; preferred for services and containers |
 | `--config <path>` | YAML config (takes precedence over env) |
 | `--temp-dir <path>` | Local temp directory (default `/tmp/backupx-agent`) |
+| `--proxy-url <url>` | Explicit HTTP(S) or SOCKS5(H) proxy |
+| `--ca-cert <path>` | PEM CA certificate used to verify the Master |
 | `--insecure-tls` | Skip TLS verification (testing only) |
 
-Environment variables: `BACKUPX_AGENT_MASTER`, `BACKUPX_AGENT_TOKEN`, `BACKUPX_AGENT_HEARTBEAT`, `BACKUPX_AGENT_POLL`, `BACKUPX_AGENT_TEMP_DIR`, `BACKUPX_AGENT_INSECURE_TLS`.
+Environment variables: `BACKUPX_AGENT_MASTER`, `BACKUPX_AGENT_TOKEN`, `BACKUPX_AGENT_TOKEN_FILE`, `BACKUPX_AGENT_HEARTBEAT`, `BACKUPX_AGENT_POLL`, `BACKUPX_AGENT_TEMP_DIR`, `BACKUPX_AGENT_PROXY_URL`, `BACKUPX_AGENT_CA_CERT_FILE`, `BACKUPX_AGENT_INSECURE_TLS`. When no explicit proxy URL is set, the Agent also honors `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`.
 
 ## `backupx backint`
 

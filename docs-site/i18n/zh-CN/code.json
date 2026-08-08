@@ -69,7 +69,7 @@
   "feat.scheduling.title": {"message": "调度与保留策略"},
   "feat.scheduling.desc": {"message": "基于 Cron 的可视化调度编辑器，支持按天数/份数自动保留和空目录清理。"},
   "feat.cluster.title": {"message": "多节点集群"},
-  "feat.cluster.desc": {"message": "Master-Agent 基于 HTTP 长轮询。Agent 在本地执行任务并直接上传到存储 — 无需反向连通性。"},
+  "feat.cluster.desc": {"message": "Master-Agent 采用 Agent 主动出站轮询。支持代理、私有 CA 与 SSH 堡垒机，无需反向连通性。"},
   "feat.security.title": {"message": "默认安全"},
   "feat.security.desc": {"message": "JWT 认证、bcrypt、AES-256-GCM 加密配置、可选备份加密、完整审计日志。"},
   "feat.deploy.title": {"message": "部署轻量"},
