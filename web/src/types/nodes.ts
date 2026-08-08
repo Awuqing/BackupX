@@ -51,6 +51,9 @@ export interface InstallTokenInput {
   agentVersion: string
   downloadSrc: InstallSource
   ttlSeconds: number
+  agentMasterUrl?: string
+  proxyUrl?: string
+  caCertFile?: string
 }
 
 export interface InstallTokenResult {

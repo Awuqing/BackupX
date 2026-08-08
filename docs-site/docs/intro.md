@@ -21,7 +21,7 @@ description: Overview of BackupX — a self-hosted server backup management plat
 ```
 [Web Console] ─── JWT ──→ [Master (backupx)]
                              │
-                             │ HTTP long-poll (token auth)
+                             │ outbound HTTP polling (token auth)
                              ▼
                          [Agent (backupx agent)]
                              │

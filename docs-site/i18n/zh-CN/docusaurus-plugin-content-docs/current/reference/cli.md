@@ -32,11 +32,14 @@ backupx agent --master http://master:8340 --token <token>
 |------|------|
 | `--master <url>` | Master URL |
 | `--token <token>` | Agent 认证令牌 |
+| `--token-file <path>` | 从文件读取 Agent Token，服务与容器部署推荐使用 |
 | `--config <path>` | YAML 配置文件（优先级高于环境变量） |
 | `--temp-dir <path>` | 本地临时目录（默认 `/tmp/backupx-agent`） |
+| `--proxy-url <url>` | 显式 HTTP(S) 或 SOCKS5(H) 代理 |
+| `--ca-cert <path>` | 用于校验 Master 的 PEM CA 证书 |
 | `--insecure-tls` | 跳过 TLS 校验（仅测试用） |
 
-环境变量：`BACKUPX_AGENT_MASTER`、`BACKUPX_AGENT_TOKEN`、`BACKUPX_AGENT_HEARTBEAT`、`BACKUPX_AGENT_POLL`、`BACKUPX_AGENT_TEMP_DIR`、`BACKUPX_AGENT_INSECURE_TLS`。
+环境变量：`BACKUPX_AGENT_MASTER`、`BACKUPX_AGENT_TOKEN`、`BACKUPX_AGENT_TOKEN_FILE`、`BACKUPX_AGENT_HEARTBEAT`、`BACKUPX_AGENT_POLL`、`BACKUPX_AGENT_TEMP_DIR`、`BACKUPX_AGENT_PROXY_URL`、`BACKUPX_AGENT_CA_CERT_FILE`、`BACKUPX_AGENT_INSECURE_TLS`。未设置显式代理时，Agent 同样遵循 `HTTP_PROXY`、`HTTPS_PROXY` 和 `NO_PROXY`。
 
 ## `backupx backint`
 

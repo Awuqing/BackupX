@@ -21,7 +21,7 @@ description: BackupX——自托管服务器备份管理平台概览。
 ```
 [Web 控制台] ─── JWT ──→ [Master (backupx)]
                              │
-                             │ HTTP 长轮询（Token 认证）
+                             │ Agent 主动 HTTP 轮询（Token 认证）
                              ▼
                          [Agent (backupx agent)]
                              │

@@ -43,7 +43,7 @@
 | **SAP HANA Backint 代理** | 内置 SAP HANA Backint 协议代理，HANA 原生备份接口可直接把数据路由到 BackupX 支持的任意存储后端 |
 | **70+ 存储后端** | 内置阿里云 OSS / 腾讯云 COS / 七牛云 / S3 / Google Drive / WebDAV / FTP + 通过 rclone 集成 SFTP、Azure Blob、Dropbox、OneDrive 等 70+ 后端 |
 | **自动调度** | Cron 定时 + 可视化编辑器 + 自动保留策略（按天数/份数清理，自动回收空目录） |
-| **多节点集群** | Master-Agent 模式，基于 HTTP 长轮询跨多台服务器管理备份。Agent 本地执行任务并直接上传到存储，无需反向连通性 |
+| **多节点集群** | Master-Agent 模式，基于 Agent 主动出站的 HTTP 轮询跨服务器管理备份，支持代理、私有 CA 与 SSH 堡垒机，无需反向连通性 |
 | **安全** | JWT + bcrypt + AES-256-GCM 加密配置 + 可选备份文件加密 + 完整审计日志 |
 | **通知** | 邮件 / Webhook / Telegram，备份成功或失败时自动推送 |
 | **可观测性** | Prometheus `/metrics` 端点 + `/health` + `/ready` 探针 + SLA 违约监控 |

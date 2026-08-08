@@ -76,6 +76,24 @@ describe('createAgentDeployFlow', () => {
     })
   })
 
+  it('uses restricted-network options in batch install commands', async () => {
+    const flow = createAgentDeployFlow({
+      batchCreateNodes: async () => [{ id: 1, name: 'restricted' }],
+      createInstallToken: async () => tokenResult({
+        url: 'https://master.internal/api/install/install-token',
+        fallbackUrl: 'https://master.internal/install/install-token',
+      }),
+    })
+    const result = await flow.submitNewNodes(['restricted'], {
+      ...deployOptions(),
+      proxyUrl: 'socks5h://127.0.0.1:1080',
+      caCertFile: '/etc/backupx-agent/ca.pem',
+    })
+
+    expect(result.rows[0].command).toContain("--proxy 'socks5h://127.0.0.1:1080'")
+    expect(result.rows[0].command).toContain("--cacert '/etc/backupx-agent/ca.pem'")
+  })
+
   it('rejects duplicate names before creating nodes', async () => {
     const flow = createAgentDeployFlow({
       batchCreateNodes: async () => {

@@ -204,6 +204,7 @@ func (h *NodeHandler) RotateToken(c *gin.Context) {
 	recordAudit(c, h.auditService, "node", "rotate_token", "node",
 		fmt.Sprintf("%d", id), "",
 		fmt.Sprintf("轮换节点 Token (ID: %d)", id))
+	c.Header("Cache-Control", "no-store")
 	response.Success(c, gin.H{"newToken": tok})
 }
 
@@ -220,11 +221,14 @@ func (h *NodeHandler) CreateInstallToken(c *gin.Context) {
 		return
 	}
 	var input struct {
-		Mode         string `json:"mode"`
-		Arch         string `json:"arch"`
-		AgentVersion string `json:"agentVersion"`
-		DownloadSrc  string `json:"downloadSrc"`
-		TTLSeconds   int    `json:"ttlSeconds"`
+		Mode           string `json:"mode"`
+		Arch           string `json:"arch"`
+		AgentVersion   string `json:"agentVersion"`
+		DownloadSrc    string `json:"downloadSrc"`
+		TTLSeconds     int    `json:"ttlSeconds"`
+		AgentMasterURL string `json:"agentMasterUrl"`
+		ProxyURL       string `json:"proxyUrl"`
+		CACertFile     string `json:"caCertFile"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(stdhttp.StatusBadRequest, gin.H{"code": "INVALID_INPUT", "message": err.Error()})
@@ -246,13 +250,16 @@ func (h *NodeHandler) CreateInstallToken(c *gin.Context) {
 
 	out, err := h.installTokenSvc.CreateCommand(c.Request.Context(), service.InstallCommandInput{
 		InstallTokenInput: service.InstallTokenInput{
-			NodeID:       uint(id),
-			Mode:         input.Mode,
-			Arch:         input.Arch,
-			AgentVersion: input.AgentVersion,
-			DownloadSrc:  input.DownloadSrc,
-			TTLSeconds:   input.TTLSeconds,
-			CreatedByID:  h.resolveCurrentUserID(c),
+			NodeID:         uint(id),
+			Mode:           input.Mode,
+			Arch:           input.Arch,
+			AgentVersion:   input.AgentVersion,
+			DownloadSrc:    input.DownloadSrc,
+			TTLSeconds:     input.TTLSeconds,
+			CreatedByID:    h.resolveCurrentUserID(c),
+			AgentMasterURL: input.AgentMasterURL,
+			ProxyURL:       input.ProxyURL,
+			CACertFile:     input.CACertFile,
 		},
 		MasterURL: resolveMasterURL(c, h.externalURL),
 	})
@@ -278,6 +285,7 @@ func (h *NodeHandler) CreateInstallToken(c *gin.Context) {
 		"composeUrl":         out.ComposeURL,
 		"fallbackComposeUrl": out.FallbackComposeURL,
 	}
+	c.Header("Cache-Control", "no-store")
 	response.Success(c, body)
 }
 
@@ -292,18 +300,24 @@ func (h *NodeHandler) PreviewScript(c *gin.Context) {
 		return
 	}
 	src := c.DefaultQuery("downloadSrc", "github")
+	agentMasterURL := c.Query("agentMasterUrl")
+	if agentMasterURL == "" {
+		agentMasterURL = resolveMasterURL(c, h.externalURL)
+	}
 	ctx := installscript.Context{
-		MasterURL:     resolveMasterURL(c, h.externalURL),
+		MasterURL:     agentMasterURL,
 		AgentToken:    "<AGENT_TOKEN>",
 		AgentVersion:  ver,
 		Mode:          mode,
 		Arch:          arch,
 		DownloadBase:  installscript.DownloadBaseFor(src),
 		InstallPrefix: "/opt/backupx-agent",
+		ProxyURL:      c.Query("proxyUrl"),
+		CACertFile:    c.Query("caCertFile"),
 	}
 	script, err := installscript.RenderScript(ctx)
 	if err != nil {
-		response.Error(c, err)
+		response.Error(c, apperror.BadRequest("INSTALL_TOKEN_INVALID", "Agent 连接配置无效", err))
 		return
 	}
 	c.Data(stdhttp.StatusOK, "text/x-shellscript; charset=utf-8", []byte(script))

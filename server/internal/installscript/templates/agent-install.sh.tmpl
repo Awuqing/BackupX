@@ -1,12 +1,11 @@
 #!/bin/sh
 # BackupX Agent 一键安装脚本（由 Master 动态渲染）
-# Magic: BACKUPX_AGENT_INSTALL_V1  —— 若 `head -3 脚本` 看不到此行，说明反向代理/CDN 改写了响应
+# Magic: BACKUPX_AGENT_INSTALL_V1 —— 若 `head -3 脚本` 看不到此行，说明反向代理或 CDN 改写了响应
 # 模式: {{.Mode}} | 架构: {{.Arch}} | 版本: {{.AgentVersion}}
 set -eu
+umask 077
 
-# 自举到 bash（文件执行模式下生效；管道模式 $0 不是文件，exec 会静默失败，继续用 sh）。
-# 动机：部分 Debian/Ubuntu 用户通过 `curl | sudo sh` 触发时，dash 对本脚本报语法错误；
-# 若目标机装有 bash，优先切换到 bash 获得更一致的行为。
+# 文件执行模式下优先使用 bash；管道模式继续使用 POSIX sh。
 if [ -z "${BASH_VERSION:-}" ] && command -v bash >/dev/null 2>&1 && [ -f "$0" ]; then
     exec bash "$0" "$@"
 fi
@@ -17,14 +16,56 @@ AGENT_VERSION="{{.AgentVersion}}"
 DOWNLOAD_BASE="{{.DownloadBase}}"
 INSTALL_PREFIX="{{.InstallPrefix}}"
 ARCH="{{.Arch}}"
+PROXY_URL="{{.ProxyURL}}"
+CA_CERT_FILE="{{.CACertFile}}"
+CONFIG_DIR="/etc/backupx-agent"
+CONFIG_FILE="${CONFIG_DIR}/config.yaml"
+TOKEN_FILE="${CONFIG_DIR}/agent.token"
+
+download_file() {
+    source_url="$1"
+    destination="$2"
+    if command -v curl >/dev/null 2>&1; then
+        if [ -n "$PROXY_URL" ]; then
+            curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 --proxy "$PROXY_URL" "$source_url" -o "$destination"
+        else
+            curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 15 "$source_url" -o "$destination"
+        fi
+    else
+        wget -q -T 30 -O "$destination" "$source_url"
+    fi
+}
+
+agent_is_online() {
+    if command -v curl >/dev/null 2>&1; then
+        if [ -n "$PROXY_URL" ] && [ -n "$CA_CERT_FILE" ]; then
+            response=$(curl -fsS --max-time 5 --proxy "$PROXY_URL" --cacert "$CA_CERT_FILE" -H "X-Agent-Token: ${AGENT_TOKEN}" "${MASTER_URL}/api/v1/agent/self" 2>/dev/null) || return 1
+        elif [ -n "$PROXY_URL" ]; then
+            response=$(curl -fsS --max-time 5 --proxy "$PROXY_URL" -H "X-Agent-Token: ${AGENT_TOKEN}" "${MASTER_URL}/api/v1/agent/self" 2>/dev/null) || return 1
+        elif [ -n "$CA_CERT_FILE" ]; then
+            response=$(curl -fsS --max-time 5 --cacert "$CA_CERT_FILE" -H "X-Agent-Token: ${AGENT_TOKEN}" "${MASTER_URL}/api/v1/agent/self" 2>/dev/null) || return 1
+        else
+            response=$(curl -fsS --max-time 5 -H "X-Agent-Token: ${AGENT_TOKEN}" "${MASTER_URL}/api/v1/agent/self" 2>/dev/null) || return 1
+        fi
+    else
+        response=$(wget -q -T 5 --max-redirect=0 -O - --header="X-Agent-Token: ${AGENT_TOKEN}" "${MASTER_URL}/api/v1/agent/self" 2>/dev/null) || return 1
+    fi
+    printf '%s' "$response" | grep -q '"status":"online"'
+}
 
 # 1. 前置检查
 [ "$(id -u)" -eq 0 ] || { echo "请使用 root 或 sudo 执行" >&2; exit 1; }
-command -v curl >/dev/null || command -v wget >/dev/null \
+command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 \
     || { echo "需要 curl 或 wget" >&2; exit 1; }
-{{if eq .Mode "systemd"}}command -v systemctl >/dev/null || { echo "不支持非 systemd 系统" >&2; exit 1; }
-{{end}}{{if eq .Mode "docker"}}command -v docker >/dev/null || { echo "需要先安装 docker" >&2; exit 1; }
+command -v grep >/dev/null 2>&1 || { echo "需要 grep" >&2; exit 1; }
+if { [ -n "$PROXY_URL" ] || [ -n "$CA_CERT_FILE" ]; } && ! command -v curl >/dev/null 2>&1; then
+    echo "显式代理或自定义 CA 场景需要 curl" >&2
+    exit 1
+fi
+{{if eq .Mode "systemd"}}command -v systemctl >/dev/null 2>&1 || { echo "当前系统不支持 systemd" >&2; exit 1; }
+{{end}}{{if eq .Mode "docker"}}command -v docker >/dev/null 2>&1 || { echo "需要先安装 Docker" >&2; exit 1; }
 {{end}}
+
 # 2. 架构检测
 if [ "$ARCH" = "auto" ]; then
     case "$(uname -m)" in
@@ -34,24 +75,54 @@ if [ "$ARCH" = "auto" ]; then
     esac
 fi
 
+# 3. 安全写入 Agent 配置。systemd unit 与容器元数据中不保存节点 Token。
+install -d -m 0700 "$CONFIG_DIR" /var/lib/backupx-agent /var/lib/backupx-agent/tmp
+printf '%s\n' "$AGENT_TOKEN" > "$TOKEN_FILE"
+chmod 0600 "$TOKEN_FILE"
+if [ -n "$CA_CERT_FILE" ]; then
+    [ -r "$CA_CERT_FILE" ] || { echo "无法读取 CA 证书: $CA_CERT_FILE" >&2; exit 1; }
+    if [ "$CA_CERT_FILE" != "$CONFIG_DIR/ca.pem" ]; then
+        install -m 0644 "$CA_CERT_FILE" "$CONFIG_DIR/ca.pem"
+    fi
+    CA_CERT_FILE="$CONFIG_DIR/ca.pem"
+fi
+cat > "$CONFIG_FILE" <<CONFIG
+master: "${MASTER_URL}"
+tokenFile: "${TOKEN_FILE}"
+heartbeatInterval: "15s"
+pollInterval: "5s"
+tempDir: "/var/lib/backupx-agent/tmp"
+proxyUrl: "${PROXY_URL}"
+caCertFile: "${CA_CERT_FILE}"
+CONFIG
+chmod 0600 "$CONFIG_FILE"
+
 {{if ne .Mode "docker"}}
-# 3. 下载二进制（systemd / foreground 模式）
+# 4. 下载并安装二进制（systemd / foreground 模式）
 ARCHIVE="backupx-${AGENT_VERSION}-linux-${ARCH}.tar.gz"
 URL="${DOWNLOAD_BASE}/${AGENT_VERSION}/${ARCHIVE}"
-TMPDIR="$(mktemp -d)"; trap 'rm -rf "$TMPDIR"' EXIT
+TMPDIR="$(mktemp -d)"
+trap 'rm -rf "$TMPDIR"' EXIT HUP INT TERM
 echo "[1/4] 下载 ${URL}"
-if command -v curl >/dev/null; then
-    curl -fsSL "$URL" -o "$TMPDIR/pkg.tar.gz"
+download_file "$URL" "$TMPDIR/$ARCHIVE"
+if download_file "${URL}.sha256" "$TMPDIR/$ARCHIVE.sha256" 2>/dev/null; then
+    if command -v sha256sum >/dev/null 2>&1; then
+        (cd "$TMPDIR" && sha256sum -c "$ARCHIVE.sha256")
+    elif command -v shasum >/dev/null 2>&1; then
+        (cd "$TMPDIR" && shasum -a 256 -c "$ARCHIVE.sha256")
+    else
+        echo "已下载校验文件，但系统缺少 sha256sum 或 shasum，拒绝未校验安装" >&2
+        exit 1
+    fi
 else
-    wget -qO "$TMPDIR/pkg.tar.gz" "$URL"
+    echo "[WARN] 当前版本未提供 SHA-256 校验文件，继续兼容安装" >&2
 fi
-tar xzf "$TMPDIR/pkg.tar.gz" -C "$TMPDIR"
+tar xzf "$TMPDIR/$ARCHIVE" -C "$TMPDIR"
 
-# 4. 安装二进制 + 数据目录
 echo "[2/4] 安装到 ${INSTALL_PREFIX}"
 install -d -m 0755 "$INSTALL_PREFIX"
-install -d -m 0700 /var/lib/backupx-agent /var/lib/backupx-agent/tmp
-install -m 0755 "$TMPDIR/backupx-${AGENT_VERSION}-linux-${ARCH}/backupx" "$INSTALL_PREFIX/backupx"
+install -m 0755 "$TMPDIR/backupx-${AGENT_VERSION}-linux-${ARCH}/backupx" "$INSTALL_PREFIX/backupx.new"
+mv -f "$INSTALL_PREFIX/backupx.new" "$INSTALL_PREFIX/backupx"
 {{end}}
 
 {{if eq .Mode "systemd"}}
@@ -62,69 +133,78 @@ cat > /etc/systemd/system/backupx-agent.service <<UNIT
 Description=BackupX Agent
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
-Environment="BACKUPX_AGENT_MASTER=${MASTER_URL}"
-Environment="BACKUPX_AGENT_TOKEN=${AGENT_TOKEN}"
-ExecStart=${INSTALL_PREFIX}/backupx agent --temp-dir /var/lib/backupx-agent/tmp
+ExecStart=${INSTALL_PREFIX}/backupx agent --config ${CONFIG_FILE}
 Restart=on-failure
 RestartSec=10s
-# Agent 需以 root 运行以读取任意源数据；与单机服务端保持一致的资源/句柄上限。
+TimeoutStopSec=30s
+UMask=0077
+# Agent 以 root 运行，以便读取备份源及执行恢复；节点 Token 仅保存在 0600 文件中。
 LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
 UNIT
+chmod 0644 /etc/systemd/system/backupx-agent.service
 systemctl daemon-reload
-systemctl enable --now backupx-agent
+if ! systemctl enable backupx-agent || ! systemctl restart backupx-agent; then
+    echo "BackupX Agent 服务启动失败" >&2
+    systemctl status backupx-agent --no-pager >&2 || true
+    journalctl -u backupx-agent -n 100 --no-pager >&2 || true
+    exit 1
+fi
 
 # 6. 等待上线
 echo "[4/4] 等待节点上线"
-for i in $(seq 1 15); do
+i=0
+while [ "$i" -lt 15 ]; do
     sleep 2
-    if curl -fsSL -H "X-Agent-Token: ${AGENT_TOKEN}" "${MASTER_URL}/api/v1/agent/self" 2>/dev/null \
-        | grep -q '"status":"online"'; then
-        echo "✓ 节点已上线"
+    if agent_is_online; then
+        echo "[OK] 节点已上线"
         exit 0
     fi
+    i=$((i + 1))
 done
-echo "⚠ 30s 内未收到上线心跳，请检查防火墙或 journalctl -u backupx-agent"
-echo "提示：systemd 服务名是 backupx-agent，可执行 systemctl status backupx-agent 查看状态。"
+echo "[WARN] 30 秒内未收到上线心跳，请检查网络、代理或 SSH 隧道" >&2
+echo "排查命令: systemctl status backupx-agent" >&2
+echo "排查命令: journalctl -u backupx-agent -n 100 --no-pager" >&2
 exit 2
 {{end}}
 
 {{if eq .Mode "foreground"}}
 # 5. 前台运行
-echo "[3/3] 前台启动 agent（Ctrl+C 退出）"
-export BACKUPX_AGENT_MASTER="${MASTER_URL}"
-export BACKUPX_AGENT_TOKEN="${AGENT_TOKEN}"
-exec "${INSTALL_PREFIX}/backupx" agent --temp-dir /var/lib/backupx-agent/tmp
+echo "[3/3] 前台启动 Agent（Ctrl+C 退出）"
+exec "${INSTALL_PREFIX}/backupx" agent --config "$CONFIG_FILE"
 {{end}}
 
 {{if eq .Mode "docker"}}
-# Docker 模式：直接用镜像启动容器
+# Docker 模式：配置文件只读挂载，避免 Token 出现在 docker inspect 环境变量中。
 echo "[1/2] 拉取镜像 awuqing/backupx:${AGENT_VERSION}"
 docker pull "awuqing/backupx:${AGENT_VERSION}"
 echo "[2/2] 启动容器 backupx-agent"
 docker rm -f backupx-agent >/dev/null 2>&1 || true
-docker run -d --name backupx-agent --restart=unless-stopped \
-    -e "BACKUPX_AGENT_MASTER=${MASTER_URL}" \
-    -e "BACKUPX_AGENT_TOKEN=${AGENT_TOKEN}" \
-    -e "BACKUPX_AGENT_TEMP_DIR=/var/lib/backupx-agent/tmp" \
+docker run -d --name backupx-agent --restart=unless-stopped --user 0:0 \
+    --security-opt no-new-privileges:true \
+    -v /etc/backupx-agent:/etc/backupx-agent:ro \
     -v /var/lib/backupx-agent:/var/lib/backupx-agent \
-    "awuqing/backupx:${AGENT_VERSION}" agent
-echo "✓ 容器已启动，等待节点上线"
-for i in $(seq 1 15); do
+    "awuqing/backupx:${AGENT_VERSION}" agent --config /etc/backupx-agent/config.yaml
+echo "提示: Docker Agent 只能访问显式挂载的目录；备份宿主机路径前请按文档添加只读 -v 挂载。"
+echo "容器已启动，等待节点上线"
+i=0
+while [ "$i" -lt 15 ]; do
     sleep 2
-    if curl -fsSL -H "X-Agent-Token: ${AGENT_TOKEN}" "${MASTER_URL}/api/v1/agent/self" 2>/dev/null \
-        | grep -q '"status":"online"'; then
-        echo "✓ 节点已上线"
+    if agent_is_online; then
+        echo "[OK] 节点已上线"
         exit 0
     fi
+    i=$((i + 1))
 done
-echo "⚠ 30s 内未收到上线心跳，请检查容器状态、网络与 Master URL。"
-echo "排查命令：docker ps -a --filter name=backupx-agent"
-echo "排查命令：docker logs --tail=100 backupx-agent"
+echo "[WARN] 30 秒内未收到上线心跳，请检查容器、代理、隧道与 Master 地址" >&2
+echo "排查命令: docker ps -a --filter name=backupx-agent" >&2
+echo "排查命令: docker logs --tail=100 backupx-agent" >&2
 exit 2
 {{end}}

@@ -1,10 +1,11 @@
 import React from 'react'
 import { Form, Radio, Select, Input, Typography } from '@arco-design/web-react'
 import type { InstallMode, InstallArch, InstallSource } from '../../../types/nodes'
+import { AgentConnectionOptions, type AgentConnectionValue } from './AgentConnectionOptions'
 
 const { Text } = Typography
 
-export interface DeployOptions {
+export interface DeployOptions extends AgentConnectionValue {
   mode: InstallMode
   arch: InstallArch
   agentVersion: string
@@ -21,12 +22,17 @@ interface Props {
 
 export function Step2DeployOptions({ masterVersion, value, onChange }: Props) {
   const update = (patch: Partial<DeployOptions>) => onChange({ ...value, ...patch })
-  const versionKnown = !!masterVersion
+  const versionKnown = isReleaseVersion(masterVersion)
   const versionLoading = masterVersion === null
 
   return (
     <Form layout="vertical" size="default">
-      <Form.Item label="安装模式">
+      <Form.Item
+        label="安装模式"
+        extra={value.mode === 'docker'
+          ? <Text type="warning">Docker Agent 只能访问显式挂载的目录；备份源使用只读 volume，恢复目录需单独授权写入，或改用 systemd。</Text>
+          : undefined}
+      >
         <Radio.Group
           type="button"
           value={value.mode}
@@ -56,7 +62,9 @@ export function Step2DeployOptions({ masterVersion, value, onChange }: Props) {
         extra={
           !versionKnown && !versionLoading ? (
             <Text type="warning" style={{ fontSize: 12 }}>
-              未能自动获取 Master 版本，请手动输入（形如 v1.7.0）
+              {masterVersion
+                ? `当前 Master 版本 ${masterVersion} 不是可下载的 Release，请手动输入 Agent Release 标签`
+                : '未能自动获取 Master 版本，请手动输入 Agent Release 标签（形如 v1.7.0）'}
             </Text>
           ) : undefined
         }
@@ -106,6 +114,12 @@ export function Step2DeployOptions({ masterVersion, value, onChange }: Props) {
           ]}
         />
       </Form.Item>
+
+      <AgentConnectionOptions value={value} onChange={(connection) => update(connection)} />
     </Form>
   )
+}
+
+export function isReleaseVersion(version: string | null) {
+  return !!version && /^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)
 }

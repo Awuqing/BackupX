@@ -12,6 +12,7 @@ ExecStart=/opt/backupx/bin/backupx -config /etc/backupx/config.yaml
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true
+UMask=0027
 LimitNOFILE=65535
 
 [Install]

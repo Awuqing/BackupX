@@ -23,13 +23,16 @@ server {
     location /api/ {
         proxy_pass http://127.0.0.1:8340;
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+        proxy_set_header Host $http_host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header X-Forwarded-Port $server_port;
 
         # Large uploads (restore flow)
         client_max_body_size 0;
+        proxy_request_buffering off;
 
         # Live log stream uses SSE — buffering must be off
         proxy_buffering off;
@@ -38,6 +41,10 @@ server {
     }
 }
 ```
+
+`proxy_request_buffering off` is required for Master-relay cluster backups. Without it, Nginx writes the complete Agent upload to its temporary storage before BackupX receives it, defeating streaming and potentially filling the proxy disk.
+
+If Nginx runs on another host or in another container, add only that proxy IP or subnet to `server.trusted_proxies`. Do not use `0.0.0.0/0`; BackupX uses the trusted client address for login throttling, install-token throttling, and audit records.
 
 ## HTTPS with certbot
 

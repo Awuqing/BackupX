@@ -48,8 +48,9 @@ Docker Hub：[`awuqing/backupx`](https://hub.docker.com/r/awuqing/backupx)，支
 从 [Releases 页面](https://github.com/Awuqing/BackupX/releases) 下载对应平台的压缩包，执行安装脚本：
 
 ```bash
+sha256sum -c backupx-v*-linux-amd64.tar.gz.sha256
 tar xzf backupx-v*-linux-amd64.tar.gz && cd backupx-*
-sudo ./install.sh        # 创建系统用户、安装到 /opt/backupx、配置 systemd + Nginx
+sudo ./install.sh        # 创建系统用户、安装到 /opt/backupx、配置 systemd
 ```
 
 安装脚本会自动：
@@ -58,7 +59,7 @@ sudo ./install.sh        # 创建系统用户、安装到 /opt/backupx、配置 
 2. 安装二进制到 `/opt/backupx/bin/backupx`，并把 Web 控制台安装到 `/opt/backupx/web`
 3. 生成 `/etc/backupx/config.yaml`（含安全默认值）
 4. 注册并启用 `backupx.service` systemd 单元
-5. （可选）配置 Nginx 反向代理
+5. 默认不修改 Nginx；只有显式设置 `INSTALL_NGINX=1` 时才安装模板
 6. 等待 `/api/auth/setup/status` 就绪；启动失败时输出 systemd 诊断并返回非零状态
 
 ## 从源码构建
@@ -73,6 +74,8 @@ sudo ./deploy/install.sh
 
 `make build` 完成后，二进制位于 `server/bin/backupx`，构建好的 Web UI 位于 `web/dist/`。
 安装脚本会直接使用这两个路径，不需要 Docker 运行时。如果已有配置修改了默认端口，可覆盖就绪检查地址，例如：`sudo HEALTH_URL=http://127.0.0.1:9000/api/auth/setup/status ./deploy/install.sh`。
+
+自动安装兜底虚拟主机可能接管现有站点，因此 Nginx 模板改为显式启用。请先审核 `deploy/nginx.conf`，确认适合当前主机后再执行 `sudo INSTALL_NGINX=1 ./deploy/install.sh`。
 
 ## 验证安装
 

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -27,13 +28,16 @@ func NewInstallTokenService(repo repository.AgentInstallTokenRepository, nodeRep
 
 // InstallTokenInput 生成一次性安装令牌的输入。
 type InstallTokenInput struct {
-	NodeID       uint
-	Mode         string
-	Arch         string
-	AgentVersion string
-	DownloadSrc  string
-	TTLSeconds   int
-	CreatedByID  uint
+	NodeID         uint
+	Mode           string
+	Arch           string
+	AgentVersion   string
+	DownloadSrc    string
+	TTLSeconds     int
+	CreatedByID    uint
+	AgentMasterURL string
+	ProxyURL       string
+	CACertFile     string
 }
 
 // InstallTokenOutput 生成结果。
@@ -112,14 +116,17 @@ func (s *InstallTokenService) Create(ctx context.Context, in InstallTokenInput) 
 	}
 	expiresAt := time.Now().UTC().Add(time.Duration(in.TTLSeconds) * time.Second)
 	record := &model.AgentInstallToken{
-		Token:       token,
-		NodeID:      in.NodeID,
-		Mode:        in.Mode,
-		Arch:        in.Arch,
-		AgentVer:    in.AgentVersion,
-		DownloadSrc: in.DownloadSrc,
-		ExpiresAt:   expiresAt,
-		CreatedByID: in.CreatedByID,
+		Token:          token,
+		NodeID:         in.NodeID,
+		Mode:           in.Mode,
+		Arch:           in.Arch,
+		AgentVer:       in.AgentVersion,
+		DownloadSrc:    in.DownloadSrc,
+		AgentMasterURL: strings.TrimRight(strings.TrimSpace(in.AgentMasterURL), "/"),
+		ProxyURL:       strings.TrimSpace(in.ProxyURL),
+		CACertFile:     strings.TrimSpace(in.CACertFile),
+		ExpiresAt:      expiresAt,
+		CreatedByID:    in.CreatedByID,
 	}
 	if err := s.repo.Create(ctx, record); err != nil {
 		return nil, err
@@ -130,9 +137,15 @@ func (s *InstallTokenService) Create(ctx context.Context, in InstallTokenInput) 
 // CreateCommand 创建 install token，并返回 UI 展示安装命令所需的 URL 与嵌入式脚本。
 func (s *InstallTokenService) CreateCommand(ctx context.Context, in InstallCommandInput) (*InstallCommandOutput, error) {
 	masterURL := strings.TrimRight(strings.TrimSpace(in.MasterURL), "/")
-	if masterURL == "" {
-		return nil, apperror.BadRequest("INSTALL_TOKEN_INVALID", "masterURL 必填", nil)
+	deliveryURL, parseErr := url.Parse(masterURL)
+	if masterURL == "" || parseErr != nil || (deliveryURL.Scheme != "http" && deliveryURL.Scheme != "https") || deliveryURL.Host == "" || deliveryURL.User != nil || deliveryURL.RawQuery != "" || deliveryURL.Fragment != "" || strings.ContainsAny(masterURL, " \t\r\n\"'`$\\") {
+		return nil, apperror.BadRequest("INSTALL_TOKEN_INVALID", "masterURL 必须是安全的完整 HTTP(S) 地址", parseErr)
 	}
+	agentMasterURL := strings.TrimRight(strings.TrimSpace(in.AgentMasterURL), "/")
+	if agentMasterURL == "" {
+		agentMasterURL = masterURL
+	}
+	in.AgentMasterURL = agentMasterURL
 	if err := s.validate(in.InstallTokenInput); err != nil {
 		return nil, err
 	}
@@ -144,12 +157,15 @@ func (s *InstallTokenService) CreateCommand(ctx context.Context, in InstallComma
 		return nil, apperror.New(404, "NODE_NOT_FOUND", "节点不存在", nil)
 	}
 	if _, err := renderInstallCommandScript(masterURL, node, &model.AgentInstallToken{
-		Mode:        in.Mode,
-		Arch:        in.Arch,
-		AgentVer:    in.AgentVersion,
-		DownloadSrc: in.DownloadSrc,
+		Mode:           in.Mode,
+		Arch:           in.Arch,
+		AgentVer:       in.AgentVersion,
+		DownloadSrc:    in.DownloadSrc,
+		AgentMasterURL: in.AgentMasterURL,
+		ProxyURL:       in.ProxyURL,
+		CACertFile:     in.CACertFile,
 	}); err != nil {
-		return nil, err
+		return nil, apperror.BadRequest("INSTALL_TOKEN_INVALID", "Agent 连接配置无效", err)
 	}
 	out, err := s.Create(ctx, in.InstallTokenInput)
 	if err != nil {
@@ -164,20 +180,24 @@ func (s *InstallTokenService) CreateCommand(ctx context.Context, in InstallComma
 		ExpiresAt:    out.ExpiresAt,
 		Node:         out.Node,
 		Record:       out.Record,
-		URL:          masterURL + "/api/install/" + out.Token,
-		FallbackURL:  masterURL + "/install/" + out.Token,
+		URL:          agentMasterURL + "/api/install/" + out.Token,
+		FallbackURL:  agentMasterURL + "/install/" + out.Token,
 		ScriptBase64: base64.StdEncoding.EncodeToString([]byte(script)),
 	}
 	if out.Record.Mode == model.InstallModeDocker {
-		result.ComposeURL = masterURL + "/api/install/" + out.Token + "/compose.yml"
-		result.FallbackComposeURL = masterURL + "/install/" + out.Token + "/compose.yml"
+		result.ComposeURL = agentMasterURL + "/api/install/" + out.Token + "/compose.yml"
+		result.FallbackComposeURL = agentMasterURL + "/install/" + out.Token + "/compose.yml"
 	}
 	return result, nil
 }
 
 func renderInstallCommandScript(masterURL string, node *model.Node, record *model.AgentInstallToken) (string, error) {
+	agentMasterURL := strings.TrimRight(strings.TrimSpace(record.AgentMasterURL), "/")
+	if agentMasterURL == "" {
+		agentMasterURL = masterURL
+	}
 	return installscript.RenderScript(installscript.Context{
-		MasterURL:     masterURL,
+		MasterURL:     agentMasterURL,
 		AgentToken:    node.Token,
 		AgentVersion:  record.AgentVer,
 		Mode:          record.Mode,
@@ -185,6 +205,8 @@ func renderInstallCommandScript(masterURL string, node *model.Node, record *mode
 		DownloadBase:  installscript.DownloadBaseFor(record.DownloadSrc),
 		InstallPrefix: "/opt/backupx-agent",
 		NodeID:        node.ID,
+		ProxyURL:      record.ProxyURL,
+		CACertFile:    record.CACertFile,
 	})
 }
 
@@ -258,6 +280,9 @@ func (s *InstallTokenService) validate(in InstallTokenInput) error {
 	if in.TTLSeconds < InstallTokenMinTTL || in.TTLSeconds > InstallTokenMaxTTL {
 		return apperror.BadRequest("INSTALL_TOKEN_INVALID",
 			fmt.Sprintf("ttlSeconds 需在 %d-%d", InstallTokenMinTTL, InstallTokenMaxTTL), nil)
+	}
+	if len(in.AgentMasterURL) > 2048 || len(in.ProxyURL) > 2048 || len(in.CACertFile) > 512 {
+		return apperror.BadRequest("INSTALL_TOKEN_INVALID", "连接配置过长", nil)
 	}
 	return nil
 }

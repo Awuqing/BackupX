@@ -44,7 +44,7 @@ func TestRenderScriptUsesRootForBareMetalBackups(t *testing.T) {
 	}
 	for _, want := range []string{
 		"/var/lib/backupx-agent/tmp",
-		"install -d -m 0700 /var/lib/backupx-agent /var/lib/backupx-agent/tmp",
+		"install -d -m 0700 \"$CONFIG_DIR\" /var/lib/backupx-agent /var/lib/backupx-agent/tmp",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("script missing %q:\n%s", want, got)

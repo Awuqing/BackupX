@@ -20,6 +20,11 @@ func openTestInstallTokenDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.AutoMigrate(&model.AgentInstallToken{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}

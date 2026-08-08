@@ -24,7 +24,10 @@ func runAgent(args []string) {
 	configPath := fs.String("config", "", "path to agent config YAML (optional)")
 	master := fs.String("master", "", "master URL, e.g. http://master.example.com:8340")
 	token := fs.String("token", "", "agent authentication token")
+	tokenFile := fs.String("token-file", "", "read the agent authentication token from a file")
 	tempDir := fs.String("temp-dir", "", "local temp directory for backup artifacts")
+	proxyURL := fs.String("proxy-url", "", "HTTP(S) or SOCKS5 proxy used to reach the master")
+	caCertFile := fs.String("ca-cert", "", "PEM CA certificate used to verify the master")
 	insecureTLS := fs.Bool("insecure-tls", false, "skip TLS verification (testing only)")
 
 	if err := fs.Parse(args); err != nil {
@@ -36,9 +39,20 @@ func runAgent(args []string) {
 		fmt.Fprintf(os.Stderr, "agent: load config: %v\n", err)
 		os.Exit(2)
 	}
-	cfg.MergeWithFlags(*master, *token, *tempDir)
+	cfg.ApplyOverrides(agent.Overrides{
+		Master:     *master,
+		Token:      *token,
+		TokenFile:  *tokenFile,
+		TempDir:    *tempDir,
+		ProxyURL:   *proxyURL,
+		CACertFile: *caCertFile,
+	})
 	if *insecureTLS {
 		cfg.InsecureSkipTLSVerify = true
+	}
+	if err := cfg.ResolveToken(); err != nil {
+		fmt.Fprintf(os.Stderr, "agent: %v\n", err)
+		os.Exit(2)
 	}
 	if err := cfg.Validate(); err != nil {
 		fmt.Fprintf(os.Stderr, "agent: %v\n", err)

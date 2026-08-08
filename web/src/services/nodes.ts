@@ -59,7 +59,15 @@ export async function rotateNodeToken(nodeId: number) {
 
 export async function fetchScriptPreview(
   nodeId: number,
-  params: { mode: string; arch: string; agentVersion: string; downloadSrc: string },
+  params: {
+    mode: string
+    arch: string
+    agentVersion: string
+    downloadSrc: string
+    agentMasterUrl?: string
+    proxyUrl?: string
+    caCertFile?: string
+  },
 ) {
   const response = await http.get<string>(`/nodes/${nodeId}/install-script-preview`, {
     params,

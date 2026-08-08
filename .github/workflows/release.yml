@@ -110,6 +110,7 @@ jobs:
           cp -r web/dist "${ARCHIVE_NAME}/web"
           cp server/config.example.yaml "${ARCHIVE_NAME}/"
           cp deploy/install.sh "${ARCHIVE_NAME}/" 2>/dev/null || true
+          cp deploy/backupx.service "${ARCHIVE_NAME}/" 2>/dev/null || true
           # v2.2+: 随发布包提供 Grafana dashboard 与 nginx.conf 模板
           if [ -d deploy/grafana ]; then
             cp -r deploy/grafana "${ARCHIVE_NAME}/grafana"
@@ -117,6 +118,8 @@ jobs:
           cp deploy/nginx.conf "${ARCHIVE_NAME}/nginx.conf" 2>/dev/null || true
           tar czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_NAME}"
           cp "${ARCHIVE_NAME}.tar.gz" "backupx-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz"
+          sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+          sha256sum "backupx-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz" > "backupx-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256"
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -124,7 +127,9 @@ jobs:
           tag_name: ${{ env.VERSION }}
           files: |
             backupx-${{ env.VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+            backupx-${{ env.VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
             backupx-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
+            backupx-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
           generate_release_notes: true
 
   # ─── Job 3: Docker 多架构 → Docker Hub ───

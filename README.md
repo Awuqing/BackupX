@@ -43,7 +43,7 @@
 | **SAP HANA Backint Agent** | Built-in Backint protocol — HANA's native interface routes data directly to any BackupX storage backend |
 | **70+ Storage Backends** | Alibaba OSS, Tencent COS, Qiniu, S3, Google Drive, WebDAV, FTP + SFTP, Azure Blob, Dropbox, OneDrive and dozens more via rclone |
 | **Scheduling** | Cron + visual editor + auto-retention (by days/count + empty-directory cleanup) |
-| **Multi-Node Cluster** | Master-Agent mode via HTTP long-polling — Agents run tasks locally, upload straight to storage, no reverse connectivity required |
+| **Multi-Node Cluster** | Outbound-only Master-Agent polling with proxy, private-CA, and SSH-bastion support; Agents run tasks locally with no reverse connectivity required |
 | **Security** | JWT + bcrypt + AES-256-GCM encrypted config + optional backup encryption + full audit log |
 | **Notifications** | Email / Webhook / Telegram on success or failure |
 | **Observability** | Prometheus `/metrics` endpoint + `/health` + `/ready` probes + SLA breach gauge |

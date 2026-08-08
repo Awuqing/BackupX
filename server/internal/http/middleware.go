@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	stdhttp "net/http"
+	"net/netip"
 	"strings"
 
 	"backupx/server/internal/apperror"
@@ -10,6 +11,46 @@ import (
 	"backupx/server/pkg/response"
 	"github.com/gin-gonic/gin"
 )
+
+// ForwardedHeadersMiddleware 只允许配置中的反向代理提供转发头。
+// Gin 的 trusted_proxies 保护 ClientIP；这里同步保护安装命令使用的
+// X-Forwarded-Host 与 X-Forwarded-Proto，避免直连请求伪造 Agent 地址。
+func ForwardedHeadersMiddleware(trustedProxies []string) gin.HandlerFunc {
+	trustedPrefixes := make([]netip.Prefix, 0, len(trustedProxies))
+	for _, raw := range trustedProxies {
+		raw = strings.TrimSpace(raw)
+		if prefix, err := netip.ParsePrefix(raw); err == nil {
+			trustedPrefixes = append(trustedPrefixes, prefix)
+			continue
+		}
+		if addr, err := netip.ParseAddr(raw); err == nil {
+			trustedPrefixes = append(trustedPrefixes, netip.PrefixFrom(addr, addr.BitLen()))
+		}
+	}
+
+	return func(c *gin.Context) {
+		remote, err := netip.ParseAddrPort(c.Request.RemoteAddr)
+		trusted := false
+		if err == nil {
+			remoteAddr := remote.Addr().Unmap()
+			for _, prefix := range trustedPrefixes {
+				if prefix.Contains(remoteAddr) {
+					trusted = true
+					break
+				}
+			}
+		}
+		if !trusted {
+			for _, header := range []string{
+				"Forwarded", "X-Forwarded-For", "X-Forwarded-Host",
+				"X-Forwarded-Port", "X-Forwarded-Proto", "X-Real-IP",
+			} {
+				c.Request.Header.Del(header)
+			}
+		}
+		c.Next()
+	}
+}
 
 // CORSMiddleware handles Cross-Origin Resource Sharing for the API.
 func CORSMiddleware() gin.HandlerFunc {
