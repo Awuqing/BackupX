@@ -121,7 +121,7 @@ export default function NodesPage() {
             <Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
               新 Token（24 小时内新旧 Token 均可认证，便于滚动替换）：
             </Text>
-            <Text copyable style={{ fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all' }}>
+            <Text copyable style={{ fontSize: 12, wordBreak: 'break-all' }}>
               {newToken}
             </Text>
           </div>
@@ -138,7 +138,7 @@ export default function NodesPage() {
       render: (name: string, record: NodeSummary) => (
         <Space>
           {record.isLocal ? <IconDesktop style={{ color: 'var(--color-primary-6)' }} /> : <IconCloudDownload />}
-          <Text bold>{name}</Text>
+          <Text>{name}</Text>
           {record.isLocal && <Tag color="arcoblue" size="small" bordered>本机</Tag>}
         </Space>
       ),

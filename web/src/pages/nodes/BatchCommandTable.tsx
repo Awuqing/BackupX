@@ -81,7 +81,7 @@ export function BatchCommandTable({ rows, onRetryNode }: Props) {
               }
               return (
                 <Text style={{
-                  fontFamily: 'monospace', fontSize: 12, wordBreak: 'break-all',
+                  fontSize: 12, wordBreak: 'break-all',
                   opacity: left === 0 ? 0.4 : 1,
                 }}>
                   {cmd as string}

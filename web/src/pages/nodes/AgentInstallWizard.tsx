@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { Modal, Steps, Button, Space, Message, Spin } from '@arco-design/web-react'
 import { Step1NodeName, type Mode } from './wizard/Step1NodeName'
-import { Step2DeployOptions, type DeployOptions } from './wizard/Step2DeployOptions'
+import { Step2DeployOptions, isReleaseVersion, type DeployOptions } from './wizard/Step2DeployOptions'
 import { Step3CommandPreview } from './wizard/Step3CommandPreview'
 import { BatchCommandTable, type BatchCommandRow } from './BatchCommandTable'
-import type { InstallTokenResult } from '../../types/nodes'
+import type { InstallTokenInput, InstallTokenResult } from '../../types/nodes'
 import { useAgentDeployFlow, type AgentDeployRow } from './useAgentDeployFlow'
+import { validateAgentConnection } from './wizard/AgentConnectionOptions'
 
 const Step = Steps.Step
 
@@ -29,15 +30,19 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
   const [deploy, setDeploy] = useState<DeployOptions>({
     mode: 'systemd',
     arch: 'auto',
-    agentVersion: masterVersion || '',
+    agentVersion: isReleaseVersion(masterVersion) ? masterVersion || '' : '',
     downloadSrc: 'github',
     ttlSeconds: 900,
+    connectionMode: 'direct',
+    agentMasterUrl: '',
+    proxyUrl: '',
+    caCertFile: '',
   })
 
   // 当父组件异步拿到 masterVersion 后，同步到 deploy.agentVersion（仅初始为空时）
   useEffect(() => {
-    if (masterVersion && !deploy.agentVersion) {
-      setDeploy((prev) => ({ ...prev, agentVersion: masterVersion }))
+    if (isReleaseVersion(masterVersion) && !deploy.agentVersion) {
+      setDeploy((prev) => ({ ...prev, agentVersion: masterVersion as string }))
     }
   }, [masterVersion]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -98,17 +103,23 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
       Message.warning('请填写 Agent 版本号（形如 v1.7.0）')
       return
     }
+    const connectionError = validateAgentConnection(deploy)
+    if (connectionError) {
+      Message.warning(connectionError)
+      return
+    }
+    const installInput = toInstallTokenInput(deploy)
     setSubmitting(true)
     try {
       if (fixedNode) {
-        const result = await deployFlow.submitExistingNode(fixedNode, deploy)
+        const result = await deployFlow.submitExistingNode(fixedNode, installInput)
         applySingleOrTableResult(result.rows, fixedNode)
       } else if (mode === 'single') {
-        const result = await deployFlow.submitNewNodes([singleName.trim()], deploy)
+        const result = await deployFlow.submitNewNodes([singleName.trim()], installInput)
         applySingleOrTableResult(result.rows)
       } else {
         const names = parseBatchNames()
-        const result = await deployFlow.submitNewNodes(names, deploy)
+        const result = await deployFlow.submitNewNodes(names, installInput)
         if (mountedRef.current) setBatchRows(toBatchRows(result.rows))
         if (result.status === 'partialFailed') {
           Message.warning('部分节点安装命令生成失败，可在结果表中查看')
@@ -127,7 +138,7 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
     if (!singleNodeInfo) return
     setSubmitting(true)
     try {
-      const row = await deployFlow.regenerateNode(singleNodeInfo, deploy)
+      const row = await deployFlow.regenerateNode(singleNodeInfo, toInstallTokenInput(deploy))
       if (row.status === 'ready' && row.installToken) {
         setSingleToken(row.installToken)
       } else {
@@ -143,7 +154,7 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
   const retryBatchNode = async (row: BatchCommandRow) => {
     setSubmitting(true)
     try {
-      const next = await deployFlow.regenerateNode({ id: row.nodeId, name: row.nodeName }, deploy)
+      const next = await deployFlow.regenerateNode({ id: row.nodeId, name: row.nodeName }, toInstallTokenInput(deploy))
       setBatchRows((rows) => rows.map((item) => (
         item.nodeId === row.nodeId ? toBatchRows([next])[0] : item
       )))
@@ -164,6 +175,9 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
     arch: deploy.arch,
     agentVersion: deploy.agentVersion,
     downloadSrc: deploy.downloadSrc,
+    agentMasterUrl: deploy.connectionMode === 'restricted' ? deploy.agentMasterUrl.trim() : '',
+    proxyUrl: deploy.connectionMode === 'restricted' ? deploy.proxyUrl.trim() : '',
+    caCertFile: deploy.connectionMode === 'restricted' ? deploy.caCertFile.trim() : '',
   }
 
   // fixedNode 路径下步骤只有 2 步（部署参数 + 安装命令），step 值从 1 开始，
@@ -236,7 +250,6 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
               nodeId={singleNodeInfo.id}
               nodeName={singleNodeInfo.name}
               token={singleToken}
-              mode={deploy.mode}
               previewParams={previewParams}
               onRegenerate={regenerateSingle}
             />
@@ -265,6 +278,19 @@ export function AgentInstallWizard({ visible, onClose, onSuccess, masterVersion,
     setSingleToken(null)
     setBatchRows(toBatchRows(rows))
     Message.error(row.errorMessage || '安装命令生成失败')
+  }
+}
+
+function toInstallTokenInput(deploy: DeployOptions): InstallTokenInput {
+  return {
+    mode: deploy.mode,
+    arch: deploy.arch,
+    agentVersion: deploy.agentVersion.trim(),
+    downloadSrc: deploy.downloadSrc,
+    ttlSeconds: deploy.ttlSeconds,
+    agentMasterUrl: deploy.connectionMode === 'restricted' ? deploy.agentMasterUrl.trim() : undefined,
+    proxyUrl: deploy.connectionMode === 'restricted' ? deploy.proxyUrl.trim() : undefined,
+    caCertFile: deploy.connectionMode === 'restricted' ? deploy.caCertFile.trim() : undefined,
   }
 }
 

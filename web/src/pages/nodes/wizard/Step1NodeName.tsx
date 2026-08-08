@@ -32,7 +32,7 @@ export function Step1NodeName({
       </div>
       {mode === 'single' ? (
         <div>
-          <Text bold style={{ marginBottom: 6, display: 'block' }}>节点名称</Text>
+          <Text style={{ marginBottom: 6, display: 'block' }}>节点名称</Text>
           <Input
             placeholder="如：prod-db-01"
             value={singleName}
@@ -42,13 +42,13 @@ export function Step1NodeName({
         </div>
       ) : (
         <div>
-          <Text bold style={{ marginBottom: 6, display: 'block' }}>节点名称（每行一个，最多 50 个）</Text>
+          <Text style={{ marginBottom: 6, display: 'block' }}>节点名称（每行一个，最多 50 个）</Text>
           <TextArea
             rows={8}
             placeholder={'prod-db-01\nprod-db-02\nprod-web-01'}
             value={batchText}
             onChange={onBatchTextChange}
-            style={{ fontFamily: 'monospace', fontSize: 13 }}
+            style={{ fontSize: 13 }}
           />
           <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
             空行自动忽略；重名会在提交时报错

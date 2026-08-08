@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import { Typography, Button, Space, Collapse, Spin, Message, Tag } from '@arco-design/web-react'
-import { IconCopy, IconRefresh } from '../../../components/icons'
+import { IconRefresh } from '../../../components/icons'
 import { fetchScriptPreview } from '../../../services/nodes'
-import type { InstallTokenResult, InstallMode } from '../../../types/nodes'
+import type { InstallTokenResult } from '../../../types/nodes'
 import { buildAgentDownloadCommand, buildAgentInstallCommand, buildEmbeddedAgentInstallCommand } from '../installCommands'
+import { InstallCommandBlock } from './InstallCommandBlock'
 
 const { Text } = Typography
 
@@ -11,12 +12,19 @@ interface Props {
   nodeId: number
   nodeName: string
   token: InstallTokenResult
-  mode: InstallMode
-  previewParams: { mode: string; arch: string; agentVersion: string; downloadSrc: string }
+  previewParams: {
+    mode: string
+    arch: string
+    agentVersion: string
+    downloadSrc: string
+    agentMasterUrl?: string
+    proxyUrl?: string
+    caCertFile?: string
+  }
   onRegenerate: () => void
 }
 
-export function Step3CommandPreview({ nodeId, nodeName, token, mode, previewParams, onRegenerate }: Props) {
+export function Step3CommandPreview({ nodeId, nodeName, token, previewParams, onRegenerate }: Props) {
   const [remaining, setRemaining] = useState(0)
   const [preview, setPreview] = useState<string>('')
   const [loadingPreview, setLoadingPreview] = useState(false)
@@ -30,12 +38,10 @@ export function Step3CommandPreview({ nodeId, nodeName, token, mode, previewPara
   }, [token.expiresAt])
 
   const expired = remaining === 0
-  const command = buildAgentInstallCommand(token.url, token.fallbackUrl)
-  const fallbackCommand = buildAgentDownloadCommand(token.url, token.fallbackUrl)
+  const fetchOptions = { proxyUrl: previewParams.proxyUrl, caCertFile: previewParams.caCertFile }
+  const command = buildAgentInstallCommand(token.url, token.fallbackUrl, fetchOptions)
+  const fallbackCommand = buildAgentDownloadCommand(token.url, token.fallbackUrl, fetchOptions)
   const embeddedCommand = token.scriptBase64 ? buildEmbeddedAgentInstallCommand(token.scriptBase64) : null
-  const dockerComposeCmd = mode === 'docker' && token.composeUrl
-    ? `curl -fsSL ${token.composeUrl} -o docker-compose.yml && docker-compose up -d`
-    : null
 
   const copy = async (s: string) => {
     await navigator.clipboard.writeText(s)
@@ -57,73 +63,28 @@ export function Step3CommandPreview({ nodeId, nodeName, token, mode, previewPara
   return (
     <div>
       <Space style={{ marginBottom: 12 }}>
-        <Text bold>节点：</Text>
+        <Text>节点：</Text>
         <Tag>{nodeName}</Tag>
         <Tag color={expired ? 'gray' : 'green'}>
           {expired ? '已过期' : `有效期 ${Math.floor(remaining / 60)}:${String(remaining % 60).padStart(2, '0')}`}
         </Tag>
       </Space>
 
-      <div style={{ background: 'var(--color-fill-2)', padding: '12px 14px', borderRadius: 6, marginBottom: 12 }}>
-        <Text style={{
-          fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all',
-          opacity: expired ? 0.4 : 1, userSelect: 'all',
-        }}>
-          {command}
-        </Text>
-        <div style={{ marginTop: 8 }}>
-          <Space>
-            <Button size="small" icon={<IconCopy />} disabled={expired} onClick={() => copy(command)}>复制</Button>
-            {expired && <Button size="small" type="primary" icon={<IconRefresh />} onClick={onRegenerate}>重新生成</Button>}
-          </Space>
-        </div>
-      </div>
+      <InstallCommandBlock
+        command={command}
+        disabled={expired}
+        onCopy={copy}
+        action={expired ? <Button size="small" type="primary" icon={<IconRefresh />} onClick={onRegenerate}>重新生成</Button> : undefined}
+      />
 
-      <div style={{ background: 'var(--color-fill-2)', padding: '12px 14px', borderRadius: 6, marginBottom: 12 }}>
-        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-          或固定下载到 /tmp 后执行：
-        </Text>
-        <Text style={{
-          fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all',
-          opacity: expired ? 0.4 : 1, userSelect: 'all',
-        }}>
-          {fallbackCommand}
-        </Text>
-        <div style={{ marginTop: 8 }}>
-          <Button size="small" icon={<IconCopy />} disabled={expired} onClick={() => copy(fallbackCommand)}>复制</Button>
-        </div>
-      </div>
-
-      {dockerComposeCmd && (
-        <div style={{ background: 'var(--color-fill-2)', padding: '12px 14px', borderRadius: 6, marginBottom: 12 }}>
-          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-            或使用 docker-compose：
-          </Text>
-          <Text style={{ fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all', opacity: expired ? 0.4 : 1 }}>
-            {dockerComposeCmd}
-          </Text>
-          <div style={{ marginTop: 8 }}>
-            <Button size="small" icon={<IconCopy />} disabled={expired} onClick={() => copy(dockerComposeCmd)}>复制</Button>
-          </div>
-        </div>
-      )}
+      <InstallCommandBlock label="或先下载到 /tmp 后执行：" command={fallbackCommand} disabled={expired} onCopy={copy} />
 
       {embeddedCommand && (
-        <div style={{ background: 'var(--color-fill-2)', padding: '12px 14px', borderRadius: 6, marginBottom: 12 }}>
-          <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>
-            代理异常时使用嵌入式备用命令：
-          </Text>
-          <Text style={{ fontFamily: 'monospace', fontSize: 13, wordBreak: 'break-all', userSelect: 'all' }}>
-            {embeddedCommand}
-          </Text>
-          <div style={{ marginTop: 8 }}>
-            <Button size="small" icon={<IconCopy />} onClick={() => copy(embeddedCommand)}>复制</Button>
-          </div>
-        </div>
+        <InstallCommandBlock label="安装入口不可达时使用嵌入式备用命令：" command={embeddedCommand} onCopy={copy} />
       )}
 
       <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
-        主安装命令包含公开 install token，会在 TTL 到期或首次消费后作废；嵌入式备用命令包含完整节点 token，不依赖公开链接消费状态，请仅在目标机执行并妥善保存。
+        主安装命令包含一次性 install token，会在 TTL 到期或首次消费后作废；嵌入式备用命令包含完整节点 Token，不依赖公开入口，请仅在目标机执行并妥善保存。
       </Text>
 
       <Collapse bordered={false} onChange={(_key, keys) => {

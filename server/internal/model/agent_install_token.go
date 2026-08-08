@@ -6,17 +6,21 @@ import "time"
 //
 // 生命周期：创建 → 消费（ConsumedAt 非空即作废）→ 超过 ExpiresAt 后被 GC 硬删除。
 type AgentInstallToken struct {
-	ID          uint       `gorm:"primaryKey" json:"id"`
-	Token       string     `gorm:"size:64;uniqueIndex;not null" json:"token"`
-	NodeID      uint       `gorm:"not null;index" json:"nodeId"`
-	Mode        string     `gorm:"size:16;not null" json:"mode"`        // systemd|docker|foreground
-	Arch        string     `gorm:"size:16;not null" json:"arch"`        // amd64|arm64|auto
-	AgentVer    string     `gorm:"size:32;not null" json:"agentVersion"`
-	DownloadSrc string     `gorm:"size:16;not null;default:'github'" json:"downloadSrc"`
-	ExpiresAt   time.Time  `gorm:"not null;index" json:"expiresAt"`
-	ConsumedAt  *time.Time `json:"consumedAt,omitempty"`
-	CreatedByID uint       `gorm:"not null" json:"createdById"`
-	CreatedAt   time.Time  `json:"createdAt"`
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	Token       string `gorm:"size:64;uniqueIndex;not null" json:"token"`
+	NodeID      uint   `gorm:"not null;index" json:"nodeId"`
+	Mode        string `gorm:"size:16;not null" json:"mode"` // systemd|docker|foreground
+	Arch        string `gorm:"size:16;not null" json:"arch"` // amd64|arm64|auto
+	AgentVer    string `gorm:"size:32;not null" json:"agentVersion"`
+	DownloadSrc string `gorm:"size:16;not null;default:'github'" json:"downloadSrc"`
+	// AgentMasterURL 可覆盖公开安装地址，支持代理或 SSH 隧道后的节点专用入口。
+	AgentMasterURL string     `gorm:"size:2048" json:"agentMasterUrl,omitempty"`
+	ProxyURL       string     `gorm:"size:2048" json:"proxyUrl,omitempty"`
+	CACertFile     string     `gorm:"size:512" json:"caCertFile,omitempty"`
+	ExpiresAt      time.Time  `gorm:"not null;index" json:"expiresAt"`
+	ConsumedAt     *time.Time `json:"consumedAt,omitempty"`
+	CreatedByID    uint       `gorm:"not null" json:"createdById"`
+	CreatedAt      time.Time  `json:"createdAt"`
 }
 
 func (AgentInstallToken) TableName() string { return "agent_install_tokens" }

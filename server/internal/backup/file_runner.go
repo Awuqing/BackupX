@@ -84,7 +84,7 @@ func (r *FileRunner) Run(_ context.Context, task TaskSpec, writer LogWriter) (*R
 
 		walkErr := filepath.Walk(sourcePath, func(currentPath string, currentInfo os.FileInfo, walkErr error) error {
 			if walkErr != nil {
-				writer.WriteLine(fmt.Sprintf("⚠ 无法访问 %s: %v", currentPath, walkErr))
+				writer.WriteLine(fmt.Sprintf("[WARN] 无法访问 %s: %v", currentPath, walkErr))
 				return nil
 			}
 			relPath, err := filepath.Rel(baseParent, currentPath)
@@ -115,7 +115,7 @@ func (r *FileRunner) Run(_ context.Context, task TaskSpec, writer LogWriter) (*R
 
 			if currentInfo.IsDir() {
 				dirCount++
-				writer.WriteLine(fmt.Sprintf("📁 进入目录 %s", archiveName))
+				writer.WriteLine(fmt.Sprintf("[DIR] 进入目录 %s", archiveName))
 			}
 
 			header, err := tar.FileInfoHeader(currentInfo, "")

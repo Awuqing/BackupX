@@ -104,16 +104,22 @@ func (h *InstallHandler) Compose(c *gin.Context) {
 	}
 	h.recordConsumeAudit(c, consumed, "compose")
 	yaml, err := installscript.RenderComposeYaml(installscript.Context{
-		MasterURL:    resolveMasterURL(c, h.externalURL),
+		MasterURL:    installMasterURL(resolveMasterURL(c, h.externalURL), consumed.Record),
 		AgentToken:   consumed.Node.Token,
 		AgentVersion: consumed.Record.AgentVer,
 		Mode:         model.InstallModeDocker,
+		Arch:         consumed.Record.Arch,
 		NodeID:       consumed.Node.ID,
+		ProxyURL:     consumed.Record.ProxyURL,
+		CACertFile:   consumed.Record.CACertFile,
 	})
 	if err != nil {
 		c.String(stdhttp.StatusInternalServerError, "render error\n")
 		return
 	}
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Cache-Control", "no-store")
+	c.Header("Content-Disposition", `attachment; filename="backupx-agent-compose.yml"`)
 	c.Data(stdhttp.StatusOK, "text/yaml; charset=utf-8", []byte(yaml))
 }
 
@@ -134,7 +140,7 @@ func (h *InstallHandler) recordConsumeAudit(c *gin.Context, consumed *service.Co
 
 func renderInstallScript(masterURL string, node *model.Node, record *model.AgentInstallToken) (string, error) {
 	return installscript.RenderScript(installscript.Context{
-		MasterURL:     masterURL,
+		MasterURL:     installMasterURL(masterURL, record),
 		AgentToken:    node.Token,
 		AgentVersion:  record.AgentVer,
 		Mode:          record.Mode,
@@ -142,7 +148,16 @@ func renderInstallScript(masterURL string, node *model.Node, record *model.Agent
 		DownloadBase:  installscript.DownloadBaseFor(record.DownloadSrc),
 		InstallPrefix: "/opt/backupx-agent",
 		NodeID:        node.ID,
+		ProxyURL:      record.ProxyURL,
+		CACertFile:    record.CACertFile,
 	})
+}
+
+func installMasterURL(fallback string, record *model.AgentInstallToken) string {
+	if record != nil && strings.TrimSpace(record.AgentMasterURL) != "" {
+		return strings.TrimRight(strings.TrimSpace(record.AgentMasterURL), "/")
+	}
+	return fallback
 }
 
 // resolveMasterURL 按优先级推导 Master URL：外部配置 > X-Forwarded-* > Request.Host。

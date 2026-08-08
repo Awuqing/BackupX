@@ -17,21 +17,32 @@ describe('install command builders', () => {
       'https://master.example.com/install/abc',
     )
 
-    expect(cmd).toContain('/tmp/bx-agent-install.sh')
+    expect(cmd).toContain('mktemp /tmp/bx-agent-install.XXXXXX')
     expect(cmd).toContain("'https://master.example.com/install/abc'")
     expect(cmd).toContain('non-script content')
+    expect(cmd).toContain('umask 077')
+    expect(cmd).toContain('rm -f "$tmp"')
   })
 
-  it('keeps URL install command as primary even when embedded script is available', () => {
+  it('keeps the one-time URL as the primary install command', () => {
     const cmd = buildAgentInstallCommand(
       'https://master.example.com/api/install/abc',
       'https://master.example.com/install/abc',
-      'IyEvYmluL3NoCg==',
     )
 
     expect(cmd).toContain('https://master.example.com/api/install/abc')
     expect(cmd).toContain('https://master.example.com/install/abc')
-    expect(cmd).not.toContain('IyEvYmluL3NoCg==')
+  })
+
+  it('binds proxy and private CA settings to installer downloads', () => {
+    const cmd = buildAgentInstallCommand(
+      'https://master.internal/api/install/abc',
+      undefined,
+      { proxyUrl: 'socks5h://127.0.0.1:1080', caCertFile: '/etc/backupx-agent/ca.pem' },
+    )
+
+    expect(cmd).toContain("--proxy 'socks5h://127.0.0.1:1080'")
+    expect(cmd).toContain("--cacert '/etc/backupx-agent/ca.pem'")
   })
 
   it('builds embedded fallback command explicitly', () => {
