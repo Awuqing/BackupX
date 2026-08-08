@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -22,23 +25,64 @@ type MasterClient struct {
 
 // NewMasterClient 构造 Master 客户端。
 func NewMasterClient(baseURL, token string, insecureTLS bool) *MasterClient {
-	transport := &http.Transport{}
-	if insecureTLS {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if transport.TLSClientConfig != nil {
+		tlsConfig = transport.TLSClientConfig.Clone()
+		tlsConfig.MinVersion = tls.VersionTLS12
 	}
+	// 仅用于用户显式开启的测试模式。生产环境应配置受信 CA。
+	tlsConfig.InsecureSkipVerify = insecureTLS // #nosec G402
+	transport.TLSClientConfig = tlsConfig
 	return &MasterClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		httpClient: &http.Client{
 			Timeout:   120 * time.Second,
 			Transport: transport,
+			// Agent Token 是自定义认证头。禁止自动重定向，避免代理或错误
+			// 配置把它转发到另一个主机；Master URL 必须直接指向 API。
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 }
 
+// ConfigureTransport 应用显式代理和私有 CA。默认 Transport 已保留
+// ProxyFromEnvironment，因此 ProxyURL 留空时 HTTP_PROXY/HTTPS_PROXY/NO_PROXY 生效。
+func (c *MasterClient) ConfigureTransport(proxyURL, caCertFile string) error {
+	transport, ok := c.httpClient.Transport.(*http.Transport)
+	if !ok {
+		return errors.New("agent http transport has unexpected type")
+	}
+	if strings.TrimSpace(proxyURL) != "" {
+		parsedProxy, err := url.Parse(strings.TrimSpace(proxyURL))
+		if err != nil {
+			return fmt.Errorf("parse proxy URL: %w", err)
+		}
+		transport.Proxy = http.ProxyURL(parsedProxy)
+	}
+	if strings.TrimSpace(caCertFile) == "" {
+		return nil
+	}
+	pemData, err := os.ReadFile(strings.TrimSpace(caCertFile))
+	if err != nil {
+		return fmt.Errorf("read CA certificate: %w", err)
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil || roots == nil {
+		roots = x509.NewCertPool()
+	}
+	if !roots.AppendCertsFromPEM(pemData) {
+		return errors.New("CA certificate file does not contain a valid PEM certificate")
+	}
+	transport.TLSClientConfig.RootCAs = roots
+	return nil
+}
+
 // HeartbeatRequest Agent 上报心跳的请求
 type HeartbeatRequest struct {
-	Token        string `json:"token"`
 	Hostname     string `json:"hostname,omitempty"`
 	IPAddress    string `json:"ipAddress,omitempty"`
 	AgentVersion string `json:"agentVersion,omitempty"`

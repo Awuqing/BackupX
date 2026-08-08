@@ -23,7 +23,7 @@ func NewAgentHandler(agentService *service.AgentService, nodeService *service.No
 	return &AgentHandler{agentService: agentService, nodeService: nodeService, restoreService: restoreService}
 }
 
-// extractToken 从请求头或 JSON body 中提取 Agent Token。
+// extractToken 从认证请求头中提取 Agent Token。
 func extractToken(c *gin.Context) string {
 	if t := strings.TrimSpace(c.GetHeader("X-Agent-Token")); t != "" {
 		return t
@@ -46,10 +46,10 @@ func (h *AgentHandler) Heartbeat(c *gin.Context) {
 		Arch         string `json:"arch"`
 	}
 	_ = c.ShouldBindJSON(&input)
-	// token 优先走 body（向后兼容），否则从 header 读
-	token := input.Token
+	// 新版 Agent 只通过请求头发送 Token；JSON body 仅保留旧版本兼容。
+	token := extractToken(c)
 	if token == "" {
-		token = extractToken(c)
+		token = input.Token
 	}
 	if token == "" {
 		c.JSON(stdhttp.StatusBadRequest, gin.H{"code": "INVALID_INPUT", "message": "missing token"})
@@ -72,7 +72,7 @@ func (h *AgentHandler) Heartbeat(c *gin.Context) {
 	})
 }
 
-// Poll Agent 长轮询获取下一条待执行命令。
+// Poll Agent 获取下一条待执行命令；Agent 按配置间隔主动轮询。
 // 无命令时返回 {command: null}。
 func (h *AgentHandler) Poll(c *gin.Context) {
 	node, err := h.agentService.AuthenticatedNode(c.Request.Context(), extractToken(c))
