@@ -1,27 +1,18 @@
 #!/bin/sh
-set -e
+set -eu
 
-if [ "${1:-}" = "agent" ]; then
-    exec /app/bin/backupx "$@"
+# 旧镜像曾以 root 写入数据卷。Master 启动时做一次所有权迁移，随后
+# 降权运行；Agent 模式由部署命令显式决定用户，以访问宿主机备份路径。
+if [ "$(id -u)" -eq 0 ] && [ "${1:-}" != "agent" ]; then
+    chown backupx:backupx /app/data /tmp/backupx
+    if [ ! -f /app/data/.backupx-owner-v2 ]; then
+        chown -R backupx:backupx /app/data
+        su-exec backupx:backupx touch /app/data/.backupx-owner-v2
+    fi
+    export HOME=/app
+    exec su-exec backupx:backupx /app/bin/backupx "$@"
 fi
 
-# Backend listens on internal port 8341, Nginx exposes 8340
-export BACKUPX_SERVER_PORT="${BACKUPX_SERVER_PORT_INTERNAL:-8341}"
-
-# Start Nginx in background
-nginx -g "daemon off;" &
-NGINX_PID=$!
-
-# Start BackupX backend
-/app/bin/backupx &
-APP_PID=$!
-
-# Trap signals for graceful shutdown
-trap 'kill $APP_PID $NGINX_PID 2>/dev/null; wait $APP_PID $NGINX_PID 2>/dev/null' SIGTERM SIGINT
-
-echo "BackupX started — Nginx :8340 -> Backend :8341"
-
-# Wait for either process to exit
-wait -n $APP_PID $NGINX_PID 2>/dev/null || true
-kill $APP_PID $NGINX_PID 2>/dev/null || true
-wait $APP_PID $NGINX_PID 2>/dev/null || true
+# Web 静态文件由 BackupX 后端直接托管。容器只运行一个前台进程，
+# 让 Docker 准确传递信号、收集退出码并执行健康检查。
+exec /app/bin/backupx "$@"
