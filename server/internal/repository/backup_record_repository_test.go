@@ -22,6 +22,11 @@ func newBackupRecordTestRepository(t *testing.T) *GormBackupRecordRepository {
 	if err != nil {
 		t.Fatalf("database.Open returned error: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("db.DB returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	storageTarget := &model.StorageTarget{Name: "local", Type: "local_disk", Enabled: true, ConfigCiphertext: "{}", ConfigVersion: 1, LastTestStatus: "unknown"}
 	if err := db.Create(storageTarget).Error; err != nil {
 		t.Fatalf("seed storage target error: %v", err)

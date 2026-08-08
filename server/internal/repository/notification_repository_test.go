@@ -21,6 +21,11 @@ func newNotificationTestRepository(t *testing.T) *GormNotificationRepository {
 	if err != nil {
 		t.Fatalf("database.Open returned error: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("db.DB returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	return NewNotificationRepository(db)
 }
 
