@@ -85,7 +85,7 @@ environment:
 
 镜像内部端口固定为 `8340`，只通过 `BACKUPX_PORT` 修改宿主机发布端口。
 
-## 升级与回退准备
+## 升级前提
 
 ```bash
 docker compose pull
@@ -94,3 +94,5 @@ docker compose ps
 ```
 
 等待状态变为 `healthy` 后再切换流量或移除旧部署。升级前应停止 Master 后做文件级复制，或对整个 `backupx-data` 卷创建原子快照。同一个数据卷必须只运行一个活动 Master；SQLite 不支持多个 Master 容器共享 `/app/data`。
+
+生产环境应使用发布标签或镜像摘要而不是 `latest`，并保留与旧版本匹配的升级前数据快照。完整的升级、回滚和灾难恢复流程见[升级与恢复](../operations/upgrade-recovery)。

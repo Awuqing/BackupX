@@ -68,8 +68,9 @@ sudo ./deploy/install.sh
 
 ```ini title="/etc/systemd/system/backupx.service"
 [Unit]
-Description=BackupX backup management service
-After=network.target
+Description=BackupX API Service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -99,6 +100,8 @@ curl -fsS http://127.0.0.1:8340/api/auth/setup/status
 访问 `http://your-server:8340`，可按需切换到 English，然后在“系统初始化 / System setup”页面创建首个管理员。若监听端口不是默认值，请为安装脚本传入对应的 `HEALTH_URL`。
 
 生产环境应通过 HTTPS 暴露 BackupX，或在防火墙限制 `8340` 端口。安装器不会自动修改防火墙。
+
+替换版本前，应在服务停止时同时快照 `/etc/backupx`、`/opt/backupx/data`、已安装二进制和前端文件。请按[升级与恢复](../operations/upgrade-recovery)中的版本化流程操作；让旧版本二进制直接读取已由新版本迁移的数据库并不是安全回滚。
 
 ## 密码重置
 

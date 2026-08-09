@@ -85,7 +85,7 @@ environment:
 
 The image's internal port is fixed at `8340`; change only the published host port with `BACKUPX_PORT`.
 
-## Upgrade and rollback preparation
+## Upgrade prerequisites
 
 ```bash
 docker compose pull
@@ -94,3 +94,5 @@ docker compose ps
 ```
 
 Wait for `healthy` before switching traffic or removing an old deployment. Before upgrades, stop the Master for a file-level copy or take an atomic snapshot of the entire `backupx-data` volume. Keep exactly one active Master for a data volume; SQLite does not support multiple Master containers sharing `/app/data`.
+
+Use a release tag or digest instead of `latest`, and keep the matching pre-upgrade data snapshot. The complete upgrade, rollback, and disaster-recovery procedure is in [Upgrade and Recovery](../operations/upgrade-recovery).

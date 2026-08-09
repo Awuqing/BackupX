@@ -72,6 +72,22 @@ func TestLoadReadsServerExternalURLFromEnv(t *testing.T) {
 	}
 }
 
+func TestLoadReadsSecuritySecretsFromEnv(t *testing.T) {
+	t.Setenv("BACKUPX_SECURITY_JWT_SECRET", "test-jwt-secret")
+	t.Setenv("BACKUPX_SECURITY_ENCRYPTION_KEY", "test-encryption-key")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("Load returned error: %v", err)
+	}
+	if cfg.Security.JWTSecret != "test-jwt-secret" {
+		t.Fatalf("expected JWT secret from env, got %q", cfg.Security.JWTSecret)
+	}
+	if cfg.Security.EncryptionKey != "test-encryption-key" {
+		t.Fatalf("expected encryption key from env, got %q", cfg.Security.EncryptionKey)
+	}
+}
+
 func TestLoadReadsTrustedProxiesFromEnv(t *testing.T) {
 	t.Setenv("BACKUPX_SERVER_TRUSTED_PROXIES", "127.0.0.1,172.18.0.0/16")
 	cfg, err := Load("")
