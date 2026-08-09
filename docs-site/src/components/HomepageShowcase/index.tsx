@@ -2,15 +2,18 @@ import type {ReactNode} from 'react';
 import {useState} from 'react';
 import clsx from 'clsx';
 import Heading from '@theme/Heading';
-import Translate from '@docusaurus/Translate';
+import Translate, {translate} from '@docusaurus/Translate';
 import useBaseUrl from '@docusaurus/useBaseUrl';
 import Link from '@docusaurus/Link';
+import DocIcon, {type DocIconName} from '@site/src/components/DocIcon';
 import styles from './styles.module.css';
 
 type Tab = {
   id: string;
   label: ReactNode;
+  icon: DocIconName;
   image: string;
+  imageAlt: string;
   title: ReactNode;
   description: ReactNode;
 };
@@ -20,7 +23,9 @@ function useTabs(): Tab[] {
     {
       id: 'dashboard',
       label: <Translate id="showcase.tab.dashboard">Dashboard</Translate>,
+      icon: 'monitor',
       image: useBaseUrl('/img/screenshots/dashboard.png'),
+      imageAlt: translate({id: 'showcase.dashboard.alt', message: 'BackupX dashboard showing backup health and storage usage'}),
       title: <Translate id="showcase.dashboard.title">Know at a glance</Translate>,
       description: (
         <Translate id="showcase.dashboard.desc">
@@ -31,7 +36,9 @@ function useTabs(): Tab[] {
     {
       id: 'tasks',
       label: <Translate id="showcase.tab.tasks">Backup Tasks</Translate>,
+      icon: 'database',
       image: useBaseUrl('/img/screenshots/backup-tasks.png'),
+      imageAlt: translate({id: 'showcase.tasks.alt', message: 'BackupX backup task management screen'}),
       title: <Translate id="showcase.tasks.title">Visual task editor</Translate>,
       description: (
         <Translate id="showcase.tasks.desc">
@@ -42,7 +49,9 @@ function useTabs(): Tab[] {
     {
       id: 'storage',
       label: <Translate id="showcase.tab.storage">Storage Targets</Translate>,
+      icon: 'storage',
       image: useBaseUrl('/img/screenshots/storage-targets.png'),
+      imageAlt: translate({id: 'showcase.storage.alt', message: 'BackupX storage target management screen'}),
       title: <Translate id="showcase.storage.title">70+ backends, one flow</Translate>,
       description: (
         <Translate id="showcase.storage.desc">
@@ -53,7 +62,9 @@ function useTabs(): Tab[] {
     {
       id: 'nodes',
       label: <Translate id="showcase.tab.nodes">Multi-Node</Translate>,
+      icon: 'network',
       image: useBaseUrl('/img/screenshots/nodes.png'),
+      imageAlt: translate({id: 'showcase.nodes.alt', message: 'BackupX remote node management screen'}),
       title: <Translate id="showcase.nodes.title">Master-Agent in minutes</Translate>,
       description: (
         <Translate id="showcase.nodes.desc">
@@ -72,45 +83,55 @@ export default function HomepageShowcase(): ReactNode {
     <section className={styles.section}>
       <div className="container">
         <div className={styles.sectionHead}>
-          <div className={styles.sectionTag}>
-            <Translate id="showcase.tag">PRODUCT</Translate>
+          <div>
+            <div className={styles.sectionTag}>
+              <Translate id="showcase.tag">Product interface</Translate>
+            </div>
+            <Heading as="h2" className={styles.sectionTitle}>
+              <Translate id="showcase.title">See the workflow before you deploy</Translate>
+            </Heading>
           </div>
-          <Heading as="h2" className={styles.sectionTitle}>
-            <Translate id="showcase.title">A polished console, not a DIY script</Translate>
-          </Heading>
           <p className={styles.sectionSubtitle}>
             <Translate id="showcase.subtitle">
-              Every screen designed for day-2 operations — visibility first, configuration second.
+              Screenshots stay connected to the guide that explains the underlying task, configuration, and operating model.
             </Translate>
           </p>
         </div>
-        <div className={styles.tabs}>
+        <div className={styles.tabs} role="tablist" aria-label={translate({id: 'showcase.tabs.label', message: 'BackupX product screens'})}>
           {tabs.map(tab => (
             <button
               key={tab.id}
+              id={`showcase-tab-${tab.id}`}
               type="button"
+              role="tab"
+              aria-selected={active === tab.id}
+              aria-controls="showcase-panel"
               className={clsx(styles.tabBtn, active === tab.id && styles.tabBtnActive)}
               onClick={() => setActive(tab.id)}>
+              <DocIcon name={tab.icon} size={17} />
               {tab.label}
             </button>
           ))}
         </div>
-        <div className={styles.stage}>
-          <div className={styles.browser}>
-            <div className={styles.browserBar}>
-              <span className={clsx(styles.browserDot, styles.browserDotRed)} />
-              <span className={clsx(styles.browserDot, styles.browserDotYellow)} />
-              <span className={clsx(styles.browserDot, styles.browserDotGreen)} />
-              <div className={styles.browserUrl}>backupx.local</div>
+        <div
+          id="showcase-panel"
+          role="tabpanel"
+          aria-labelledby={`showcase-tab-${current.id}`}
+          className={styles.stage}>
+          <div className={styles.preview}>
+            <div className={styles.previewBar}>
+              <span><DocIcon name="monitor" size={16} /><Translate id="showcase.preview.label">BackupX console</Translate></span>
+              <code>backupx.local</code>
             </div>
-            <img src={current.image} alt="" className={styles.screenshot} />
+            <img src={current.image} alt={current.imageAlt} className={styles.screenshot} />
           </div>
           <div className={styles.caption}>
+            <div className={styles.captionKicker}>{current.label}</div>
             <Heading as="h3" className={styles.captionTitle}>{current.title}</Heading>
             <p className={styles.captionDesc}>{current.description}</p>
             <Link to="/docs/getting-started/quick-start" className={styles.captionLink}>
               <Translate id="showcase.cta">Explore the docs</Translate>
-              <span aria-hidden="true"> -&gt;</span>
+              <DocIcon name="arrowRight" size={17} />
             </Link>
           </div>
         </div>

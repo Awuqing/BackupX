@@ -1,169 +1,171 @@
 .section {
-  padding: 5.5rem 0 4.25rem;
   background: var(--ifm-background-color);
+  padding: 5rem 0;
 }
 
 .sectionHead {
-  text-align: center;
-  max-width: 720px;
-  margin: 0 auto 3rem;
+  align-items: end;
+  display: grid;
+  gap: 3rem;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.7fr);
+  margin-bottom: 2.25rem;
 }
 
 .sectionTag {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  font-size: 12px;
-  font-weight: 750;
-  letter-spacing: 0;
   color: var(--ifm-color-primary);
-  padding: 4px 12px;
-  background: rgba(22, 93, 255, 0.08);
-  border: 1px solid rgba(22, 93, 255, 0.16);
-  border-radius: 8px;
-  margin-bottom: 1rem;
-}
-
-[data-theme='dark'] .sectionTag {
-  background: rgba(96, 126, 255, 0.18);
-  color: var(--ifm-color-primary-lighter);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  margin-bottom: 0.75rem;
+  text-transform: uppercase;
 }
 
 .sectionTitle {
-  font-size: 2.35rem;
-  line-height: 1.2;
-  letter-spacing: 0;
-  font-weight: 750;
-  margin: 0 0 1rem;
   color: var(--ifm-heading-color);
+  font-size: clamp(1.9rem, 4vw, 2.55rem);
+  font-weight: 500;
+  letter-spacing: -0.025em;
+  line-height: 1.18;
+  margin: 0;
+  max-width: 710px;
 }
 
 .sectionSubtitle {
-  font-size: 1.05rem;
-  line-height: 1.65;
   color: var(--ifm-color-content-secondary);
+  font-size: 1rem;
+  line-height: 1.7;
   margin: 0;
 }
 
-.grid {
+.pathGrid {
+  border: 1px solid var(--bx-border);
+  border-radius: 4px;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1.25rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  overflow: hidden;
+}
+
+.pathItem {
+  align-items: start;
+  border-bottom: 1px solid var(--bx-border);
+  color: inherit;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  min-height: 154px;
+  padding: 1.4rem;
+  text-decoration: none !important;
+}
+
+.pathItem:nth-child(odd) {
+  border-right: 1px solid var(--bx-border);
+}
+
+.pathItem:nth-last-child(-n + 2) {
+  border-bottom: 0;
+}
+
+.pathItem:hover,
+.pathItem:focus-visible {
+  background: var(--bx-surface-subtle);
+  color: inherit;
+}
+
+.pathIndex {
+  color: var(--ifm-color-content-secondary);
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 11px;
+  line-height: 38px;
+}
+
+.pathIcon {
+  align-items: center;
+  background: var(--bx-surface-selected);
+  border: 1px solid color-mix(in srgb, var(--ifm-color-primary) 25%, var(--bx-border));
+  border-radius: 3px;
+  color: var(--ifm-color-primary);
+  display: inline-flex;
+  height: 38px;
+  justify-content: center;
+  width: 38px;
+}
+
+.pathBody {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding-top: 7px;
+}
+
+.pathTitle {
+  color: var(--ifm-heading-color);
+  font-size: 1rem;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.pathDescription {
+  color: var(--ifm-color-content-secondary);
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.pathArrow {
+  color: var(--ifm-color-content-secondary);
+  margin-top: 10px;
+}
+
+.pathItem:hover .pathArrow,
+.pathItem:focus-visible .pathArrow {
+  color: var(--ifm-color-primary);
 }
 
 @media (max-width: 996px) {
   .section {
-    padding: 3.5rem 0 2rem;
+    padding: 4rem 0;
   }
-  .sectionTitle {
-    font-size: 2rem;
-  }
-  .grid {
+
+  .sectionHead {
+    align-items: start;
+    gap: 1rem;
     grid-template-columns: 1fr;
   }
 }
 
-@media (min-width: 997px) and (max-width: 1200px) {
-  .grid {
-    grid-template-columns: repeat(2, 1fr);
+@media (max-width: 760px) {
+  .pathGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .pathItem,
+  .pathItem:nth-child(odd),
+  .pathItem:nth-last-child(-n + 2) {
+    border-bottom: 1px solid var(--bx-border);
+    border-right: 0;
+  }
+
+  .pathItem:last-child {
+    border-bottom: 0;
   }
 }
 
-.featureCard,
-.featureCardLink {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  padding: 1.75rem;
-  background: var(--ifm-background-color);
-  border: 1px solid var(--ifm-color-emphasis-200);
-  border-radius: 8px;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
-  text-decoration: none !important;
-  color: inherit;
-  height: 100%;
-}
-
-.featureCardLink:hover {
-  transform: translateY(-2px);
-  border-color: var(--ifm-color-primary);
-  box-shadow: 0 12px 30px -8px rgba(22, 93, 255, 0.18);
-  color: inherit;
-}
-
-[data-theme='dark'] .featureCard,
-[data-theme='dark'] .featureCardLink {
-  background: rgba(255, 255, 255, 0.02);
-  border-color: rgba(255, 255, 255, 0.08);
-}
-
-[data-theme='dark'] .featureCardLink:hover {
-  background: rgba(64, 128, 255, 0.05);
-  border-color: var(--ifm-color-primary);
-  box-shadow: 0 12px 30px -8px rgba(64, 128, 255, 0.25);
-}
-
-.iconWrap {
-  width: 48px;
-  height: 48px;
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: linear-gradient(135deg, rgba(22, 93, 255, 0.1) 0%, rgba(20, 201, 201, 0.12) 100%);
-  color: var(--ifm-color-primary);
-  margin-bottom: 1.25rem;
-}
-
-[data-theme='dark'] .iconWrap {
-  background: linear-gradient(135deg, rgba(96, 126, 255, 0.15) 0%, rgba(20, 201, 201, 0.12) 100%);
-  color: var(--ifm-color-primary-lighter);
-}
-
-.featureTitle {
-  font-size: 1.15rem;
-  font-weight: 700;
-  margin: 0 0 0.6rem;
-  color: var(--ifm-heading-color);
-  letter-spacing: 0;
-}
-
-.featureDesc {
-  font-size: 0.95rem;
-  line-height: 1.65;
-  color: var(--ifm-color-content-secondary);
-  margin: 0;
-  flex: 1;
-}
-
-.featureLink {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 1rem;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--ifm-color-primary);
-}
-
-.featureArrow {
-  transition: transform 0.2s ease;
-}
-
-.featureCardLink:hover .featureArrow {
-  transform: translateX(4px);
-}
-
-@media (max-width: 640px) {
-  .sectionTitle {
-    font-size: 1.75rem;
+@media (max-width: 520px) {
+  .section {
+    padding: 3.25rem 0;
   }
-}
 
-@media (prefers-reduced-motion: reduce) {
-  .featureCard,
-  .featureCardLink,
-  .featureArrow {
-    transition: none;
+  .pathItem {
+    gap: 10px;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    min-height: 0;
+    padding: 1rem;
+  }
+
+  .pathIndex {
+    display: none;
+  }
+
+  .pathBody {
+    padding-top: 6px;
   }
 }

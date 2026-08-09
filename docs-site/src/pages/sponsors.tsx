@@ -18,15 +18,17 @@ export default function Sponsors(): ReactNode {
         <section className={styles.section}>
           <div className="container">
             <div className={styles.sectionHead}>
-              <div className={styles.sectionTag}>
-                <Translate id="sponsors.tag">SPONSORS</Translate>
+              <div>
+                <div className={styles.sectionTag}>
+                  <Translate id="sponsors.tag">Sponsorship</Translate>
+                </div>
+                <Heading as="h1" className={styles.sectionTitle}>
+                  <Translate id="sponsors.title">Keep critical maintenance moving</Translate>
+                </Heading>
               </div>
-              <Heading as="h1" className={styles.sectionTitle}>
-                <Translate id="sponsors.title">Sponsor the BackupX ecosystem</Translate>
-              </Heading>
               <p className={styles.sectionSubtitle}>
                 <Translate id="sponsors.subtitle">
-                  Sponsorship helps keep BackupX practical for real operators: tested storage providers, reliable releases, restore confidence and better documentation.
+                  Sponsorship funds real provider validation, reliable releases, recovery drills, and better operational documentation.
                 </Translate>
               </p>
             </div>
