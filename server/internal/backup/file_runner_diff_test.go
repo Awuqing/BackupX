@@ -160,7 +160,7 @@ func TestFileRunnerSelectiveRestore(t *testing.T) {
 	}
 	diffAssertContent(t, filepath.Join(restoreSrc, "a.txt"), "alpha")
 	diffAssertContent(t, filepath.Join(restoreSrc, "sub", "c.txt"), "charlie") // 选中目录 → 子项一并恢复
-	diffAssertAbsent(t, filepath.Join(restoreSrc, "b.txt"))                     // 未选中 → 不恢复
+	diffAssertAbsent(t, filepath.Join(restoreSrc, "b.txt"))                    // 未选中 → 不恢复
 }
 
 // TestFileRunnerDifferentialWithoutBaseIsFull 验证无基线时差异请求回退为全量（产出清单、含全部文件）。

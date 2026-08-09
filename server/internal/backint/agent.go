@@ -357,4 +357,3 @@ func buildStorageRegistry() *storage.Registry {
 	storageRclone.RegisterAllBackends(registry)
 	return registry
 }
-

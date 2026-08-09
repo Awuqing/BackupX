@@ -126,14 +126,14 @@ func (s *DashboardService) Timeline(ctx context.Context, days int) ([]repository
 // 判定规则：任务设置了 SLAHoursRPO > 0，且距最近一次 success 备份的时间 > SLAHoursRPO。
 // 从未成功过的任务（LastSuccessAt = nil）若启用也视为违约（from createdAt 起算）。
 type SLAViolation struct {
-	TaskID                 uint       `json:"taskId"`
-	TaskName               string     `json:"taskName"`
-	NodeID                 uint       `json:"nodeId"`
-	NodeName               string     `json:"nodeName,omitempty"`
-	SLAHoursRPO            int        `json:"slaHoursRpo"`
-	LastSuccessAt          *time.Time `json:"lastSuccessAt,omitempty"`
-	HoursSinceLastSuccess  float64    `json:"hoursSinceLastSuccess"`
-	NeverSucceeded         bool       `json:"neverSucceeded"`
+	TaskID                uint       `json:"taskId"`
+	TaskName              string     `json:"taskName"`
+	NodeID                uint       `json:"nodeId"`
+	NodeName              string     `json:"nodeName,omitempty"`
+	SLAHoursRPO           int        `json:"slaHoursRpo"`
+	LastSuccessAt         *time.Time `json:"lastSuccessAt,omitempty"`
+	HoursSinceLastSuccess float64    `json:"hoursSinceLastSuccess"`
+	NeverSucceeded        bool       `json:"neverSucceeded"`
 }
 
 // SLAComplianceReport Dashboard 的 SLA 合规概览。
@@ -204,15 +204,15 @@ func roundHours(value float64) float64 {
 
 // ClusterNodeSummary 集群节点简报（Dashboard 用）。
 type ClusterNodeSummary struct {
-	ID             uint      `json:"id"`
-	Name           string    `json:"name"`
-	Hostname       string    `json:"hostname"`
-	Status         string    `json:"status"`
-	IsLocal        bool      `json:"isLocal"`
-	AgentVersion   string    `json:"agentVersion"`
-	VersionStatus  string    `json:"versionStatus"` // current | outdated | unknown
-	LastSeen       time.Time `json:"lastSeen"`
-	TaskCount      int64     `json:"taskCount"`
+	ID            uint      `json:"id"`
+	Name          string    `json:"name"`
+	Hostname      string    `json:"hostname"`
+	Status        string    `json:"status"`
+	IsLocal       bool      `json:"isLocal"`
+	AgentVersion  string    `json:"agentVersion"`
+	VersionStatus string    `json:"versionStatus"` // current | outdated | unknown
+	LastSeen      time.Time `json:"lastSeen"`
+	TaskCount     int64     `json:"taskCount"`
 }
 
 // ClusterOverview Dashboard 集群概览卡片。
@@ -312,9 +312,9 @@ func (s *DashboardService) Breakdown(ctx context.Context, days int) (*BreakdownS
 		}
 	}
 	result := &BreakdownStats{
-		ByType:   makeBreakdown(typeCounts, typeLabel),
-		ByNode:   makeBreakdownByUint(nodeCounts, nodeNames, "节点 #"),
-		ByStatus: []BreakdownItem{},
+		ByType:    makeBreakdown(typeCounts, typeLabel),
+		ByNode:    makeBreakdownByUint(nodeCounts, nodeNames, "节点 #"),
+		ByStatus:  []BreakdownItem{},
 		ByStorage: []BreakdownItem{},
 	}
 	// 按状态（最近 days 天记录）

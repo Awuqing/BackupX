@@ -74,11 +74,11 @@ func (s *SystemService) CheckUpdate(ctx context.Context) (*UpdateCheckResult, er
 	}
 
 	var release struct {
-		TagName    string `json:"tag_name"`
-		HTMLURL    string `json:"html_url"`
-		Body       string `json:"body"`
-		Published  string `json:"published_at"`
-		Assets     []struct {
+		TagName   string `json:"tag_name"`
+		HTMLURL   string `json:"html_url"`
+		Body      string `json:"body"`
+		Published string `json:"published_at"`
+		Assets    []struct {
 			Name               string `json:"name"`
 			BrowserDownloadURL string `json:"browser_download_url"`
 		} `json:"assets"`
@@ -132,4 +132,3 @@ func (s *SystemService) GetInfo(_ context.Context) *SystemInfo {
 	}
 	return info
 }
-

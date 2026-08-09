@@ -32,8 +32,8 @@ func writeTestTar(t *testing.T, entries map[string][]byte) string {
 
 func TestVerifyTarArchive_Valid(t *testing.T) {
 	path := writeTestTar(t, map[string][]byte{
-		"readme.md":  []byte("hello"),
-		"data.bin":   []byte("world!!!"),
+		"readme.md": []byte("hello"),
+		"data.bin":  []byte("world!!!"),
 	})
 	report, err := VerifyTarArchive(path, "")
 	if err != nil {

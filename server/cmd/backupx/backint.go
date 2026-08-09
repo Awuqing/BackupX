@@ -95,4 +95,3 @@ func redirectStderr(path string) (func(), error) {
 		_ = f.Close()
 	}, nil
 }
-
