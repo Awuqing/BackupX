@@ -2,18 +2,24 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
+  workflow_dispatch:
 
 # 最小权限：构建/测试仅需读取仓库内容，显式声明以收敛默认的可写令牌。
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     name: Go Build & Test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +28,23 @@ jobs:
         with:
           go-version: '1.25'
           cache-dependency-path: server/go.sum
+
+      - name: Verify modules
+        working-directory: server
+        run: go mod verify
+
+      - name: Check formatting
+        working-directory: server
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+
+      - name: Vet
+        working-directory: server
+        run: go vet ./...
 
       - name: Build
         working-directory: server
@@ -34,13 +57,14 @@ jobs:
   frontend:
     name: React Build & Test
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
@@ -48,14 +72,10 @@ jobs:
         working-directory: web
         run: npm ci
 
-      - name: Type Check
-        working-directory: web
-        run: npx tsc --noEmit -p tsconfig.json
-
       - name: Test
         working-directory: web
         run: npm run test
 
-      - name: Build
+      - name: Type Check & Build
         working-directory: web
         run: npm run build

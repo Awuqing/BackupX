@@ -6,7 +6,7 @@ description: Get a BackupX dev environment running — backend, frontend, tests.
 
 # Development Setup
 
-**Requirements:** Go ≥ 1.25, Node.js ≥ 20, npm.
+**Requirements:** Go ≥ 1.25, Node.js 24 LTS, npm 11 or later.
 
 ## Clone & install
 

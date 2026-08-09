@@ -29,6 +29,5 @@
     "src/pages/login/page.tsx",
     "src/pages/system-info/page.tsx",
     "src/stores/auth.test.ts"
-  ],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  ]
 }

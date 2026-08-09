@@ -1,5 +1,5 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 💬 讨论区 / Discussions
-    url: https://github.com/Awuqing/GoogleDriverBackupEveryDay/discussions
-    about: 提问、讨论功能想法或分享使用经验
+  - name: 安全漏洞 / Security vulnerability
+    url: https://github.com/Awuqing/BackupX/security/advisories/new
+    about: 请通过私密渠道报告安全问题，不要创建公开 Issue。

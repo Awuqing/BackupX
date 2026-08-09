@@ -51,7 +51,7 @@ sudo ./install.sh        # 创建系统用户、安装到 /opt/backupx、配置 
 
 ## 从源码构建
 
-依赖：Go ≥ 1.25，Node.js ≥ 20。
+依赖：Go ≥ 1.25、Node.js 24 LTS、npm 11 或更高版本。
 
 ```bash
 git clone https://github.com/Awuqing/BackupX.git && cd BackupX
