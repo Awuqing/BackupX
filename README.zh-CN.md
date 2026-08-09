@@ -49,35 +49,56 @@
 | **可观测性** | Prometheus `/metrics` 端点 + `/health` + `/ready` 探针 + SLA 违约监控 |
 | **审计外输** | HMAC-SHA256 签名 Webhook，对接 SIEM / WORM 存储满足 SOC2 / GDPR 合规 |
 | **流控** | 节点级带宽限速 + 节点级并发控制，大小节点分别配置，避免小内存 Agent 被挤爆 |
-| **部署** | 单二进制 + 内嵌 SQLite，Docker 一键启动，零外部依赖 |
+| **部署** | 单二进制 + 内嵌 SQLite，无需外部控制面数据库（数据库备份工具需安装在任务执行主机） |
 
 ## 快速开始
 
+Docker Compose（推荐）：
+
 ```bash
-# Docker（推荐）
-docker run -d --name backupx -p 8340:8340 -v backupx-data:/app/data awuqing/backupx:latest
+git clone --depth 1 https://github.com/Awuqing/BackupX.git
+cd BackupX
+docker compose up -d
+```
 
-# 或使用预编译包
+预编译包：
+
+```bash
 curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-linux-amd64.tar.gz
-tar xzf backupx-*.tar.gz && cd backupx-* && sudo ./install.sh
+curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-linux-amd64.tar.gz.sha256
+sha256sum -c backupx-linux-amd64.tar.gz.sha256
+tar xzf backupx-linux-amd64.tar.gz
+cd backupx-*-linux-amd64
+sudo ./install.sh
+```
 
-# 或从源码构建并裸机安装（无需 Docker）
-git clone https://github.com/Awuqing/BackupX.git && cd BackupX
-make build && sudo ./deploy/install.sh
+从源码构建并裸机安装：
+
+```bash
+git clone https://github.com/Awuqing/BackupX.git
+cd BackupX
+make build
+sudo ./deploy/install.sh
 ```
 
 ARM64 主机请下载 `backupx-linux-arm64.tar.gz`。预编译包内包含 `backupx`、`web/`、`config.example.yaml` 和 `install.sh`，请在解压后的目录内执行 `install.sh`。
+
+Compose 快速开始为便于体验默认使用 `latest`。生产环境应把 `BACKUPX_IMAGE` 固定到 Release 标签或摘要，并先阅读安全与恢复指南。
 
 打开 `http://your-server:8340`，在初始化页选择中文或 English 并创建首个管理员账户，按 [5 分钟快速开始](https://awuqing.github.io/BackupX/zh-Hans/docs/getting-started/quick-start) 完成首次备份。
 
 ## 文档
 
-完整文档见 **https://awuqing.github.io/BackupX/zh-Hans/** — 快速开始、部署、SAP HANA、多节点集群、API 参考等。
+完整文档见 **https://awuqing.github.io/BackupX/zh-Hans/** — 快速开始、部署、运维、SAP HANA、多节点集群、API 参考等。
 
 快捷链接：
 
 - [快速开始](https://awuqing.github.io/BackupX/zh-Hans/docs/getting-started/quick-start) — 五分钟跑通第一个备份
 - [安装](https://awuqing.github.io/BackupX/zh-Hans/docs/getting-started/installation) — Docker / 裸机 / 源码
+- [升级与恢复](https://awuqing.github.io/BackupX/zh-Hans/docs/operations/upgrade-recovery) — 快照、升级、回滚与灾难恢复
+- [安全加固](https://awuqing.github.io/BackupX/zh-Hans/docs/operations/security) — 生产暴露、角色与密钥
+- [监控与告警](https://awuqing.github.io/BackupX/zh-Hans/docs/operations/monitoring) — 探针、指标与初始告警
+- [故障排查](https://awuqing.github.io/BackupX/zh-Hans/docs/operations/troubleshooting) — Master、代理、Agent 与任务诊断
 - [多节点集群](https://awuqing.github.io/BackupX/zh-Hans/docs/features/multi-node) — 远程服务器部署 Agent
 - [SAP HANA 支持](https://awuqing.github.io/BackupX/zh-Hans/docs/features/sap-hana) — hdbsql Runner 与原生 Backint
 - [API 参考](https://awuqing.github.io/BackupX/zh-Hans/docs/reference/api) — REST 端点

@@ -68,8 +68,9 @@ The installed unit:
 
 ```ini title="/etc/systemd/system/backupx.service"
 [Unit]
-Description=BackupX backup management service
-After=network.target
+Description=BackupX API Service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -99,6 +100,8 @@ curl -fsS http://127.0.0.1:8340/api/auth/setup/status
 Open `http://your-server:8340`, switch to English if desired, and create the first administrator on the **System setup** screen. For a custom listen port, run the installer with a matching `HEALTH_URL`.
 
 For production, expose BackupX through HTTPS or restrict port `8340` at the firewall. The installer does not make firewall changes.
+
+Before replacing a release, snapshot `/etc/backupx`, `/opt/backupx/data`, the installed binary, and web assets while the service is stopped. Follow the versioned procedure in [Upgrade and Recovery](../operations/upgrade-recovery); running an older binary against a database already migrated by a newer release is not a safe rollback.
 
 ## Password reset
 

@@ -10,38 +10,25 @@ BackupX ships as a single static binary. Three ways to install, pick the one tha
 
 ## Docker (recommended)
 
-No cloning required.
+Download the canonical hardened Compose file and start the service:
 
 ```bash
-docker run -d --name backupx \
-  -p 8340:8340 \
-  -v backupx-data:/app/data \
-  awuqing/backupx:latest
+curl -fLO https://raw.githubusercontent.com/Awuqing/BackupX/main/docker-compose.yml
+docker compose up -d
+docker compose ps
 ```
 
-Or use `docker compose`:
+The Compose definition enables init and graceful shutdown, persists `/app/data`, runs the application as an unprivileged user, drops unnecessary capabilities, and checks `/ready`. Images at [`awuqing/backupx`](https://hub.docker.com/r/awuqing/backupx) support `linux/amd64` and `linux/arm64`.
 
-```yaml title="docker-compose.yml"
-services:
-  backupx:
-    image: awuqing/backupx:latest
-    container_name: backupx
-    restart: unless-stopped
-    ports:
-      - "8340:8340"
-    volumes:
-      - backupx-data:/app/data
-      # Mount host directories to back up (as needed):
-      # - /var/www:/mnt/www:ro
-      # - /etc/nginx:/mnt/nginx-conf:ro
-    environment:
-      - TZ=Asia/Shanghai
+For production, create a protected `.env` and pin a release instead of relying on `latest`:
 
-volumes:
-  backupx-data:
+```dotenv
+BACKUPX_IMAGE=awuqing/backupx:vX.Y.Z
+BACKUPX_BIND_ADDRESS=127.0.0.1
+TZ=Asia/Shanghai
 ```
 
-Images: [`awuqing/backupx`](https://hub.docker.com/r/awuqing/backupx) — supports `linux/amd64` and `linux/arm64`.
+Use the loopback binding when a reverse proxy runs on the same host. For direct access, choose the intended interface and enforce a firewall. Mount host backup sources read-only or deploy an Agent on the source host. See [Docker Deployment](../deployment/docker) for the full configuration.
 
 ## Prebuilt archive (bare metal)
 

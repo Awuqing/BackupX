@@ -10,38 +10,25 @@ BackupX 以单个静态二进制发布。三种安装方式，按实际环境选
 
 ## Docker（推荐）
 
-无需克隆仓库：
+下载仓库中的正式加固 Compose 文件并启动：
 
 ```bash
-docker run -d --name backupx \
-  -p 8340:8340 \
-  -v backupx-data:/app/data \
-  awuqing/backupx:latest
+curl -fLO https://raw.githubusercontent.com/Awuqing/BackupX/main/docker-compose.yml
+docker compose up -d
+docker compose ps
 ```
 
-或使用 `docker compose`：
+该 Compose 配置启用 init 与优雅停止，持久化 `/app/data`，以非特权用户运行应用，删除不必要能力，并通过 `/ready` 检查健康。[`awuqing/backupx`](https://hub.docker.com/r/awuqing/backupx) 镜像支持 `linux/amd64` 和 `linux/arm64`。
 
-```yaml title="docker-compose.yml"
-services:
-  backupx:
-    image: awuqing/backupx:latest
-    container_name: backupx
-    restart: unless-stopped
-    ports:
-      - "8340:8340"
-    volumes:
-      - backupx-data:/app/data
-      # 挂载需要备份的宿主机目录（按需添加）：
-      # - /var/www:/mnt/www:ro
-      # - /etc/nginx:/mnt/nginx-conf:ro
-    environment:
-      - TZ=Asia/Shanghai
+生产环境应创建受保护的 `.env`，固定 Release 而不是依赖 `latest`：
 
-volumes:
-  backupx-data:
+```dotenv
+BACKUPX_IMAGE=awuqing/backupx:vX.Y.Z
+BACKUPX_BIND_ADDRESS=127.0.0.1
+TZ=Asia/Shanghai
 ```
 
-Docker Hub：[`awuqing/backupx`](https://hub.docker.com/r/awuqing/backupx)，支持 linux/amd64 和 linux/arm64。
+反向代理位于同一主机时使用回环绑定；需要直接访问时，应选择明确的监听接口并配置防火墙。宿主机备份源应只读挂载，或在源主机部署 Agent。完整配置见 [Docker 部署](../deployment/docker)。
 
 ## 预编译包（裸机）
 

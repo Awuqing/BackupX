@@ -35,6 +35,8 @@ Tasks routed to the local Master run in-process; tasks assigned to remote nodes 
 
 - **New to BackupX?** Read the [Quick Start](/docs/getting-started/quick-start) first.
 - **Deploying to production?** See the [Deployment Guide](/docs/deployment/docker).
+- **Planning upgrades or recovery?** Follow [Upgrade and Recovery](/docs/operations/upgrade-recovery).
+- **Operating production?** Start with [Security Hardening](/docs/operations/security) and [Monitoring and Alerts](/docs/operations/monitoring).
 - **SAP HANA operator?** Both `hdbsql` Runner and native Backint are supported — see [SAP HANA](/docs/features/sap-hana).
 - **Managing multiple servers?** See [Multi-Node Cluster](/docs/features/multi-node).
 - **Integrating programmatically?** See the [API Reference](/docs/reference/api).

@@ -21,10 +21,10 @@ const config: Config = {
   deploymentBranch: 'gh-pages',
   trailingSlash: false,
 
-  onBrokenLinks: 'warn',
+  onBrokenLinks: 'throw',
   markdown: {
     hooks: {
-      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownLinks: 'throw',
     },
   },
 
@@ -33,7 +33,10 @@ const config: Config = {
     locales: ['en', 'zh-Hans'],
     localeConfigs: {
       en: {label: 'English', direction: 'ltr', htmlLang: 'en-US'},
-      'zh-Hans': {label: '简体中文', direction: 'ltr', htmlLang: 'zh-CN'},
+      // Keep the published /zh-Hans/ URL while loading the existing zh-CN
+      // translation tree. Without path, Docusaurus silently falls back to the
+      // English documents because i18n/zh-Hans does not exist.
+      'zh-Hans': {label: '简体中文', direction: 'ltr', htmlLang: 'zh-CN', path: 'zh-CN'},
     },
   },
 
@@ -44,6 +47,7 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/Awuqing/BackupX/edit/main/docs-site/',
+          editLocalizedFiles: true,
         },
         blog: false,
         theme: {
@@ -105,7 +109,7 @@ const config: Config = {
           items: [
             {label: 'Introduction', to: '/docs/intro'},
             {label: 'Quick Start', to: '/docs/getting-started/quick-start'},
-            {label: 'Installation', to: '/docs/getting-started/installation'},
+            {label: 'Upgrade & Recovery', to: '/docs/operations/upgrade-recovery'},
           ],
         },
         {
