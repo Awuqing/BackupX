@@ -27,25 +27,85 @@ on:
         type: string
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 # 统一版本号：tag 推送取 ref_name，手动触发取 inputs.version
 env:
   VERSION: ${{ github.event.inputs.version || github.ref_name }}
 
+concurrency:
+  group: release-${{ github.ref }}-${{ github.event.inputs.version || 'tag' }}
+  cancel-in-progress: false
+
 jobs:
+  # ─── Job 0: 校验版本与测试 ───
+  verify:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate release input
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ env.VERSION }}
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          if [[ ! "$RELEASE_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "Version must be a SemVer tag such as v1.2.3 or v1.2.3-rc.1"
+            exit 1
+          fi
+          if [[ "$RELEASE_EVENT" == "workflow_dispatch" && "$RELEASE_REF" != "refs/heads/main" ]]; then
+            echo "Manual releases must run from the main branch"
+            exit 1
+          fi
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache-dependency-path: server/go.sum
+
+      - name: Verify backend
+        working-directory: server
+        run: |
+          go mod verify
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            printf '%s\n' "$unformatted"
+            exit 1
+          fi
+          go vet ./...
+          go test ./...
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Verify frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run test
+
   # ─── Job 1: 构建前端 ───
   build-web:
     name: Build Frontend
+    needs: verify
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: web/package-lock.json
 
@@ -67,6 +127,9 @@ jobs:
     name: Build ${{ matrix.goarch }}
     needs: build-web
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
@@ -98,13 +161,13 @@ jobs:
         run: |
           go build \
             -trimpath \
-            -ldflags "-s -w -X main.version=${{ env.VERSION }}" \
+            -ldflags "-s -w -X main.version=${VERSION}" \
             -o ../backupx \
             ./cmd/backupx
 
       - name: Package release
         run: |
-          ARCHIVE_NAME="backupx-${{ env.VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}"
+          ARCHIVE_NAME="backupx-${VERSION}-${{ matrix.goos }}-${{ matrix.goarch }}"
           mkdir -p "${ARCHIVE_NAME}"
           cp backupx "${ARCHIVE_NAME}/"
           cp -r web/dist "${ARCHIVE_NAME}/web"
@@ -130,6 +193,7 @@ jobs:
             backupx-${{ env.VERSION }}-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
             backupx-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz
             backupx-${{ matrix.goos }}-${{ matrix.goarch }}.tar.gz.sha256
+          fail_on_unmatched_files: true
           generate_release_notes: true
 
   # ─── Job 3: Docker 多架构 → Docker Hub ───
@@ -137,6 +201,7 @@ jobs:
     name: Build & Push Docker
     needs: build-web
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 

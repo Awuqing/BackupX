@@ -51,7 +51,7 @@ The installer:
 
 ## From source
 
-Requires Go ≥ 1.25 and Node.js ≥ 20.
+Requires Go ≥ 1.25, Node.js 24 LTS, and npm 11 or later.
 
 ```bash
 git clone https://github.com/Awuqing/BackupX.git && cd BackupX

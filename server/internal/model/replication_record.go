@@ -24,19 +24,19 @@ type ReplicationRecord struct {
 	SourceTargetID uint          `gorm:"column:source_target_id;index;not null" json:"sourceTargetId"`
 	SourceTarget   StorageTarget `gorm:"foreignKey:SourceTargetID;references:ID" json:"sourceTarget,omitempty"`
 	// DestTargetID 目标存储（复制过去）
-	DestTargetID uint          `gorm:"column:dest_target_id;index;not null" json:"destTargetId"`
-	DestTarget   StorageTarget `gorm:"foreignKey:DestTargetID;references:ID" json:"destTarget,omitempty"`
-	Status       string        `gorm:"size:20;index;not null" json:"status"`
-	StoragePath  string        `gorm:"column:storage_path;size:500" json:"storagePath"`
-	FileSize     int64         `gorm:"column:file_size;not null;default:0" json:"fileSize"`
-	Checksum     string        `gorm:"column:checksum;size:64" json:"checksum"`
-	ErrorMessage string        `gorm:"column:error_message;size:2000" json:"errorMessage"`
-	DurationSeconds int        `gorm:"column:duration_seconds;not null;default:0" json:"durationSeconds"`
-	TriggeredBy  string        `gorm:"column:triggered_by;size:100" json:"triggeredBy"`
-	StartedAt    time.Time     `gorm:"column:started_at;index;not null" json:"startedAt"`
-	CompletedAt  *time.Time    `gorm:"column:completed_at;index" json:"completedAt,omitempty"`
-	CreatedAt    time.Time     `json:"createdAt"`
-	UpdatedAt    time.Time     `json:"updatedAt"`
+	DestTargetID    uint          `gorm:"column:dest_target_id;index;not null" json:"destTargetId"`
+	DestTarget      StorageTarget `gorm:"foreignKey:DestTargetID;references:ID" json:"destTarget,omitempty"`
+	Status          string        `gorm:"size:20;index;not null" json:"status"`
+	StoragePath     string        `gorm:"column:storage_path;size:500" json:"storagePath"`
+	FileSize        int64         `gorm:"column:file_size;not null;default:0" json:"fileSize"`
+	Checksum        string        `gorm:"column:checksum;size:64" json:"checksum"`
+	ErrorMessage    string        `gorm:"column:error_message;size:2000" json:"errorMessage"`
+	DurationSeconds int           `gorm:"column:duration_seconds;not null;default:0" json:"durationSeconds"`
+	TriggeredBy     string        `gorm:"column:triggered_by;size:100" json:"triggeredBy"`
+	StartedAt       time.Time     `gorm:"column:started_at;index;not null" json:"startedAt"`
+	CompletedAt     *time.Time    `gorm:"column:completed_at;index" json:"completedAt,omitempty"`
+	CreatedAt       time.Time     `json:"createdAt"`
+	UpdatedAt       time.Time     `json:"updatedAt"`
 }
 
 func (ReplicationRecord) TableName() string {

@@ -1,4 +1,38 @@
+# Dependencies
 web/node_modules/
+docs-site/node_modules/
+
+# Build and test artifacts
 web/dist/
+docs-site/build/
+docs-site/.docusaurus/
 server/bin/
+coverage/
+*.out
+*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+
+# Runtime data and local configuration
+data/
+tmp/
+temp/
+*.db
+*.db-shm
+*.db-wal
+*.log
+.env
+.env.*
+!.env*.example
+
+# Editors, operating systems, and local tools
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
 .claude/
+.codex/

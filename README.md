@@ -10,6 +10,8 @@
   <p align="center">
     <a href="https://github.com/Awuqing/BackupX/stargazers"><img src="https://img.shields.io/github/stars/Awuqing/BackupX?style=flat-square&color=f5c542" alt="Stars"></a>
     <a href="https://github.com/Awuqing/BackupX/releases"><img src="https://img.shields.io/github/v/release/Awuqing/BackupX?style=flat-square&color=brightgreen" alt="Release"></a>
+    <a href="https://github.com/Awuqing/BackupX/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Awuqing/BackupX/ci.yml?branch=main&style=flat-square" alt="CI"></a>
+    <a href="https://github.com/Awuqing/BackupX/actions/workflows/docs.yml"><img src="https://img.shields.io/github/actions/workflow/status/Awuqing/BackupX/docs.yml?branch=main&style=flat-square&label=docs" alt="Docs"></a>
     <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go" alt="Go">
     <img src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react" alt="React">
     <img src="https://img.shields.io/badge/SQLite-embedded-003B57?style=flat-square&logo=sqlite" alt="SQLite">

@@ -6,7 +6,7 @@ description: 搭建 BackupX 本地开发环境 — 后端、前端、测试。
 
 # 开发环境
 
-**环境要求：** Go ≥ 1.25，Node.js ≥ 20，npm。
+**环境要求：** Go ≥ 1.25、Node.js 24 LTS、npm 11 或更高版本。
 
 ## 克隆与依赖
 

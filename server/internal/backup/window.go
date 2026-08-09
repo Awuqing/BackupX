@@ -24,10 +24,11 @@ type MaintenanceWindow struct {
 // 简化语法：多个窗口以 ';' 分隔，每个窗口按 "[days=xxx;]time=HH:MM-HH:MM" 格式。
 // Days 缺省 = 全周；若不合法，跳过该段而非抛错（让调用方尽力工作）。
 // 示例：
-//   "time=01:00-05:00"                        每天 1 点到 5 点
-//   "days=sat,sun;time=00:00-23:59"           仅周末全天
-//   "time=22:00-06:00"                        每天跨夜
-//   "days=mon,tue,wed,thu,fri;time=22:00-06:00" 工作日跨夜
+//
+//	"time=01:00-05:00"                        每天 1 点到 5 点
+//	"days=sat,sun;time=00:00-23:59"           仅周末全天
+//	"time=22:00-06:00"                        每天跨夜
+//	"days=mon,tue,wed,thu,fri;time=22:00-06:00" 工作日跨夜
 func ParseMaintenanceWindows(value string) []MaintenanceWindow {
 	v := strings.TrimSpace(value)
 	if v == "" {
