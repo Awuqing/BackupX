@@ -115,7 +115,9 @@ func (r *GormBackupRecordRepository) Create(ctx context.Context, item *model.Bac
 }
 
 func (r *GormBackupRecordRepository) Update(ctx context.Context, item *model.BackupRecord) error {
-	return r.db.WithContext(ctx).Save(item).Error
+	// Task 与 StorageTarget 是查询时预加载的只读关联。更新记录字段时忽略它们，
+	// 避免已加载的旧关联把刚修改的外键（例如首个成功上传目标）覆盖回去。
+	return r.db.WithContext(ctx).Omit("Task", "StorageTarget").Save(item).Error
 }
 
 func (r *GormBackupRecordRepository) Delete(ctx context.Context, id uint) error {

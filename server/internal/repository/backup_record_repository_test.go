@@ -88,6 +88,21 @@ func TestBackupRecordRepositoryQueries(t *testing.T) {
 	if recent[0].StorageTarget.Name != "local" {
 		t.Fatalf("expected recent storage target to be preloaded, got %#v", recent[0].StorageTarget)
 	}
+	secondTarget := &model.StorageTarget{Name: "secondary", Type: "local_disk", Enabled: true, ConfigCiphertext: "{}", ConfigVersion: 1, LastTestStatus: "unknown"}
+	if err := repo.db.Create(secondTarget).Error; err != nil {
+		t.Fatalf("seed second storage target error: %v", err)
+	}
+	stored.StorageTargetID = secondTarget.ID
+	if err := repo.Update(ctx, stored); err != nil {
+		t.Fatalf("Update storage target ID returned error: %v", err)
+	}
+	updated, err := repo.FindByID(ctx, record.ID)
+	if err != nil {
+		t.Fatalf("FindByID after update returned error: %v", err)
+	}
+	if updated == nil || updated.StorageTargetID != secondTarget.ID || updated.StorageTarget.Name != "secondary" {
+		t.Fatalf("expected updated storage target to remain %d, got %#v", secondTarget.ID, updated)
+	}
 	total, err := repo.Count(ctx)
 	if err != nil {
 		t.Fatalf("Count returned error: %v", err)
