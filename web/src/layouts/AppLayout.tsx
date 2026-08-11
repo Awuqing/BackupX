@@ -9,7 +9,6 @@ import {
   IconCopy,
   IconBook,
   IconUser,
-  IconCommand,
   IconNotification,
   IconSettings,
   IconMenuFold,
@@ -86,11 +85,8 @@ function resolveSelectedKey(pathname: string) {
   if (pathname.startsWith('/task-templates')) {
     return '/task-templates'
   }
-  if (pathname.startsWith('/admin/users')) {
-    return '/admin/users'
-  }
-  if (pathname.startsWith('/admin/api-keys')) {
-    return '/admin/api-keys'
+  if (pathname.startsWith('/admin')) {
+    return '/admin'
   }
   if (pathname.startsWith('/settings') || pathname.startsWith('/system-info')) {
     return '/settings'
@@ -117,8 +113,7 @@ const menuItems: MenuItemConfig[] = [
   { key: '/storage-targets', label: '存储目标', icon: <IconStorage /> },
   { key: '/nodes', label: '节点管理', icon: <IconDesktop /> },
   { key: '/settings/notifications', label: '通知配置', icon: <IconNotification /> },
-  { key: '/admin/users', label: '用户管理', icon: <IconUser />, adminOnly: true },
-  { key: '/admin/api-keys', label: 'API Key', icon: <IconCommand />, adminOnly: true },
+  { key: '/admin', label: '访问管理', icon: <IconUser />, adminOnly: true },
   { key: '/audit', label: '审计日志', icon: <IconList /> },
   { key: '/settings', label: '系统设置', icon: <IconSettings /> },
 ]
