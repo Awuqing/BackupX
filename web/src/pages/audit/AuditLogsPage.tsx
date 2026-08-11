@@ -1,6 +1,7 @@
 import { Button, DatePicker, Input, InputNumber, Message, PageHeader, Select, Space, Table, Tag, Typography } from '@arco-design/web-react'
 import type { ColumnProps } from '@arco-design/web-react/es/Table'
 import { useCallback, useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { exportAuditLogs, listAuditLogs } from '../../services/audit'
 import { fetchSettings, updateSettings } from '../../services/system'
 import { useAuthStore } from '../../stores/auth'
@@ -16,6 +17,8 @@ const categoryOptions = [
   { label: '备份任务', value: 'backup_task' },
   { label: '备份记录', value: 'backup_record' },
   { label: '系统设置', value: 'settings' },
+  { label: '用户账号', value: 'user' },
+  { label: 'API Key', value: 'api_key' },
 ]
 
 const categoryLabels: Record<string, string> = {
@@ -24,6 +27,8 @@ const categoryLabels: Record<string, string> = {
   backup_task: '备份任务',
   backup_record: '备份记录',
   settings: '系统设置',
+  user: '用户账号',
+  api_key: 'API Key',
 }
 
 const actionLabels: Record<string, string> = {
@@ -53,6 +58,7 @@ const actionLabels: Record<string, string> = {
   delete: '删除',
   enable: '启用',
   disable: '停用',
+  revoke: '撤销',
   run: '执行',
   restore: '恢复',
 }
@@ -105,11 +111,15 @@ const columns: ColumnProps<AuditLog>[] = [
 ]
 
 export function AuditLogsPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
+  const requestedCategory = searchParams.get('category') ?? ''
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [category, setCategory] = useState('')
+  const [category, setCategory] = useState(
+    categoryOptions.some((option) => option.value === requestedCategory) ? requestedCategory : '',
+  )
   const [username, setUsername] = useState('')
   const [keyword, setKeyword] = useState('')
   const [dateRange, setDateRange] = useState<string[] | null>(null)
@@ -190,6 +200,7 @@ export function AuditLogsPage() {
 
   function handleReset() {
     setCategory('')
+    setSearchParams({}, { replace: true })
     setUsername('')
     setKeyword('')
     setDateRange(null)
@@ -230,7 +241,11 @@ export function AuditLogsPage() {
           style={{ width: 160 }}
           value={category}
           options={categoryOptions}
-          onChange={(v) => { setCategory(v); setPage(1) }}
+          onChange={(v) => {
+            setCategory(v)
+            setSearchParams(v ? { category: v } : {}, { replace: true })
+            setPage(1)
+          }}
           placeholder="分类"
         />
         <Input
