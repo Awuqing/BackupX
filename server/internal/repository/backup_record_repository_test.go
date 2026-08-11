@@ -22,6 +22,11 @@ func newBackupRecordTestRepository(t *testing.T) *GormBackupRecordRepository {
 	if err != nil {
 		t.Fatalf("database.Open returned error: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("db.DB returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	storageTarget := &model.StorageTarget{Name: "local", Type: "local_disk", Enabled: true, ConfigCiphertext: "{}", ConfigVersion: 1, LastTestStatus: "unknown"}
 	if err := db.Create(storageTarget).Error; err != nil {
 		t.Fatalf("seed storage target error: %v", err)
@@ -60,6 +65,9 @@ func TestBackupRecordRepositoryQueries(t *testing.T) {
 	if stored == nil || stored.FileName != "website.tar.gz" {
 		t.Fatalf("unexpected stored record: %#v", stored)
 	}
+	if stored.StorageTarget.Name != "local" {
+		t.Fatalf("expected record storage target to be preloaded, got %#v", stored.StorageTarget)
+	}
 	listed, err := repo.List(ctx, BackupRecordListOptions{TaskID: &record.TaskID, Status: "success"})
 	if err != nil {
 		t.Fatalf("List returned error: %v", err)
@@ -67,12 +75,18 @@ func TestBackupRecordRepositoryQueries(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("expected one listed record, got %d", len(listed))
 	}
+	if listed[0].StorageTarget.Name != "local" {
+		t.Fatalf("expected listed storage target to be preloaded, got %#v", listed[0].StorageTarget)
+	}
 	recent, err := repo.ListRecent(ctx, 5)
 	if err != nil {
 		t.Fatalf("ListRecent returned error: %v", err)
 	}
 	if len(recent) != 1 {
 		t.Fatalf("expected one recent record, got %d", len(recent))
+	}
+	if recent[0].StorageTarget.Name != "local" {
+		t.Fatalf("expected recent storage target to be preloaded, got %#v", recent[0].StorageTarget)
 	}
 	total, err := repo.Count(ctx)
 	if err != nil {

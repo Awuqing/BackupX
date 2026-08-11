@@ -59,7 +59,7 @@ func NewBackupRecordRepository(db *gorm.DB) *GormBackupRecordRepository {
 
 func (r *GormBackupRecordRepository) List(ctx context.Context, options BackupRecordListOptions) ([]model.BackupRecord, error) {
 	// Omit("Manifest")：列表不需要可能很大的清单 JSON，避免每行拖出该 TEXT 列。
-	query := r.db.WithContext(ctx).Model(&model.BackupRecord{}).Omit("Manifest").Preload("Task").Preload("Task.StorageTarget").Order("started_at desc")
+	query := r.db.WithContext(ctx).Model(&model.BackupRecord{}).Omit("Manifest").Preload("Task").Preload("StorageTarget").Preload("Task.StorageTarget").Order("started_at desc")
 	if options.TaskID != nil {
 		query = query.Where("task_id = ?", *options.TaskID)
 	}
@@ -87,7 +87,7 @@ func (r *GormBackupRecordRepository) List(ctx context.Context, options BackupRec
 
 func (r *GormBackupRecordRepository) FindByID(ctx context.Context, id uint) (*model.BackupRecord, error) {
 	var item model.BackupRecord
-	if err := r.db.WithContext(ctx).Preload("Task").Preload("Task.StorageTarget").First(&item, id).Error; err != nil {
+	if err := r.db.WithContext(ctx).Preload("Task").Preload("StorageTarget").Preload("Task.StorageTarget").First(&item, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -127,7 +127,7 @@ func (r *GormBackupRecordRepository) ListRecent(ctx context.Context, limit int) 
 		limit = 10
 	}
 	var items []model.BackupRecord
-	if err := r.db.WithContext(ctx).Omit("Manifest").Preload("Task").Preload("Task.StorageTarget").Order("started_at desc").Limit(limit).Find(&items).Error; err != nil {
+	if err := r.db.WithContext(ctx).Omit("Manifest").Preload("Task").Preload("StorageTarget").Preload("Task.StorageTarget").Order("started_at desc").Limit(limit).Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil

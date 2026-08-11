@@ -26,12 +26,12 @@
 
 <table>
 <tr>
-<td width="50%"><img src="screenshots/dashboard.png" alt="仪表盘"></td>
-<td width="50%"><img src="screenshots/backup-tasks.png" alt="备份任务"></td>
+<td width="50%"><img src="screenshots/dashboard.png" alt="BackupX 仪表盘，展示 30 天备份趋势、存储分布和任务健康度"><br><sub><strong>仪表盘</strong> — 30 天成功/失败趋势、存储分布、任务规模与集群健康度。</sub></td>
+<td width="50%"><img src="screenshots/backup-tasks.png" alt="BackupX 备份任务列表，展示调度、存储目标、保留策略、标签、RPO 和验证状态"><br><sub><strong>备份任务</strong> — 调度、双目标策略、保留规则、标签、RPO 与定时验证。</sub></td>
 </tr>
 <tr>
-<td><img src="screenshots/storage-targets.png" alt="存储目标"></td>
-<td><img src="screenshots/backup-records.png" alt="备份记录"></td>
+<td><img src="screenshots/storage-targets.png" alt="BackupX 存储目标，展示连接状态、容量使用和冗余角色"><br><sub><strong>存储目标</strong> — 连接状态、实时容量、收藏及冗余角色一目了然。</sub></td>
+<td><img src="screenshots/backup-records.png" alt="BackupX 备份历史，展示成功失败状态、校验和、存储位置及保留锁"><br><sub><strong>备份记录</strong> — 成功/失败状态、校验和、落盘位置、执行日志与保留锁定。</sub></td>
 </tr>
 </table>
 

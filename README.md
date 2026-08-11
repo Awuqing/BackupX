@@ -26,12 +26,12 @@
 
 <table>
 <tr>
-<td width="50%"><img src="screenshots/dashboard.png" alt="Dashboard"></td>
-<td width="50%"><img src="screenshots/backup-tasks.png" alt="Backup Tasks"></td>
+<td width="50%"><img src="screenshots/dashboard.png" alt="BackupX dashboard with 30-day backup trends, storage distribution, and task health"><br><sub><strong>Dashboard</strong> — 30-day success and failure trends, storage distribution, task volume, and cluster health.</sub></td>
+<td width="50%"><img src="screenshots/backup-tasks.png" alt="BackupX task list with schedules, targets, retention, tags, RPO, and verification status"><br><sub><strong>Backup tasks</strong> — schedules, multi-target policies, retention, tags, RPO goals, and recurring verification.</sub></td>
 </tr>
 <tr>
-<td><img src="screenshots/storage-targets.png" alt="Storage Targets"></td>
-<td><img src="screenshots/backup-records.png" alt="Backup Records"></td>
+<td><img src="screenshots/storage-targets.png" alt="BackupX storage targets with connection health, capacity usage, and redundancy roles"><br><sub><strong>Storage targets</strong> — connection health, live capacity, favourites, and redundancy roles at a glance.</sub></td>
+<td><img src="screenshots/backup-records.png" alt="BackupX backup history with success and failure states, checksums, destinations, and retention locks"><br><sub><strong>Backup records</strong> — success and failure states, checksums, destinations, execution logs, and retention locks.</sub></td>
 </tr>
 </table>
 

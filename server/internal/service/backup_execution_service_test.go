@@ -107,6 +107,11 @@ func newExecutionTestServices(t *testing.T) (*BackupExecutionService, *BackupRec
 	if err != nil {
 		t.Fatalf("database.Open returned error: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("db.DB returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	cipher := codec.NewConfigCipher("execution-secret")
 	tasks := repository.NewBackupTaskRepository(db)
 	targets := repository.NewStorageTargetRepository(db)
@@ -152,6 +157,34 @@ func TestBackupExecutionServiceRunTaskByIDSync(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(storageDir, filepath.FromSlash(detail.StoragePath))); err != nil {
 		t.Fatalf("expected artifact in local storage: %v", err)
+	}
+}
+
+func TestBackupExecutionServiceSQLiteBackupRemainsFull(t *testing.T) {
+	executionService, _, tasks, _, records, sourceDir, _ := newExecutionTestServices(t)
+	dbPath := filepath.Join(sourceDir, "finance.db")
+	if err := os.WriteFile(dbPath, []byte("sqlite-demo"), 0o644); err != nil {
+		t.Fatalf("WriteFile sqlite fixture returned error: %v", err)
+	}
+	task := &model.BackupTask{
+		Name: "finance-db", Type: model.BackupTaskTypeSQLite, Enabled: true,
+		DBPath: dbPath, StorageTargetID: 1, RetentionDays: 30,
+		Compression: "none", MaxBackups: 10, LastStatus: "idle",
+	}
+	if err := tasks.Create(context.Background(), task); err != nil {
+		t.Fatalf("Create sqlite task returned error: %v", err)
+	}
+
+	detail, err := executionService.RunTaskByIDSync(context.Background(), task.ID)
+	if err != nil {
+		t.Fatalf("RunTaskByIDSync sqlite returned error: %v", err)
+	}
+	stored, err := records.FindByID(context.Background(), detail.ID)
+	if err != nil {
+		t.Fatalf("FindByID sqlite record returned error: %v", err)
+	}
+	if stored == nil || stored.BackupKind != model.BackupKindFull {
+		t.Fatalf("expected sqlite backup kind full, got %#v", stored)
 	}
 }
 

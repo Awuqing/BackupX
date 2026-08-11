@@ -8,10 +8,11 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 	"time"
 
 	"backupx/server/internal/config"
+
+	"github.com/shirou/gopsutil/v4/disk"
 )
 
 type SystemInfo struct {
@@ -74,11 +75,11 @@ func (s *SystemService) CheckUpdate(ctx context.Context) (*UpdateCheckResult, er
 	}
 
 	var release struct {
-		TagName    string `json:"tag_name"`
-		HTMLURL    string `json:"html_url"`
-		Body       string `json:"body"`
-		Published  string `json:"published_at"`
-		Assets     []struct {
+		TagName   string `json:"tag_name"`
+		HTMLURL   string `json:"html_url"`
+		Body      string `json:"body"`
+		Published string `json:"published_at"`
+		Assets    []struct {
 			Name               string `json:"name"`
 			BrowserDownloadURL string `json:"browser_download_url"`
 		} `json:"assets"`
@@ -124,12 +125,10 @@ func (s *SystemService) GetInfo(_ context.Context) *SystemInfo {
 	if dir == "" {
 		dir = "."
 	}
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(dir, &stat); err == nil {
-		info.DiskTotal = int64(stat.Blocks) * int64(stat.Bsize)
-		info.DiskFree = int64(stat.Bavail) * int64(stat.Bsize)
-		info.DiskUsed = info.DiskTotal - info.DiskFree
+	if stat, err := disk.Usage(dir); err == nil {
+		info.DiskTotal = int64(stat.Total)
+		info.DiskFree = int64(stat.Free)
+		info.DiskUsed = int64(stat.Used)
 	}
 	return info
 }
-
