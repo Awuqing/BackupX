@@ -59,7 +59,7 @@ func NewBackupRecordRepository(db *gorm.DB) *GormBackupRecordRepository {
 
 func (r *GormBackupRecordRepository) List(ctx context.Context, options BackupRecordListOptions) ([]model.BackupRecord, error) {
 	// Omit("Manifest")：列表不需要可能很大的清单 JSON，避免每行拖出该 TEXT 列。
-	query := r.db.WithContext(ctx).Model(&model.BackupRecord{}).Omit("Manifest").Preload("Task").Preload("Task.StorageTarget").Order("started_at desc")
+	query := r.db.WithContext(ctx).Model(&model.BackupRecord{}).Omit("Manifest").Preload("Task").Preload("StorageTarget").Preload("Task.StorageTarget").Order("started_at desc")
 	if options.TaskID != nil {
 		query = query.Where("task_id = ?", *options.TaskID)
 	}
@@ -87,7 +87,7 @@ func (r *GormBackupRecordRepository) List(ctx context.Context, options BackupRec
 
 func (r *GormBackupRecordRepository) FindByID(ctx context.Context, id uint) (*model.BackupRecord, error) {
 	var item model.BackupRecord
-	if err := r.db.WithContext(ctx).Preload("Task").Preload("Task.StorageTarget").First(&item, id).Error; err != nil {
+	if err := r.db.WithContext(ctx).Preload("Task").Preload("StorageTarget").Preload("Task.StorageTarget").First(&item, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
@@ -115,7 +115,9 @@ func (r *GormBackupRecordRepository) Create(ctx context.Context, item *model.Bac
 }
 
 func (r *GormBackupRecordRepository) Update(ctx context.Context, item *model.BackupRecord) error {
-	return r.db.WithContext(ctx).Save(item).Error
+	// Task 与 StorageTarget 是查询时预加载的只读关联。更新记录字段时忽略它们，
+	// 避免已加载的旧关联把刚修改的外键（例如首个成功上传目标）覆盖回去。
+	return r.db.WithContext(ctx).Omit("Task", "StorageTarget").Save(item).Error
 }
 
 func (r *GormBackupRecordRepository) Delete(ctx context.Context, id uint) error {
@@ -127,7 +129,7 @@ func (r *GormBackupRecordRepository) ListRecent(ctx context.Context, limit int) 
 		limit = 10
 	}
 	var items []model.BackupRecord
-	if err := r.db.WithContext(ctx).Omit("Manifest").Preload("Task").Preload("Task.StorageTarget").Order("started_at desc").Limit(limit).Find(&items).Error; err != nil {
+	if err := r.db.WithContext(ctx).Omit("Manifest").Preload("Task").Preload("StorageTarget").Preload("Task.StorageTarget").Order("started_at desc").Limit(limit).Find(&items).Error; err != nil {
 		return nil, err
 	}
 	return items, nil

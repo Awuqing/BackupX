@@ -25,11 +25,14 @@ function useTabs(): Tab[] {
       label: <Translate id="showcase.tab.dashboard">Dashboard</Translate>,
       icon: 'monitor',
       image: useBaseUrl('/img/screenshots/dashboard.png'),
-      imageAlt: translate({id: 'showcase.dashboard.alt', message: 'BackupX dashboard showing backup health and storage usage'}),
-      title: <Translate id="showcase.dashboard.title">Know at a glance</Translate>,
+      imageAlt: translate({
+        id: 'showcase.dashboard.alt',
+        message: 'BackupX dashboard showing 30-day backup trends, storage distribution, task volume and cluster health',
+      }),
+      title: <Translate id="showcase.dashboard.title">Operations at a glance</Translate>,
       description: (
         <Translate id="showcase.dashboard.desc">
-          Backup success rates, storage usage, recent runs and upcoming schedules — all on one page with live data.
+          Track 30-day success and failure trends, storage distribution, task counts, data volume and recent runs from one live operations view.
         </Translate>
       ),
     },
@@ -38,11 +41,14 @@ function useTabs(): Tab[] {
       label: <Translate id="showcase.tab.tasks">Backup Tasks</Translate>,
       icon: 'database',
       image: useBaseUrl('/img/screenshots/backup-tasks.png'),
-      imageAlt: translate({id: 'showcase.tasks.alt', message: 'BackupX backup task management screen'}),
-      title: <Translate id="showcase.tasks.title">Visual task editor</Translate>,
+      imageAlt: translate({
+        id: 'showcase.tasks.alt',
+        message: 'BackupX task list showing schedules, storage targets, retention, tags, RPO goals and verification status',
+      }),
+      title: <Translate id="showcase.tasks.title">Policies you can scan</Translate>,
       description: (
         <Translate id="showcase.tasks.desc">
-          Files, MySQL, PostgreSQL, SQLite and SAP HANA with a three-step wizard. Cron editor, multi-target dispatch, retention, compression and encryption — point and click.
+          Review schedules, multi-target policies, retention, tags, RPO goals and verification status together, then act on any task in one click.
         </Translate>
       ),
     },
@@ -51,11 +57,14 @@ function useTabs(): Tab[] {
       label: <Translate id="showcase.tab.storage">Storage Targets</Translate>,
       icon: 'storage',
       image: useBaseUrl('/img/screenshots/storage-targets.png'),
-      imageAlt: translate({id: 'showcase.storage.alt', message: 'BackupX storage target management screen'}),
-      title: <Translate id="showcase.storage.title">70+ backends, one flow</Translate>,
+      imageAlt: translate({
+        id: 'showcase.storage.alt',
+        message: 'BackupX storage targets showing connection health, live capacity, favourites and redundancy roles',
+      }),
+      title: <Translate id="showcase.storage.title">Every target, one view</Translate>,
       description: (
         <Translate id="showcase.storage.desc">
-          Alibaba OSS, Tencent COS, S3, Google Drive, WebDAV — plus every rclone backend behind a uniform form. Test connection, favourite, and view live usage.
+          Compare connection health, live capacity, favourites and redundancy roles across local disks and 70+ remote backends.
         </Translate>
       ),
     },
@@ -64,11 +73,14 @@ function useTabs(): Tab[] {
       label: <Translate id="showcase.tab.nodes">Multi-Node</Translate>,
       icon: 'network',
       image: useBaseUrl('/img/screenshots/nodes.png'),
-      imageAlt: translate({id: 'showcase.nodes.alt', message: 'BackupX remote node management screen'}),
-      title: <Translate id="showcase.nodes.title">Master-Agent in minutes</Translate>,
+      imageAlt: translate({
+        id: 'showcase.nodes.alt',
+        message: 'BackupX node list showing health, Agent versions, queue depth, labels and heartbeat times',
+      }),
+      title: <Translate id="showcase.nodes.title">Cluster health in one view</Translate>,
       description: (
         <Translate id="showcase.nodes.desc">
-          Create a node, copy the token, start the Agent on any remote host. Tasks routed to a node run locally there and upload directly to storage — no reverse connectivity required.
+          Monitor health, Agent versions, queue depth, labels and heartbeat time across the local Master and every remote node.
         </Translate>
       ),
     },

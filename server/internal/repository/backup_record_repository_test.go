@@ -65,6 +65,9 @@ func TestBackupRecordRepositoryQueries(t *testing.T) {
 	if stored == nil || stored.FileName != "website.tar.gz" {
 		t.Fatalf("unexpected stored record: %#v", stored)
 	}
+	if stored.StorageTarget.Name != "local" {
+		t.Fatalf("expected record storage target to be preloaded, got %#v", stored.StorageTarget)
+	}
 	listed, err := repo.List(ctx, BackupRecordListOptions{TaskID: &record.TaskID, Status: "success"})
 	if err != nil {
 		t.Fatalf("List returned error: %v", err)
@@ -72,12 +75,33 @@ func TestBackupRecordRepositoryQueries(t *testing.T) {
 	if len(listed) != 1 {
 		t.Fatalf("expected one listed record, got %d", len(listed))
 	}
+	if listed[0].StorageTarget.Name != "local" {
+		t.Fatalf("expected listed storage target to be preloaded, got %#v", listed[0].StorageTarget)
+	}
 	recent, err := repo.ListRecent(ctx, 5)
 	if err != nil {
 		t.Fatalf("ListRecent returned error: %v", err)
 	}
 	if len(recent) != 1 {
 		t.Fatalf("expected one recent record, got %d", len(recent))
+	}
+	if recent[0].StorageTarget.Name != "local" {
+		t.Fatalf("expected recent storage target to be preloaded, got %#v", recent[0].StorageTarget)
+	}
+	secondTarget := &model.StorageTarget{Name: "secondary", Type: "local_disk", Enabled: true, ConfigCiphertext: "{}", ConfigVersion: 1, LastTestStatus: "unknown"}
+	if err := repo.db.Create(secondTarget).Error; err != nil {
+		t.Fatalf("seed second storage target error: %v", err)
+	}
+	stored.StorageTargetID = secondTarget.ID
+	if err := repo.Update(ctx, stored); err != nil {
+		t.Fatalf("Update storage target ID returned error: %v", err)
+	}
+	updated, err := repo.FindByID(ctx, record.ID)
+	if err != nil {
+		t.Fatalf("FindByID after update returned error: %v", err)
+	}
+	if updated == nil || updated.StorageTargetID != secondTarget.ID || updated.StorageTarget.Name != "secondary" {
+		t.Fatalf("expected updated storage target to remain %d, got %#v", secondTarget.ID, updated)
 	}
 	total, err := repo.Count(ctx)
 	if err != nil {

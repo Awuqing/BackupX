@@ -1026,7 +1026,8 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 		return
 	}
 	defer os.RemoveAll(result.TempDir)
-	// 依据运行器产出判定实际类型：产出清单 → 全量（记录清单供后续差异比对）；否则为差异。
+	// 依据运行器产出判定实际类型：文件全量会产出清单；只有明确启用差异模式且
+	// 未产出清单时才是差异备份。数据库运行器本身不产出文件清单，但仍属于全量。
 	if result.Manifest != nil {
 		backupKind = model.BackupKindFull
 		if data, encErr := backup.EncodeManifest(*result.Manifest); encErr == nil {
@@ -1034,8 +1035,10 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 		} else {
 			logger.Warnf("备份清单序列化失败（不影响本次备份，但将禁用后续差异）：%v", encErr)
 		}
-	} else {
+	} else if spec.Differential {
 		backupKind = model.BackupKindDifferential
+	} else {
+		backupKind = model.BackupKindFull
 	}
 	finalPath := result.ArtifactPath
 	if strings.EqualFold(task.Compression, "gzip") && !strings.HasSuffix(strings.ToLower(finalPath), ".gz") {

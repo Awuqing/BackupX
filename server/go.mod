@@ -12,6 +12,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	github.com/rclone/rclone v1.73.5
 	github.com/robfig/cron/v3 v3.0.1
+	github.com/shirou/gopsutil/v4 v4.25.10
 	github.com/spf13/viper v1.20.0
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.50.0
@@ -195,7 +196,6 @@ require (
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06 // indirect
 	github.com/sagikazarmark/locafero v0.7.0 // indirect
 	github.com/samber/lo v1.52.0 // indirect
-	github.com/shirou/gopsutil/v4 v4.25.10 // indirect
 	github.com/sirupsen/logrus v1.9.4-0.20230606125235-dd1b4c2e81af // indirect
 	github.com/skratchdot/open-golang v0.0.0-20200116055534-eef842397966 // indirect
 	github.com/sony/gobreaker v1.0.0 // indirect
