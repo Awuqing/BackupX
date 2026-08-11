@@ -1,9 +1,16 @@
 name: Deploy Docs
 
 # 触发条件：
-#   - 推送 main 时，如果 docs-site/ 或站点相关 README 有变化
+#   - PR 修改 docs-site/ 时执行类型检查和构建
+#   - 推送 main 时构建并部署 GitHub Pages
 #   - 手动触发（在 Actions 页面）
 on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'docs-site/**'
+      - '.github/workflows/docs.yml'
   push:
     branches:
       - main
@@ -12,20 +19,20 @@ on:
       - '.github/workflows/docs.yml'
   workflow_dispatch:
 
-# 允许写入 Pages，用于发布到 github.com/Awuqing/BackupX 的 Pages 站点
+# 默认只读；Pages 写权限仅授予部署任务。
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
-# 同时只保留一个部署任务
+# 同一分支只保留最新一次构建，避免旧提交覆盖新结果。
 concurrency:
-  group: pages-${{ github.ref }}
+  group: docs-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
+    name: Build Docs
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: docs-site
@@ -36,24 +43,34 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: docs-site/package-lock.json
 
       - name: Install dependencies
         run: npm ci
 
+      - name: Type check
+        run: npm run typecheck
+
       - name: Build site
         run: npm run build
 
       - name: Upload artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: docs-site/build
 
   deploy:
+    name: Deploy Docs
+    if: github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

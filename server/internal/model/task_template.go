@@ -11,10 +11,10 @@ import "time"
 //   - name
 //   - sourcePath / sourcePaths 中的 {{.Host}} / {{.Env}} 等占位符
 type TaskTemplate struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	Name        string    `gorm:"size:128;uniqueIndex;not null" json:"name"`
-	Description string    `gorm:"size:500" json:"description"`
-	TaskType    string    `gorm:"column:task_type;size:20;not null" json:"taskType"`
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	Name        string `gorm:"size:128;uniqueIndex;not null" json:"name"`
+	Description string `gorm:"size:500" json:"description"`
+	TaskType    string `gorm:"column:task_type;size:20;not null" json:"taskType"`
 	// Payload JSON，存完整 BackupTaskUpsertInput 的序列化
 	Payload   string    `gorm:"type:text;not null" json:"payload"`
 	CreatedBy string    `gorm:"column:created_by;size:128" json:"createdBy"`

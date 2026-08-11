@@ -57,5 +57,6 @@ description: 部署 BackupX、添加存储目标、创建第一个备份任务�
 ## 继续阅读
 
 - 了解 [备份类型](/docs/features/backup-types) 和 [存储后端](/docs/features/storage-backends)
+- 上线生产前阅读[安全加固](/docs/operations/security)、[监控与告警](/docs/operations/monitoring)和[升级与恢复](/docs/operations/upgrade-recovery)
 - 使用 SAP HANA？参考 [SAP HANA 支持](/docs/features/sap-hana)
 - 管理多台服务器？参考 [多节点集群](/docs/features/multi-node)

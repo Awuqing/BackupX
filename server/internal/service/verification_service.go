@@ -299,6 +299,20 @@ func (s *VerificationService) executeLocally(ctx context.Context, verID uint, ta
 		logger.Errorf("创建存储客户端失败：%v", err)
 		return
 	}
+	if backupRecord.BackupKind == model.BackupKindRepository {
+		logger.Infof("验证 CDC 仓库快照及全部引用块：%s", backupRecord.StoragePath)
+		report, verifyErr := backup.NewRepositoryStore(s.cipher.Key()).Verify(ctx, provider, backupRecord.StoragePath, backupRecord.Checksum)
+		if verifyErr != nil {
+			errMessage = verifyErr.Error()
+			summary = "CDC 仓库完整性校验失败"
+			logger.Errorf("验证未通过：%v", verifyErr)
+			return
+		}
+		status = model.VerificationRecordStatusSuccess
+		summary = fmt.Sprintf("CDC 仓库完整性校验通过：%d 个条目、%d 个唯一块、%d bytes", report.Entries, report.Chunks, report.Bytes)
+		logger.Infof("%s", summary)
+		return
+	}
 	fileName := backupRecord.FileName
 	if strings.TrimSpace(fileName) == "" {
 		fileName = filepath.Base(backupRecord.StoragePath)

@@ -61,7 +61,11 @@ type RouterDependencies struct {
 func NewRouter(deps RouterDependencies) *gin.Engine {
 	gin.SetMode(deps.Config.Server.Mode)
 	engine := gin.New()
+	if err := engine.SetTrustedProxies(deps.Config.Server.TrustedProxies); err != nil {
+		panic("invalid trusted proxy configuration: " + err.Error())
+	}
 	engine.Use(gin.Recovery())
+	engine.Use(ForwardedHeadersMiddleware(deps.Config.Server.TrustedProxies))
 	engine.Use(CORSMiddleware())
 	engine.Use(requestLogger(deps.Logger))
 
@@ -322,7 +326,9 @@ func NewRouter(deps RouterDependencies) *gin.Engine {
 			agent.POST("/commands/:id/result", agentHandler.SubmitCommandResult)
 			agent.GET("/tasks/:id", agentHandler.GetTaskSpec)
 			agent.POST("/records/:id", agentHandler.UpdateRecord)
+			agent.PUT("/records/:id/artifacts/:targetId", agentHandler.UploadArtifact)
 			agent.GET("/restores/:id/spec", agentHandler.GetRestoreSpec)
+			agent.GET("/restores/:id/artifact", agentHandler.DownloadRestoreArtifact)
 			agent.POST("/restores/:id", agentHandler.UpdateRestore)
 
 			// Agent v1（安装脚本探活用），仅 Self 端点

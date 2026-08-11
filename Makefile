@@ -1,4 +1,6 @@
-.PHONY: build dev test clean docker docker-cn
+.PHONY: build build-server build-web build-docs dev-server dev-web \
+	test test-server test-web check-docs format-check vet-server \
+	verify verify-server verify-web verify-docs clean docker docker-cn
 
 # 自动获取版本号（从 git tag 或 commit hash）
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
@@ -11,6 +13,9 @@ build-server:
 
 build-web:
 	cd web && npm run build
+
+build-docs:
+	cd docs-site && npm run build
 
 # ── 开发模式（分别在两个终端运行）──
 dev-server:
@@ -27,6 +32,28 @@ test-server:
 
 test-web:
 	cd web && npm run test
+
+check-docs:
+	cd docs-site && npm run typecheck && npm run build
+
+format-check:
+	@unformatted="$$(gofmt -l server)"; \
+	if [ -n "$$unformatted" ]; then \
+		printf '%s\n' "$$unformatted"; \
+		exit 1; \
+	fi
+
+vet-server:
+	cd server && go mod verify && go vet ./...
+
+# ── 提交前完整验证 ──
+verify: verify-server verify-web verify-docs
+
+verify-server: format-check vet-server test-server build-server
+
+verify-web: test-web build-web
+
+verify-docs: check-docs
 
 # ── Docker 构建 ──
 docker:

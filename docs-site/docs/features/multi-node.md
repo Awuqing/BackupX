@@ -1,134 +1,229 @@
 ---
 sidebar_position: 4
 title: Multi-Node Cluster
-description: Master-Agent mode — route backups to remote servers via HTTP long-polling.
+description: Deploy BackupX Agents through direct HTTPS, forward proxies, or SSH bastions.
 ---
 
 # Multi-Node Cluster
 
-BackupX supports Master-Agent mode: backup tasks can be routed to specific nodes. The Agent runs the backup locally and uploads straight to storage. All connections are initiated by the Agent, so remote networks only need outbound HTTP access.
+BackupX uses a single active Master as the control plane and an Agent on each source server. Agents initiate every connection, report a heartbeat every 15 seconds, and poll for commands every 5 seconds. No inbound Agent port is required.
 
-## Architecture
+## Architecture and boundaries
 
+```text
+[Web console] ────────> [Active Master + SQLite]
+                              ^
+                              | outbound HTTP(S) polling
+                    +---------+---------+
+                    |         |         |
+                 [Agent B] [Agent C] [Agent D]
+                    |         |         |
+                    +----> storage targets
 ```
-[Web Console] ─── JWT ──→ [Master (backupx)]
-                              ↑  ↓
-                              │  │ HTTP long-poll (token auth)
-                              │  ↓
-                         [Agent (backupx agent)]   ← runs on remote host
-                              ↓
-                     [70+ Storage Backends]
-```
 
-- **Protocol** — HTTP long-polling; the Agent initiates every connection
-- **Heartbeat** — Agent reports every 15s; Master marks nodes offline after 45s of silence
-- **Dispatch** — Master persists `run_task` commands to a queue; Agent polls and claims them
-- **Execution** — Agent reuses the same BackupRunner (file / mysql / postgresql / sqlite / saphana) and uploads directly to storage
-- **Security** — Each node has its own token; the Agent never holds the Master's JWT secret or AES-256 key
+- Each node has an independent Agent Token. The Agent never receives the Master's JWT or encryption key.
+- A node is marked offline after 45 seconds without a heartbeat.
+- The Master persists commands; an Agent claims and executes them locally.
+- Network storage is normally written directly by the Agent. A Master-local target can opt into authenticated streaming relay.
 
-## Walkthrough
+:::warning Single-active Master
+The embedded SQLite database is not a shared multi-writer database. Run exactly one active Master against a data directory. For control-plane recovery, use an active/passive host, persistent-volume snapshots, and a stable DNS name or virtual IP. Never scale multiple Master replicas over the same `/app/data` or `backupx.db`.
+:::
 
-### 0. Set the Master URL for production clusters
+BackupX applies a five-second SQLite busy timeout and command-queue indexes to reduce contention from concurrent Agent polls and task updates. Keep the database on a local or block-backed filesystem. For a file-level control-plane backup, stop the Master before copying the whole data directory; do not copy only `backupx.db` while it is running.
 
-Before generating Agent install commands, make sure the Master URL shown to Agents is stable and reachable from every target host.
+## Choose a network path
 
-If BackupX runs behind Docker, Nginx, a load balancer, or an outer reverse proxy, configure `server.external_url` or `BACKUPX_SERVER_EXTERNAL_URL` on the Master:
+| Scenario | Agent Master URL | Agent proxy URL | Notes |
+| --- | --- | --- | --- |
+| Routed network or public service | `https://backup.example.com` | empty | Recommended; allow only outbound TCP 443 |
+| Corporate forward proxy | `https://backup.example.com` | `http://proxy.internal:3128` | HTTP(S) and SOCKS5(H) are supported |
+| SSH dynamic tunnel through a bastion | `https://backup.internal` | `socks5h://127.0.0.1:1080` | Preserves TLS hostname and resolves internal DNS through the tunnel |
+| SSH fixed local forward | `http://127.0.0.1:18340` | empty | The HTTP hop is protected by SSH; bind the forward to loopback only |
 
-```yaml title="config.yaml"
+For private PKI, provide the absolute path of a pre-provisioned PEM CA certificate. Do not use `--insecure-tls` in production.
+
+When no explicit proxy is configured, Agent-to-Master HTTP traffic follows `HTTP_PROXY`, `HTTPS_PROXY`, and `NO_PROXY`. A system service does not normally inherit an interactive shell's environment, so set the proxy in the install wizard or Agent YAML for systemd deployments.
+
+## Prepare the Master
+
+Set a stable URL before generating commands:
+
+```yaml title="/etc/backupx/config.yaml"
 server:
   external_url: "https://backup.example.com"
+  trusted_proxies:
+    - "127.0.0.1"
+    - "::1"
+    # Add the exact reverse-proxy IP or subnet when it is not local.
+    # - "172.18.0.0/16"
 ```
 
-This URL is baked into systemd units, foreground commands, and docker-compose snippets. If it is wrong, Agents will install successfully but stay offline because they keep polling an internal or browser-only address.
+`external_url` is the default install and Agent runtime address. A restricted node can override both generated target-side URLs with its tunnel or internal address while the browser continues to use the public address.
 
-### 1. Open the install wizard
+Use HTTPS across untrusted networks. For Master-relay uploads, configure the reverse proxy with unlimited request body size and request buffering disabled; see [Nginx Reverse Proxy](../deployment/nginx).
 
-In the Web Console → **Node Management** → **Add Node**. You'll see a three-step wizard.
+Configure the Agent with the final API URL, not an HTTP-to-HTTPS redirect. The Agent deliberately does not follow redirects so its authentication Token cannot be forwarded to an unintended host.
 
-- **Step 1 — Node info.** Give the node a name, or switch to batch mode and paste multiple names (one per line, max 50).
-- **Step 2 — Deploy options.** Pick install mode (`systemd` recommended, `docker`, or `foreground` for debugging), architecture (auto-detect by default), agent version (defaults to the master's version), TTL for the install link (5 min / 15 min / 1 h / 24 h), and download source (`github` direct, or the `ghproxy` mirror for mainland China).
-- **Step 3 — Copy the command.** A one-line install command is shown with a live countdown. Click copy, paste into the target machine, and run with root privileges. The default command embeds the rendered installer, so the target host does not need to fetch `/api/install/:token` through your reverse proxy. The public install URL is still available as a fallback.
+## Deploy an Agent
 
-### 2. One-line install on the target host
+Open **Node Management → Add Node**:
 
-Use the command generated by the Web Console. It writes the installer to a temporary file, validates the `BACKUPX_AGENT_INSTALL_V1` marker, then runs it with root privileges.
+1. Enter one node name, or up to 50 names in batch mode.
+2. Select systemd, Docker, or foreground mode; architecture; Agent release; command TTL; and download source.
+3. Select **Direct** or **Proxy or bastion**. For the restricted path, set an Agent-specific Master URL, proxy URL, or private CA path.
+4. Copy the generated command to the target host and run it with root privileges.
 
-The script runs automatically and:
+Systemd is recommended for host-file backup and restore because the Agent needs access to arbitrary local paths. A Docker Agent sees only explicitly mounted paths; recreate it with read-only backup-source mounts and separately scoped writable restore destinations before assigning file tasks.
 
-1. Detects OS and architecture (`uname -m`)
-2. Downloads the matching `backupx` binary from GitHub Release (or the ghproxy mirror)
-3. Installs to `/opt/backupx-agent` and creates a `backupx` system user
-4. Writes `/etc/systemd/system/backupx-agent.service` with the token baked into environment variables
-5. Runs `systemctl enable --now backupx-agent`
-6. Polls `/api/v1/agent/self` until the master confirms `status: online` (up to 30 s)
+The URL-based command downloads a one-time installer and verifies its marker before execution. The wizard binds the selected Agent URL, explicit proxy, and private CA to that download command as well as to the installed Agent configuration. If the install endpoint is still unreachable, use the separately displayed embedded command. The embedded command contains the long-lived node Token and must be handled as a secret.
 
-Docker mode uses the same `BACKUPX_AGENT_MASTER`, `BACKUPX_AGENT_TOKEN`, and `BACKUPX_AGENT_TEMP_DIR=/var/lib/backupx-agent/tmp` environment contract. After starting the container, the installer also probes `/api/v1/agent/self`; if the node does not come online, it prints `docker ps` and `docker logs --tail=100 backupx-agent` diagnostics before exiting non-zero.
+The installer:
 
-If you choose the URL-based fallback command and `curl` prints HTML or the shell reports `Syntax error: newline unexpected`, the install URL is being served by the web console instead of the backend. Ensure either `/api/install/` or `/install/` is forwarded to the BackupX backend, or use the embedded command generated by the console.
+1. Detects `linux/amd64` or `linux/arm64`.
+2. Downloads the selected Release archive through the explicit proxy when configured, otherwise using the host's normal direct/environment-proxy route, and verifies its SHA-256 sidecar when the release provides one.
+3. Writes `/etc/backupx-agent/config.yaml` and `/etc/backupx-agent/agent.token` with mode `0600`.
+4. Keeps the Token out of the systemd unit and Docker environment metadata.
+5. Starts the Agent and checks `/api/v1/agent/self` for up to 30 seconds.
+6. Returns non-zero with systemd or Docker diagnostics when the node does not become online.
 
-Reruns are idempotent — to upgrade or re-provision, simply generate a new install command and run it again. The one-time install link expires after its TTL or after first consumption, whichever is sooner.
+Older releases without checksum sidecars remain installable with a warning. New releases should always publish and verify the sidecar.
 
-### 3. Rotate agent tokens at any time
+### Installed systemd configuration
 
-Go to the node's action menu (︙) → **Rotate Token**. The new token is shown once and the old token remains valid for 24 h, allowing rolling restarts without downtime. After 24 h, the old token is rejected.
-
-### 4. Batch deployment
-
-In Step 1 choose "Batch" and paste node names (one per line, max 50). Step 3 shows a table with one command per node plus a **Download .sh** button that bundles all commands into a shell script, convenient for SSH loops or Ansible tasks.
-
-### 5. Route a task to the node
-
-In the **Backup Tasks** page, pick the target node when creating the task. When the task runs:
-
-- Local (`nodeId=0`) → Master executes in-process
-- Remote node → Master enqueues the command → Agent claims → Agent runs locally → uploads → reports back
-
-The node table shows the Agent health and command queue state: pending/dispatched depth, running long commands, timeouts, oldest active command age, and the latest Agent-side error. The same queue depth, running-command, and timeout snapshots are exported as Prometheus metrics:
-
-- `backupx_agent_command_queue_depth`
-- `backupx_agent_command_running`
-- `backupx_agent_command_timeout_total`
-
-## Known limitations
-
-- **Encrypted backups are Master-only** — the Agent doesn't hold Master's AES-256 key. Creating or updating a task with `encrypt: true` and a remote node or node pool is rejected up front
-- **Directory browser timeout** — remote dir listing is a synchronous RPC through the queue (15s default)
-- **Dispatched command timeout** — claimed-but-unfinished commands are marked `timeout` after 10 minutes
-
-## CLI reference
-
+```yaml title="/etc/backupx-agent/config.yaml"
+master: "https://backup.example.com"
+tokenFile: "/etc/backupx-agent/agent.token"
+heartbeatInterval: "15s"
+pollInterval: "5s"
+tempDir: "/var/lib/backupx-agent/tmp"
+proxyUrl: ""
+caCertFile: ""
 ```
-backupx agent --help
-  -master string    Master URL
-  -token string     Agent auth token
-  -config string    YAML config path (takes precedence over env)
-  -temp-dir string  Local temp directory (default /tmp/backupx-agent)
-  -insecure-tls     Skip TLS verification (testing only)
-```
-
-## systemd unit
 
 ```ini title="/etc/systemd/system/backupx-agent.service"
 [Unit]
 Description=BackupX Agent
-After=network.target
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
-User=backupx
-Environment="BACKUPX_AGENT_MASTER=https://master.example.com"
-Environment="BACKUPX_AGENT_TOKEN=your-token"
-ExecStart=/opt/backupx/backupx agent
+ExecStart=/opt/backupx-agent/backupx agent --config /etc/backupx-agent/config.yaml
 Restart=on-failure
 RestartSec=10s
+TimeoutStopSec=30s
+UMask=0077
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
 ```
 
-Enable and start:
+The Agent runs as root because file backup and restore paths may belong to arbitrary system users. Restrict who can create tasks and who can modify the root-owned Agent configuration.
+
+## SSH bastion example
+
+Prefer a SOCKS tunnel when the internal Master uses HTTPS: its hostname and certificate validation remain unchanged.
+
+Create a dedicated SSH account and pre-provision its private key plus a verified `known_hosts` file. Then create:
+
+```sshconfig title="/etc/backupx-agent/ssh_config"
+Host backupx-bastion
+    HostName bastion.example.com
+    User backupx-tunnel
+    IdentityFile /etc/backupx-agent/tunnel_ed25519
+    IdentitiesOnly yes
+    BatchMode yes
+    UserKnownHostsFile /etc/backupx-agent/known_hosts
+    StrictHostKeyChecking yes
+    DynamicForward 127.0.0.1:1080
+    ExitOnForwardFailure yes
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+```
+
+```ini title="/etc/systemd/system/backupx-agent-tunnel.service"
+[Unit]
+Description=BackupX Agent SSH tunnel
+After=network-online.target
+Wants=network-online.target
+Before=backupx-agent.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/ssh -NT -F /etc/backupx-agent/ssh_config backupx-bastion
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Add a drop-in so the Agent fails closed when the tunnel is unavailable:
+
+```ini title="/etc/systemd/system/backupx-agent.service.d/tunnel.conf"
+[Unit]
+Requires=backupx-agent-tunnel.service
+After=backupx-agent-tunnel.service
+```
+
+Reload and start both units:
 
 ```bash
-sudo systemctl enable --now backupx-agent
-sudo journalctl -u backupx-agent -f
+sudo systemctl daemon-reload
+sudo systemctl enable --now backupx-agent-tunnel backupx-agent
 ```
+
+In the wizard, keep the internal HTTPS Master URL and set the proxy to `socks5h://127.0.0.1:1080`. Verify the bastion host key out-of-band before enabling the service.
+
+## Central storage data paths
+
+| Destination | Data path |
+| --- | --- |
+| S3, WebDAV, FTP, cloud drive, or another network backend | Agent streams directly to the destination |
+| `local_disk` with **Relay remote backups through Master** enabled | Agent streams through the authenticated Master API; Master writes to its local mount |
+
+The relay does not create a second complete temporary copy on the Master. Restore uses the reverse streaming path. Nginx request buffering must be disabled for this behavior to remain streaming.
+
+## Operations
+
+```bash
+sudo systemctl status backupx-agent
+sudo journalctl -u backupx-agent -n 100 --no-pager
+sudo /opt/backupx-agent/backupx agent --config /etc/backupx-agent/config.yaml
+```
+
+Rotate a node Token from its action menu. Update `/etc/backupx-agent/agent.token` on the node and restart the service during the 24-hour overlap window.
+
+Monitor these Prometheus metrics:
+
+- `backupx_agent_command_queue_depth`
+- `backupx_agent_command_running`
+- `backupx_agent_command_timeout_total`
+- `backupx_node_online`
+
+## CLI reference
+
+```text
+backupx agent --help
+  -master string       Master URL
+  -token string        Agent authentication token
+  -token-file string   Read the Agent Token from a file
+  -config string       YAML configuration path
+  -temp-dir string     Local temporary directory
+  -proxy-url string    HTTP(S) or SOCKS5(H) proxy
+  -ca-cert string      PEM CA certificate used to verify the Master
+  -insecure-tls        Skip TLS verification (testing only)
+```
+
+Environment variables: `BACKUPX_AGENT_MASTER`, `BACKUPX_AGENT_TOKEN`, `BACKUPX_AGENT_TOKEN_FILE`, `BACKUPX_AGENT_HEARTBEAT`, `BACKUPX_AGENT_POLL`, `BACKUPX_AGENT_TEMP_DIR`, `BACKUPX_AGENT_PROXY_URL`, `BACKUPX_AGENT_CA_CERT_FILE`, and `BACKUPX_AGENT_INSECURE_TLS`.
+
+## Known limitations
+
+- The Master is single-active because it uses embedded SQLite.
+- Encrypted backups are Master-only because Agents do not hold the Master encryption key.
+- Remote directory browsing is a synchronous queue RPC with a 15-second timeout.
+- Claimed commands that stop reporting progress are timed out according to the Master command monitor.

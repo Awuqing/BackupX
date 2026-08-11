@@ -57,5 +57,6 @@ Deleting a task also removes remote backup files to prevent orphans, but records
 ## Next up
 
 - Explore [backup types](/docs/features/backup-types) and [storage backends](/docs/features/storage-backends)
+- Before production, review [Security Hardening](/docs/operations/security), [Monitoring and Alerts](/docs/operations/monitoring), and [Upgrade and Recovery](/docs/operations/upgrade-recovery)
 - Running SAP HANA? See [SAP HANA Support](/docs/features/sap-hana)
 - Managing many servers? See [Multi-Node Cluster](/docs/features/multi-node)

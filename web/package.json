@@ -3,35 +3,39 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=24.0"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
+    "build": "npm run typecheck && vite build",
     "preview": "vite preview",
     "test": "vitest run"
   },
   "dependencies": {
     "@arco-design/web-react": "^2.66.0",
-    "axios": "^1.16.0",
-    "echarts": "^6.0.0",
+    "axios": "^1.19.0",
+    "echarts": "^6.1.0",
     "echarts-for-react": "^3.0.6",
     "i18next": "^25.8.14",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-i18next": "^16.5.6",
-    "react-router-dom": "^6.30.0",
+    "react-router-dom": "^6.30.4",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.2.0",
     "@testing-library/user-event": "^14.6.1",
-    "@types/node": "^22.13.10",
+    "@types/node": "^24.13.3",
     "@types/react": "^18.3.20",
     "@types/react-dom": "^18.3.6",
     "@vitejs/plugin-react": "^4.3.4",
     "jsdom": "^26.0.0",
     "typescript": "^5.7.3",
-    "vite": "^6.4.2",
-    "vitest": "^3.0.8"
+    "vite": "^6.4.3",
+    "vitest": "^3.2.7"
   }
 }

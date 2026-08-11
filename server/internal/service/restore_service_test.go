@@ -1,8 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -427,16 +429,27 @@ func TestRestoreServiceAgentRestoreAccessUsesRestoreRecordNode(t *testing.T) {
 	}
 	startedAt := time.Now().UTC()
 	completedAt := startedAt.Add(time.Second)
+	artifact := []byte("central backup artifact")
+	storagePath := "file/2026/05/09/remote.tar.gz"
+	artifactPath := filepath.Join(h.storageDir, filepath.FromSlash(storagePath))
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll artifact parent: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, artifact, 0o600); err != nil {
+		t.Fatalf("WriteFile artifact: %v", err)
+	}
 	backupRecord := &model.BackupRecord{
-		TaskID:          task.ID,
-		StorageTargetID: task.StorageTargetID,
-		NodeID:          owner.ID,
-		Status:          model.BackupRecordStatusSuccess,
-		FileName:        "remote.tar.gz",
-		StoragePath:     "file/2026/05/09/remote.tar.gz",
-		Checksum:        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		StartedAt:       startedAt,
-		CompletedAt:     &completedAt,
+		TaskID:              task.ID,
+		StorageTargetID:     task.StorageTargetID,
+		NodeID:              owner.ID,
+		Status:              model.BackupRecordStatusSuccess,
+		FileName:            "remote.tar.gz",
+		StoragePath:         storagePath,
+		FileSize:            int64(len(artifact)),
+		StorageTransferMode: storage.TransferModeMasterRelay,
+		Checksum:            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		StartedAt:           startedAt,
+		CompletedAt:         &completedAt,
 	}
 	if err := h.records.Create(ctx, backupRecord); err != nil {
 		t.Fatalf("Create backup record: %v", err)
@@ -463,6 +476,21 @@ func TestRestoreServiceAgentRestoreAccessUsesRestoreRecordNode(t *testing.T) {
 	// Agent 端完整性校验依赖 spec 透传源备份 checksum。
 	if spec.Checksum != backupRecord.Checksum {
 		t.Fatalf("expected spec.Checksum=%q, got %q", backupRecord.Checksum, spec.Checksum)
+	}
+	if spec.Storage.TransferMode != storage.TransferModeMasterRelay {
+		t.Fatalf("expected Master relay restore, got %#v", spec.Storage)
+	}
+	download, err := h.service.DownloadAgentArtifact(ctx, owner, restore.ID)
+	if err != nil {
+		t.Fatalf("DownloadAgentArtifact returned error: %v", err)
+	}
+	downloaded, readErr := io.ReadAll(download.Reader)
+	closeErr := download.Reader.Close()
+	if readErr != nil || closeErr != nil {
+		t.Fatalf("read relayed restore artifact: read=%v close=%v", readErr, closeErr)
+	}
+	if !bytes.Equal(downloaded, artifact) {
+		t.Fatalf("relayed restore artifact differs: %q", downloaded)
 	}
 	if _, err := h.service.GetAgentRestoreSpec(ctx, other, restore.ID); err == nil {
 		t.Fatal("expected non-owner node to be forbidden from restore spec")

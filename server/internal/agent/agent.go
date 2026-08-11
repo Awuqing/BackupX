@@ -28,10 +28,16 @@ type Agent struct {
 
 // New 构造 Agent。
 func New(cfg *Config, version string) (*Agent, error) {
+	if err := cfg.ResolveToken(); err != nil {
+		return nil, err
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	client := NewMasterClient(cfg.Master, cfg.Token, cfg.InsecureSkipTLSVerify)
+	if err := client.ConfigureTransport(cfg.ProxyURL, cfg.CACertFile); err != nil {
+		return nil, fmt.Errorf("configure master connection: %w", err)
+	}
 	executor := NewExecutor(client, cfg.TempDir)
 	return &Agent{
 		cfg:      cfg,
@@ -93,7 +99,6 @@ func (a *Agent) heartbeatLoop(ctx context.Context, interval time.Duration) {
 func (a *Agent) heartbeatOnce(ctx context.Context) error {
 	hostname, _ := os.Hostname()
 	req := HeartbeatRequest{
-		Token:        a.cfg.Token,
 		Hostname:     hostname,
 		IPAddress:    detectLocalIP(),
 		AgentVersion: a.version,

@@ -4,11 +4,11 @@ import "time"
 
 // AgentCommand 状态常量
 const (
-	AgentCommandStatusPending   = "pending"    // 待 Agent 拉取
+	AgentCommandStatusPending    = "pending"    // 待 Agent 拉取
 	AgentCommandStatusDispatched = "dispatched" // Agent 已领取，正在执行
-	AgentCommandStatusSucceeded = "succeeded"  // 执行成功
-	AgentCommandStatusFailed    = "failed"     // 执行失败
-	AgentCommandStatusTimeout   = "timeout"    // 超时未完成
+	AgentCommandStatusSucceeded  = "succeeded"  // 执行成功
+	AgentCommandStatusFailed     = "failed"     // 执行失败
+	AgentCommandStatusTimeout    = "timeout"    // 超时未完成
 )
 
 // AgentCommand 类型常量
@@ -36,20 +36,20 @@ const (
 )
 
 // AgentCommand 代表 Master 发给某个 Agent 节点的待执行命令。
-// 使用简单的数据库队列实现：Agent 通过 token 长轮询拉取本节点 pending 命令，
+// 使用简单的数据库队列实现：Agent 通过 token 定期轮询本节点 pending 命令，
 // 执行后回写状态与结果。Master 侧通过定时检查把超时的命令标记为 timeout。
 type AgentCommand struct {
-	ID             uint       `gorm:"primaryKey" json:"id"`
-	NodeID         uint       `gorm:"column:node_id;index;not null" json:"nodeId"`
-	Type           string     `gorm:"size:32;index;not null" json:"type"`
-	Status         string     `gorm:"size:20;index;not null;default:'pending'" json:"status"`
-	Payload        string     `gorm:"type:text" json:"payload"`        // JSON
-	Result         string     `gorm:"type:text" json:"result"`         // JSON（成功结果）
-	ErrorMessage   string     `gorm:"column:error_message;type:text" json:"errorMessage"`
-	DispatchedAt   *time.Time `gorm:"column:dispatched_at" json:"dispatchedAt,omitempty"`
-	CompletedAt    *time.Time `gorm:"column:completed_at" json:"completedAt,omitempty"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	ID           uint       `gorm:"primaryKey" json:"id"`
+	NodeID       uint       `gorm:"column:node_id;not null;index:idx_agent_commands_node_status,priority:1" json:"nodeId"`
+	Type         string     `gorm:"size:32;index;not null" json:"type"`
+	Status       string     `gorm:"size:20;not null;default:'pending';index:idx_agent_commands_node_status,priority:2;index:idx_agent_commands_status_dispatched,priority:1;index:idx_agent_commands_status_created,priority:1" json:"status"`
+	Payload      string     `gorm:"type:text" json:"payload"` // JSON
+	Result       string     `gorm:"type:text" json:"result"`  // JSON（成功结果）
+	ErrorMessage string     `gorm:"column:error_message;type:text" json:"errorMessage"`
+	DispatchedAt *time.Time `gorm:"column:dispatched_at;index:idx_agent_commands_status_dispatched,priority:2" json:"dispatchedAt,omitempty"`
+	CompletedAt  *time.Time `gorm:"column:completed_at" json:"completedAt,omitempty"`
+	CreatedAt    time.Time  `gorm:"index:idx_agent_commands_status_created,priority:2" json:"createdAt"`
+	UpdatedAt    time.Time  `json:"updatedAt"`
 }
 
 func (AgentCommand) TableName() string {

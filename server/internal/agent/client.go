@@ -4,10 +4,14 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -21,23 +25,64 @@ type MasterClient struct {
 
 // NewMasterClient 构造 Master 客户端。
 func NewMasterClient(baseURL, token string, insecureTLS bool) *MasterClient {
-	transport := &http.Transport{}
-	if insecureTLS {
-		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12}
+	if transport.TLSClientConfig != nil {
+		tlsConfig = transport.TLSClientConfig.Clone()
+		tlsConfig.MinVersion = tls.VersionTLS12
 	}
+	// 仅用于用户显式开启的测试模式。生产环境应配置受信 CA。
+	tlsConfig.InsecureSkipVerify = insecureTLS // #nosec G402
+	transport.TLSClientConfig = tlsConfig
 	return &MasterClient{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
 		httpClient: &http.Client{
 			Timeout:   120 * time.Second,
 			Transport: transport,
+			// Agent Token 是自定义认证头。禁止自动重定向，避免代理或错误
+			// 配置把它转发到另一个主机；Master URL 必须直接指向 API。
+			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 }
 
+// ConfigureTransport 应用显式代理和私有 CA。默认 Transport 已保留
+// ProxyFromEnvironment，因此 ProxyURL 留空时 HTTP_PROXY/HTTPS_PROXY/NO_PROXY 生效。
+func (c *MasterClient) ConfigureTransport(proxyURL, caCertFile string) error {
+	transport, ok := c.httpClient.Transport.(*http.Transport)
+	if !ok {
+		return errors.New("agent http transport has unexpected type")
+	}
+	if strings.TrimSpace(proxyURL) != "" {
+		parsedProxy, err := url.Parse(strings.TrimSpace(proxyURL))
+		if err != nil {
+			return fmt.Errorf("parse proxy URL: %w", err)
+		}
+		transport.Proxy = http.ProxyURL(parsedProxy)
+	}
+	if strings.TrimSpace(caCertFile) == "" {
+		return nil
+	}
+	pemData, err := os.ReadFile(strings.TrimSpace(caCertFile))
+	if err != nil {
+		return fmt.Errorf("read CA certificate: %w", err)
+	}
+	roots, err := x509.SystemCertPool()
+	if err != nil || roots == nil {
+		roots = x509.NewCertPool()
+	}
+	if !roots.AppendCertsFromPEM(pemData) {
+		return errors.New("CA certificate file does not contain a valid PEM certificate")
+	}
+	transport.TLSClientConfig.RootCAs = roots
+	return nil
+}
+
 // HeartbeatRequest Agent 上报心跳的请求
 type HeartbeatRequest struct {
-	Token        string `json:"token"`
 	Hostname     string `json:"hostname,omitempty"`
 	IPAddress    string `json:"ipAddress,omitempty"`
 	AgentVersion string `json:"agentVersion,omitempty"`
@@ -125,10 +170,11 @@ type TaskSpec struct {
 
 // StorageTargetConfig 与 service.AgentStorageTargetConfig 对齐
 type StorageTargetConfig struct {
-	ID     uint            `json:"id"`
-	Type   string          `json:"type"`
-	Name   string          `json:"name"`
-	Config json.RawMessage `json:"config"`
+	ID           uint            `json:"id"`
+	Type         string          `json:"type"`
+	Name         string          `json:"name"`
+	Config       json.RawMessage `json:"config"`
+	TransferMode string          `json:"transferMode"`
 }
 
 // GetTaskSpec 拉取任务规格
@@ -149,6 +195,7 @@ type RecordUpdate struct {
 	Checksum             string              `json:"checksum,omitempty"`
 	StoragePath          string              `json:"storagePath,omitempty"`
 	StorageTargetID      uint                `json:"storageTargetId,omitempty"`
+	StorageTransferMode  string              `json:"storageTransferMode,omitempty"`
 	StorageUploadResults []StorageResultItem `json:"storageUploadResults,omitempty"`
 	ErrorMessage         string              `json:"errorMessage,omitempty"`
 	LogAppend            string              `json:"logAppend,omitempty"`
@@ -160,6 +207,7 @@ type StorageResultItem struct {
 	Status            string `json:"status"`
 	StoragePath       string `json:"storagePath,omitempty"`
 	FileSize          int64  `json:"fileSize,omitempty"`
+	TransferMode      string `json:"transferMode,omitempty"`
 	Error             string `json:"error,omitempty"`
 }
 
@@ -167,6 +215,39 @@ type StorageResultItem struct {
 func (c *MasterClient) UpdateRecord(ctx context.Context, recordID uint, update RecordUpdate) error {
 	path := fmt.Sprintf("/api/agent/records/%d", recordID)
 	return c.do(ctx, http.MethodPost, path, update, nil)
+}
+
+// UploadArtifact streams an artifact through the Master for storage targets
+// that are not directly reachable from the Agent.
+func (c *MasterClient) UploadArtifact(ctx context.Context, recordID, targetID uint, objectKey string, size int64, checksum string, reader io.Reader) error {
+	path := fmt.Sprintf("/api/agent/records/%d/artifacts/%d", recordID, targetID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.baseURL+path, reader)
+	if err != nil {
+		return err
+	}
+	// The executor owns and closes the artifact file. Prevent net/http from
+	// closing that underlying reader when it finishes the request body.
+	req.Body = io.NopCloser(reader)
+	req.ContentLength = size
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-Agent-Token", c.token)
+	req.Header.Set("X-BackupX-Object-Key", objectKey)
+	req.Header.Set("X-BackupX-SHA256", checksum)
+	client := *c.httpClient
+	client.Timeout = 0
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("relay artifact to Master: %w", err)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	closeErr := resp.Body.Close()
+	if readErr != nil || closeErr != nil {
+		return errors.Join(readErr, closeErr)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("relay artifact to Master: http %d: %s", resp.StatusCode, string(data))
+	}
+	return nil
 }
 
 // RestoreSpec 与 service.AgentRestoreSpec 对齐
@@ -208,6 +289,27 @@ func (c *MasterClient) GetRestoreSpec(ctx context.Context, restoreRecordID uint)
 		return nil, err
 	}
 	return &spec, nil
+}
+
+func (c *MasterClient) DownloadRestoreArtifact(ctx context.Context, restoreRecordID uint) (io.ReadCloser, error) {
+	path := fmt.Sprintf("/api/agent/restores/%d/artifact", restoreRecordID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Agent-Token", c.token)
+	client := *c.httpClient
+	client.Timeout = 0
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("download relayed artifact from Master: %w", err)
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return resp.Body, nil
+	}
+	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	closeErr := resp.Body.Close()
+	return nil, errors.Join(fmt.Errorf("download relayed artifact from Master: http %d: %s", resp.StatusCode, string(data)), readErr, closeErr)
 }
 
 // UpdateRestore 上报恢复记录的状态/日志

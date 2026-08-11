@@ -280,6 +280,10 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
               { label: '文件名', value: record.fileName || '-' },
               { label: '文件大小', value: formatBytes(record.fileSize) },
               { label: '存储路径', value: record.storagePath || '-' },
+              ...(record.storageTransferMode ? [{
+                label: '传输路径',
+                value: record.storageTransferMode === 'master_relay' ? 'Master 流式中转' : 'Agent 直传',
+              }] : []),
               { label: '开始时间', value: formatDateTime(record.startedAt) },
               { label: '完成时间', value: formatDateTime(record.completedAt) },
               { label: '耗时', value: formatDuration(record.durationSeconds) },
@@ -316,14 +320,16 @@ export function BackupRecordLogDrawer({ visible, recordId, onCancel, onChanged }
               </Button>
             )}
           </Space>
-          {record.storageUploadResults && record.storageUploadResults.length > 1 && (
+          {record.storageUploadResults && (record.storageUploadResults.length > 1 || record.storageUploadResults.some((result) => result.transferMode)) && (
             <div>
               <Typography.Title heading={6}>存储目标上传结果</Typography.Title>
               <Descriptions
                 column={1}
                 data={record.storageUploadResults.map((r: StorageUploadResultItem) => ({
                   label: r.storageTargetName,
-                  value: r.status === 'success' ? '上传成功' : `上传失败: ${r.error || '未知错误'}`,
+                  value: r.status === 'success'
+                    ? `上传成功${r.transferMode === 'master_relay' ? ' · Master 流式中转' : r.transferMode === 'direct' ? ' · Agent 直传' : ''}`
+                    : `上传失败: ${r.error || '未知错误'}`,
                 }))}
               />
             </div>

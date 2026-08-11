@@ -11,6 +11,7 @@ import { ReplicationRecordsPage } from '../pages/replication-records/Replication
 import { TaskTemplatesPage } from '../pages/task-templates/TaskTemplatesPage'
 import { UsersPage } from '../pages/admin/UsersPage'
 import { ApiKeysPage } from '../pages/admin/ApiKeysPage'
+import { AdminLayout } from '../pages/admin/AdminLayout'
 import { GoogleDriveCallbackPage } from '../pages/storage-targets/GoogleDriveCallbackPage'
 import { StorageTargetsPage } from '../pages/storage-targets/StorageTargetsPage'
 import { SettingsPage } from '../pages/settings/SettingsPage'
@@ -40,8 +41,11 @@ export function RouterView() {
         <Route path="verify/records" element={<VerificationRecordsPage />} />
         <Route path="replication/records" element={<ReplicationRecordsPage />} />
         <Route path="task-templates" element={<TaskTemplatesPage />} />
-        <Route path="admin/users" element={<UsersPage />} />
-        <Route path="admin/api-keys" element={<ApiKeysPage />} />
+        <Route path="admin" element={<AdminLayout />}>
+          <Route index element={<Navigate to="users" replace />} />
+          <Route path="users" element={<UsersPage />} />
+          <Route path="api-keys" element={<ApiKeysPage />} />
+        </Route>
         <Route path="storage-targets" element={<StorageTargetsPage />} />
         <Route path="storage-targets/google-drive/callback" element={<GoogleDriveCallbackPage />} />
         <Route path="settings" element={<SettingsPage />} />

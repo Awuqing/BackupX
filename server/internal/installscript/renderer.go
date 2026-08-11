@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"fmt"
 	"net/url"
+	"path"
 	"strings"
 	"text/template"
 
@@ -30,6 +31,8 @@ type Context struct {
 	DownloadBase  string
 	InstallPrefix string
 	NodeID        uint
+	ProxyURL      string
+	CACertFile    string
 }
 
 // DownloadBaseFor 将下载源枚举转换为具体 URL 前缀。
@@ -84,6 +87,12 @@ func RenderComposeYaml(ctx Context) (string, error) {
 // 这些字段被直接写入 shell 双引号字符串和 YAML 双引号值；不做校验会带来
 // 注入风险（如 MasterURL 含 `"\nCOMMAND:` 可逃逸 YAML 结构）。
 func validateContext(ctx Context) error {
+	if ctx.Mode != model.InstallModeSystemd && ctx.Mode != model.InstallModeDocker && ctx.Mode != model.InstallModeForeground {
+		return fmt.Errorf("unsupported install mode %q", ctx.Mode)
+	}
+	if ctx.Arch != model.InstallArchAmd64 && ctx.Arch != model.InstallArchArm64 && ctx.Arch != model.InstallArchAuto {
+		return fmt.Errorf("unsupported install architecture %q", ctx.Arch)
+	}
 	if err := validateMasterURL(ctx.MasterURL); err != nil {
 		return err
 	}
@@ -92,6 +101,42 @@ func validateContext(ctx Context) error {
 	}
 	if err := validateAgentVersion(ctx.AgentVersion); err != nil {
 		return err
+	}
+	if err := validateProxyURL(ctx.ProxyURL); err != nil {
+		return err
+	}
+	if err := validateCACertFile(ctx.CACertFile); err != nil {
+		return err
+	}
+	if !path.IsAbs(ctx.InstallPrefix) || path.Clean(ctx.InstallPrefix) != ctx.InstallPrefix {
+		return fmt.Errorf("install prefix must be a clean absolute path without shell metacharacters")
+	}
+	for _, c := range ctx.InstallPrefix {
+		switch {
+		case c >= '0' && c <= '9':
+		case c >= 'a' && c <= 'z':
+		case c >= 'A' && c <= 'Z':
+		case c == '/' || c == '.' || c == '_' || c == '-' || c == '+':
+		default:
+			return fmt.Errorf("install prefix contains illegal character %q", c)
+		}
+	}
+	if err := validateDownloadBase(ctx.DownloadBase); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateDownloadBase(raw string) error {
+	if strings.ContainsAny(raw, " \t\r\n\"'`$\\") {
+		return fmt.Errorf("download base contains illegal characters")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("download base must be an absolute http(s) URL")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("download base must not contain credentials, query or fragment")
 	}
 	return nil
 }
@@ -113,6 +158,43 @@ func validateMasterURL(raw string) error {
 	}
 	if u.Host == "" {
 		return fmt.Errorf("master URL missing host")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("master URL must not contain credentials, query or fragment")
+	}
+	return nil
+}
+
+func validateProxyURL(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if strings.ContainsAny(raw, " \t\r\n\"'`$\\") {
+		return fmt.Errorf("proxy URL contains illegal characters")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return fmt.Errorf("invalid proxy URL")
+	}
+	switch u.Scheme {
+	case "http", "https", "socks5", "socks5h":
+	default:
+		return fmt.Errorf("proxy URL scheme must be http, https, socks5 or socks5h")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return fmt.Errorf("proxy URL must not contain credentials, path, query or fragment")
+	}
+	return nil
+}
+
+func validateCACertFile(file string) error {
+	file = strings.TrimSpace(file)
+	if file == "" {
+		return nil
+	}
+	if !path.IsAbs(file) || path.Clean(file) != file || strings.ContainsAny(file, " \t\r\n\"'`$\\") {
+		return fmt.Errorf("CA certificate path must be a clean absolute path without shell metacharacters")
 	}
 	return nil
 }
@@ -160,6 +242,9 @@ func validateAgentVersion(v string) error {
 }
 
 func withDefaults(ctx Context) Context {
+	if ctx.Arch == "" {
+		ctx.Arch = model.InstallArchAuto
+	}
 	if ctx.InstallPrefix == "" {
 		ctx.InstallPrefix = "/opt/backupx-agent"
 	}

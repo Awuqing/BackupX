@@ -10,6 +10,8 @@
   <p align="center">
     <a href="https://github.com/Awuqing/BackupX/stargazers"><img src="https://img.shields.io/github/stars/Awuqing/BackupX?style=flat-square&color=f5c542" alt="Stars"></a>
     <a href="https://github.com/Awuqing/BackupX/releases"><img src="https://img.shields.io/github/v/release/Awuqing/BackupX?style=flat-square&color=brightgreen" alt="Release"></a>
+    <a href="https://github.com/Awuqing/BackupX/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Awuqing/BackupX/ci.yml?branch=main&style=flat-square" alt="CI"></a>
+    <a href="https://github.com/Awuqing/BackupX/actions/workflows/docs.yml"><img src="https://img.shields.io/github/actions/workflow/status/Awuqing/BackupX/docs.yml?branch=main&style=flat-square&label=docs" alt="Docs"></a>
     <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go" alt="Go">
     <img src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react" alt="React">
     <img src="https://img.shields.io/badge/SQLite-embedded-003B57?style=flat-square&logo=sqlite" alt="SQLite">
@@ -43,37 +45,62 @@
 | **SAP HANA Backint Agent** | Built-in Backint protocol — HANA's native interface routes data directly to any BackupX storage backend |
 | **70+ Storage Backends** | Alibaba OSS, Tencent COS, Qiniu, S3, Google Drive, WebDAV, FTP + SFTP, Azure Blob, Dropbox, OneDrive and dozens more via rclone |
 | **Scheduling** | Cron + visual editor + auto-retention (by days/count + empty-directory cleanup) |
-| **Multi-Node Cluster** | Master-Agent mode via HTTP long-polling — Agents run tasks locally, upload straight to storage, no reverse connectivity required |
+| **Multi-Node Cluster** | Outbound-only Master-Agent polling with proxy, private-CA, and SSH-bastion support; Agents run tasks locally with no reverse connectivity required |
 | **Security** | JWT + bcrypt + AES-256-GCM encrypted config + optional backup encryption + full audit log |
 | **Notifications** | Email / Webhook / Telegram on success or failure |
 | **Observability** | Prometheus `/metrics` endpoint + `/health` + `/ready` probes + SLA breach gauge |
 | **Audit Webhook** | HMAC-SHA256 signed forwarding to SIEM / WORM storage for compliance (SOC2 / GDPR) |
 | **Flow Control** | Per-node bandwidth cap + per-node concurrency limit — tune big/small nodes independently |
-| **Deployment** | Single binary + embedded SQLite, Docker one-click, zero external dependencies |
+| **Deployment** | Single binary + embedded SQLite; no external control-plane database (database backup tools are required on the execution host) |
 
 ## Quick Start
 
-```bash
-# Docker (recommended)
-docker run -d --name backupx -p 8340:8340 -v backupx-data:/app/data awuqing/backupx:latest
+Docker Compose (recommended):
 
-# Or prebuilt archive
+```bash
+git clone --depth 1 https://github.com/Awuqing/BackupX.git
+cd BackupX
+docker compose up -d
+```
+
+Prebuilt archive:
+
+```bash
 curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-linux-amd64.tar.gz
-tar xzf backupx-*.tar.gz && cd backupx-* && sudo ./install.sh
+curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-linux-amd64.tar.gz.sha256
+sha256sum -c backupx-linux-amd64.tar.gz.sha256
+tar xzf backupx-linux-amd64.tar.gz
+cd backupx-*-linux-amd64
+sudo ./install.sh
+```
+
+Build and install on bare metal:
+
+```bash
+git clone https://github.com/Awuqing/BackupX.git
+cd BackupX
+make build
+sudo ./deploy/install.sh
 ```
 
 For ARM64 hosts, use `backupx-linux-arm64.tar.gz`. The archive contains `backupx`, `web/`, `config.example.yaml`, and `install.sh`; run `install.sh` from the extracted directory.
 
-Open `http://your-server:8340`, create the admin account, then follow the [5-minute Quick Start](https://awuqing.github.io/BackupX/docs/getting-started/quick-start).
+The Compose quick start defaults to `latest` for evaluation. Pin `BACKUPX_IMAGE` to a release tag or digest and review the security and recovery guides before production.
+
+Open `http://your-server:8340`, choose English or Chinese on the setup screen, create the first administrator account, then follow the [5-minute Quick Start](https://awuqing.github.io/BackupX/docs/getting-started/quick-start).
 
 ## Documentation
 
-The full docs live at **https://awuqing.github.io/BackupX/** — Getting Started, Deployment, SAP HANA, Multi-Node Cluster, API reference, and more. Switch to Chinese via the language dropdown in the top-right nav.
+The full docs live at **https://awuqing.github.io/BackupX/** — Getting Started, Deployment, Operations, SAP HANA, Multi-Node Cluster, API reference, and more. Switch to Chinese via the language dropdown in the top-right nav.
 
 Quick links:
 
 - [Quick Start](https://awuqing.github.io/BackupX/docs/getting-started/quick-start) — first backup in five minutes
 - [Installation](https://awuqing.github.io/BackupX/docs/getting-started/installation) — Docker / bare metal / source
+- [Upgrade & Recovery](https://awuqing.github.io/BackupX/docs/operations/upgrade-recovery) — snapshots, upgrades, rollback, and disaster recovery
+- [Security Hardening](https://awuqing.github.io/BackupX/docs/operations/security) — production exposure, roles, and secrets
+- [Monitoring & Alerts](https://awuqing.github.io/BackupX/docs/operations/monitoring) — probes, metrics, and initial alerts
+- [Troubleshooting](https://awuqing.github.io/BackupX/docs/operations/troubleshooting) — Master, proxy, Agent, and task diagnostics
 - [Multi-Node Cluster](https://awuqing.github.io/BackupX/docs/features/multi-node) — deploy the Agent on remote servers
 - [SAP HANA Support](https://awuqing.github.io/BackupX/docs/features/sap-hana) — hdbsql Runner and native Backint
 - [API Reference](https://awuqing.github.io/BackupX/docs/reference/api) — REST endpoints

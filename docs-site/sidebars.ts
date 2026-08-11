@@ -24,6 +24,16 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Operations',
+      items: [
+        'operations/upgrade-recovery',
+        'operations/security',
+        'operations/monitoring',
+        'operations/troubleshooting',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Features',
       items: [
         'features/backup-types',

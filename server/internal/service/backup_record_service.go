@@ -23,22 +23,23 @@ type BackupRecordListInput struct {
 }
 
 type BackupRecordSummary struct {
-	ID                uint       `json:"id"`
-	TaskID            uint       `json:"taskId"`
-	TaskName          string     `json:"taskName"`
-	StorageTargetID   uint       `json:"storageTargetId"`
-	StorageTargetName string     `json:"storageTargetName"`
-	Status            string     `json:"status"`
-	FileName          string     `json:"fileName"`
-	FileSize          int64      `json:"fileSize"`
-	Checksum          string     `json:"checksum"`
-	StoragePath       string     `json:"storagePath"`
-	DurationSeconds   int        `json:"durationSeconds"`
-	ErrorMessage      string     `json:"errorMessage"`
-	StartedAt         time.Time  `json:"startedAt"`
-	CompletedAt       *time.Time `json:"completedAt,omitempty"`
-	Locked            bool       `json:"locked"`
-	BackupKind        string     `json:"backupKind"`
+	ID                  uint       `json:"id"`
+	TaskID              uint       `json:"taskId"`
+	TaskName            string     `json:"taskName"`
+	StorageTargetID     uint       `json:"storageTargetId"`
+	StorageTargetName   string     `json:"storageTargetName"`
+	Status              string     `json:"status"`
+	FileName            string     `json:"fileName"`
+	FileSize            int64      `json:"fileSize"`
+	Checksum            string     `json:"checksum"`
+	StoragePath         string     `json:"storagePath"`
+	StorageTransferMode string     `json:"storageTransferMode,omitempty"`
+	DurationSeconds     int        `json:"durationSeconds"`
+	ErrorMessage        string     `json:"errorMessage"`
+	StartedAt           time.Time  `json:"startedAt"`
+	CompletedAt         *time.Time `json:"completedAt,omitempty"`
+	Locked              bool       `json:"locked"`
+	BackupKind          string     `json:"backupKind"`
 }
 
 type BackupRecordDetail struct {
@@ -184,22 +185,23 @@ func (s *BackupRecordService) SetLock(ctx context.Context, id uint, locked bool)
 
 func toBackupRecordSummary(item *model.BackupRecord) BackupRecordSummary {
 	return BackupRecordSummary{
-		ID:                item.ID,
-		TaskID:            item.TaskID,
-		TaskName:          item.Task.Name,
-		StorageTargetID:   item.StorageTargetID,
-		StorageTargetName: item.StorageTarget.Name,
-		Status:            item.Status,
-		FileName:          item.FileName,
-		FileSize:          item.FileSize,
-		Checksum:          item.Checksum,
-		StoragePath:       item.StoragePath,
-		DurationSeconds:   item.DurationSeconds,
-		ErrorMessage:      item.ErrorMessage,
-		StartedAt:         item.StartedAt,
-		CompletedAt:       item.CompletedAt,
-		Locked:            item.Locked,
-		BackupKind:        item.BackupKind,
+		ID:                  item.ID,
+		TaskID:              item.TaskID,
+		TaskName:            item.Task.Name,
+		StorageTargetID:     item.StorageTargetID,
+		StorageTargetName:   item.StorageTarget.Name,
+		Status:              item.Status,
+		FileName:            item.FileName,
+		FileSize:            item.FileSize,
+		Checksum:            item.Checksum,
+		StoragePath:         item.StoragePath,
+		StorageTransferMode: item.StorageTransferMode,
+		DurationSeconds:     item.DurationSeconds,
+		ErrorMessage:        item.ErrorMessage,
+		StartedAt:           item.StartedAt,
+		CompletedAt:         item.CompletedAt,
+		Locked:              item.Locked,
+		BackupKind:          item.BackupKind,
 	}
 }
 

@@ -17,10 +17,28 @@ func newTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatalf("open: %v", err)
 	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		t.Fatalf("get sql database: %v", err)
+	}
+	t.Cleanup(func() { _ = sqlDB.Close() })
 	if err := db.AutoMigrate(&model.AgentCommand{}); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
 	return db
+}
+
+func TestAgentCommandQueueIndexes(t *testing.T) {
+	db := newTestDB(t)
+	for _, name := range []string{
+		"idx_agent_commands_node_status",
+		"idx_agent_commands_status_dispatched",
+		"idx_agent_commands_status_created",
+	} {
+		if !db.Migrator().HasIndex(&model.AgentCommand{}, name) {
+			t.Fatalf("missing Agent command queue index %s", name)
+		}
+	}
 }
 
 func TestAgentCommandRepository_ClaimPending(t *testing.T) {

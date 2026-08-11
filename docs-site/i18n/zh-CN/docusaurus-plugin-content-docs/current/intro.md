@@ -21,7 +21,7 @@ description: BackupX——自托管服务器备份管理平台概览。
 ```
 [Web 控制台] ─── JWT ──→ [Master (backupx)]
                              │
-                             │ HTTP 长轮询（Token 认证）
+                             │ Agent 主动 HTTP 轮询（Token 认证）
                              ▼
                          [Agent (backupx agent)]
                              │
@@ -35,6 +35,8 @@ description: BackupX——自托管服务器备份管理平台概览。
 
 - **第一次使用 BackupX？** 先看 [快速开始](/docs/getting-started/quick-start)
 - **生产部署？** 参考 [部署指南](/docs/deployment/docker)
+- **规划升级或灾备？** 按[升级与恢复](/docs/operations/upgrade-recovery)执行
+- **生产运维？** 先阅读[安全加固](/docs/operations/security)与[监控和告警](/docs/operations/monitoring)
 - **SAP HANA 用户？** 支持 `hdbsql` Runner 和原生 Backint 两种模式 — 详见 [SAP HANA](/docs/features/sap-hana)
 - **管理多台服务器？** 参考 [多节点集群](/docs/features/multi-node)
 - **程序化集成？** 参考 [API 参考](/docs/reference/api)

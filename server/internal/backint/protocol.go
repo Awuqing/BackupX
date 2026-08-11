@@ -21,10 +21,10 @@ import (
 type Function string
 
 const (
-	FunctionBackup   Function = "backup"
-	FunctionRestore  Function = "restore"
-	FunctionInquire  Function = "inquire"
-	FunctionDelete   Function = "delete"
+	FunctionBackup  Function = "backup"
+	FunctionRestore Function = "restore"
+	FunctionInquire Function = "inquire"
+	FunctionDelete  Function = "delete"
 )
 
 // BackupRequest 是 BACKUP 操作的单条请求。

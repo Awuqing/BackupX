@@ -43,7 +43,7 @@ type LocalDiskFactory struct{}
 func NewLocalDiskFactory() LocalDiskFactory { return LocalDiskFactory{} }
 
 func (LocalDiskFactory) Type() storage.ProviderType { return storage.ProviderTypeLocalDisk }
-func (LocalDiskFactory) SensitiveFields() []string   { return nil }
+func (LocalDiskFactory) SensitiveFields() []string  { return nil }
 
 func (LocalDiskFactory) New(ctx context.Context, rawConfig map[string]any) (storage.StorageProvider, error) {
 	cfg, err := storage.DecodeConfig[storage.LocalDiskConfig](rawConfig)
@@ -66,7 +66,7 @@ type S3Factory struct{}
 func NewS3Factory() S3Factory { return S3Factory{} }
 
 func (S3Factory) Type() storage.ProviderType { return storage.ProviderTypeS3 }
-func (S3Factory) SensitiveFields() []string   { return []string{"accessKeyId", "secretAccessKey"} }
+func (S3Factory) SensitiveFields() []string  { return []string{"accessKeyId", "secretAccessKey"} }
 
 func (S3Factory) New(ctx context.Context, rawConfig map[string]any) (storage.StorageProvider, error) {
 	cfg, err := storage.DecodeConfig[storage.S3Config](rawConfig)
@@ -116,7 +116,7 @@ type WebDAVFactory struct{}
 func NewWebDAVFactory() WebDAVFactory { return WebDAVFactory{} }
 
 func (WebDAVFactory) Type() storage.ProviderType { return storage.ProviderTypeWebDAV }
-func (WebDAVFactory) SensitiveFields() []string   { return []string{"username", "password"} }
+func (WebDAVFactory) SensitiveFields() []string  { return []string{"username", "password"} }
 
 func (WebDAVFactory) New(ctx context.Context, rawConfig map[string]any) (storage.StorageProvider, error) {
 	cfg, err := storage.DecodeConfig[storage.WebDAVConfig](rawConfig)
@@ -187,7 +187,7 @@ type FTPFactory struct{}
 func NewFTPFactory() FTPFactory { return FTPFactory{} }
 
 func (FTPFactory) Type() storage.ProviderType { return storage.ProviderTypeFTP }
-func (FTPFactory) SensitiveFields() []string   { return []string{"username", "password"} }
+func (FTPFactory) SensitiveFields() []string  { return []string{"username", "password"} }
 
 func (FTPFactory) New(ctx context.Context, rawConfig map[string]any) (storage.StorageProvider, error) {
 	cfg, err := storage.DecodeConfig[storage.FTPConfig](rawConfig)
@@ -228,7 +228,7 @@ type AliyunOSSFactory struct{}
 func NewAliyunOSSFactory() AliyunOSSFactory { return AliyunOSSFactory{} }
 
 func (AliyunOSSFactory) Type() storage.ProviderType { return storage.ProviderTypeAliyunOSS }
-func (AliyunOSSFactory) SensitiveFields() []string   { return []string{"accessKeyId", "secretAccessKey"} }
+func (AliyunOSSFactory) SensitiveFields() []string  { return []string{"accessKeyId", "secretAccessKey"} }
 
 // AliyunConfig 是阿里云 OSS 的用户配置。
 type AliyunConfig struct {
@@ -269,7 +269,9 @@ type TencentCOSFactory struct{}
 func NewTencentCOSFactory() TencentCOSFactory { return TencentCOSFactory{} }
 
 func (TencentCOSFactory) Type() storage.ProviderType { return storage.ProviderTypeTencentCOS }
-func (TencentCOSFactory) SensitiveFields() []string   { return []string{"accessKeyId", "secretAccessKey"} }
+func (TencentCOSFactory) SensitiveFields() []string {
+	return []string{"accessKeyId", "secretAccessKey"}
+}
 
 // TencentConfig 是腾讯云 COS 的用户配置。
 type TencentConfig struct {
@@ -305,7 +307,7 @@ type QiniuKodoFactory struct{}
 func NewQiniuKodoFactory() QiniuKodoFactory { return QiniuKodoFactory{} }
 
 func (QiniuKodoFactory) Type() storage.ProviderType { return storage.ProviderTypeQiniuKodo }
-func (QiniuKodoFactory) SensitiveFields() []string   { return []string{"accessKeyId", "secretAccessKey"} }
+func (QiniuKodoFactory) SensitiveFields() []string  { return []string{"accessKeyId", "secretAccessKey"} }
 
 // QiniuConfig 是七牛云 Kodo 的用户配置。
 type QiniuConfig struct {
@@ -355,7 +357,9 @@ type RcloneFactory struct{}
 func NewRcloneFactory() RcloneFactory { return RcloneFactory{} }
 
 func (RcloneFactory) Type() storage.ProviderType { return storage.ProviderTypeRclone }
-func (RcloneFactory) SensitiveFields() []string   { return []string{"pass", "password", "secret_access_key", "client_secret", "token"} }
+func (RcloneFactory) SensitiveFields() []string {
+	return []string{"pass", "password", "secret_access_key", "client_secret", "token"}
+}
 
 func (RcloneFactory) New(ctx context.Context, rawConfig map[string]any) (storage.StorageProvider, error) {
 	backend, _ := rawConfig["backend"].(string)
@@ -462,8 +466,10 @@ func NewBackendFactory(backendType string) GenericBackendFactory {
 	return GenericBackendFactory{backendType: backendType, sensitive: sensitive}
 }
 
-func (f GenericBackendFactory) Type() storage.ProviderType { return storage.ProviderType(f.backendType) }
-func (f GenericBackendFactory) SensitiveFields() []string   { return f.sensitive }
+func (f GenericBackendFactory) Type() storage.ProviderType {
+	return storage.ProviderType(f.backendType)
+}
+func (f GenericBackendFactory) SensitiveFields() []string { return f.sensitive }
 
 func (f GenericBackendFactory) New(ctx context.Context, rawConfig map[string]any) (storage.StorageProvider, error) {
 	root, _ := rawConfig["root"].(string)

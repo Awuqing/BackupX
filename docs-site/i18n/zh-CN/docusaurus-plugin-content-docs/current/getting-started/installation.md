@@ -10,73 +10,65 @@ BackupX 以单个静态二进制发布。三种安装方式，按实际环境选
 
 ## Docker（推荐）
 
-无需克隆仓库：
+下载仓库中的正式加固 Compose 文件并启动：
 
 ```bash
-docker run -d --name backupx \
-  -p 8340:8340 \
-  -v backupx-data:/app/data \
-  awuqing/backupx:latest
+curl -fLO https://raw.githubusercontent.com/Awuqing/BackupX/main/docker-compose.yml
+docker compose up -d
+docker compose ps
 ```
 
-或使用 `docker compose`：
+该 Compose 配置启用 init 与优雅停止，持久化 `/app/data`，以非特权用户运行应用，删除不必要能力，并通过 `/ready` 检查健康。[`awuqing/backupx`](https://hub.docker.com/r/awuqing/backupx) 镜像支持 `linux/amd64` 和 `linux/arm64`。
 
-```yaml title="docker-compose.yml"
-services:
-  backupx:
-    image: awuqing/backupx:latest
-    container_name: backupx
-    restart: unless-stopped
-    ports:
-      - "8340:8340"
-    volumes:
-      - backupx-data:/app/data
-      # 挂载需要备份的宿主机目录（按需添加）：
-      # - /var/www:/mnt/www:ro
-      # - /etc/nginx:/mnt/nginx-conf:ro
-    environment:
-      - TZ=Asia/Shanghai
+生产环境应创建受保护的 `.env`，固定 Release 而不是依赖 `latest`：
 
-volumes:
-  backupx-data:
+```dotenv
+BACKUPX_IMAGE=awuqing/backupx:vX.Y.Z
+BACKUPX_BIND_ADDRESS=127.0.0.1
+TZ=Asia/Shanghai
 ```
 
-Docker Hub：[`awuqing/backupx`](https://hub.docker.com/r/awuqing/backupx)，支持 linux/amd64 和 linux/arm64。
+反向代理位于同一主机时使用回环绑定；需要直接访问时，应选择明确的监听接口并配置防火墙。宿主机备份源应只读挂载，或在源主机部署 Agent。完整配置见 [Docker 部署](../deployment/docker)。
 
 ## 预编译包（裸机）
 
 从 [Releases 页面](https://github.com/Awuqing/BackupX/releases) 下载对应平台的压缩包，执行安装脚本：
 
 ```bash
+sha256sum -c backupx-v*-linux-amd64.tar.gz.sha256
 tar xzf backupx-v*-linux-amd64.tar.gz && cd backupx-*
-sudo ./install.sh        # 创建系统用户、安装到 /opt/backupx、配置 systemd + Nginx
+sudo ./install.sh        # 创建系统用户、安装到 /opt/backupx、配置 systemd
 ```
 
 安装脚本会自动：
 
 1. 创建 `backupx` 系统用户
-2. 安装二进制到 `/opt/backupx/backupx`
-3. 生成 `/opt/backupx/config.yaml`（含安全默认值）
+2. 安装二进制到 `/opt/backupx/bin/backupx`，并把 Web 控制台安装到 `/opt/backupx/web`
+3. 生成 `/etc/backupx/config.yaml`（含安全默认值）
 4. 注册并启用 `backupx.service` systemd 单元
-5. （可选）配置 Nginx 反向代理
+5. 默认不修改 Nginx；只有显式设置 `INSTALL_NGINX=1` 时才安装模板
+6. 等待 `/api/auth/setup/status` 就绪；启动失败时输出 systemd 诊断并返回非零状态
 
 ## 从源码构建
 
-依赖：Go ≥ 1.25，Node.js ≥ 20。
+依赖：Go ≥ 1.25、Node.js 24 LTS、npm 11 或更高版本。
 
 ```bash
 git clone https://github.com/Awuqing/BackupX.git && cd BackupX
 make build
-# 或使用国内镜像加速构建 Docker
-make docker-cn
+sudo ./deploy/install.sh
 ```
 
 `make build` 完成后，二进制位于 `server/bin/backupx`，构建好的 Web UI 位于 `web/dist/`。
+安装脚本会直接使用这两个路径，不需要 Docker 运行时。如果已有配置修改了默认端口，可覆盖就绪检查地址，例如：`sudo HEALTH_URL=http://127.0.0.1:9000/api/auth/setup/status ./deploy/install.sh`。
+
+自动安装兜底虚拟主机可能接管现有站点，因此 Nginx 模板改为显式启用。请先审核 `deploy/nginx.conf`，确认适合当前主机后再执行 `sudo INSTALL_NGINX=1 ./deploy/install.sh`。
 
 ## 验证安装
 
 ```bash
-backupx --version           # 输出如 v1.6.0
+/opt/backupx/bin/backupx --version
+curl -fsS http://127.0.0.1:8340/api/auth/setup/status
 ```
 
-打开浏览器访问 `http://your-server:8340`，会进入初始化管理员账户页面。
+打开浏览器访问 `http://your-server:8340`，可在右上角选择 **中文** 或 **English**。全新数据库会显示“系统初始化 / System setup”，在这里创建首个管理员用户名和密码。如果没有出现初始化表单，请先重试上面的状态接口，不要直接尝试登录。

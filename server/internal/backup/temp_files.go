@@ -55,6 +55,17 @@ func BuildStorageKey(backupType string, startedAt time.Time, fileName string) st
 	return filepath.ToSlash(filepath.Join("BackupX", typeName, startedAt.UTC().Format("060102"), fileName))
 }
 
+// BuildRecordStorageKey gives remote-Agent artifacts a record-owned namespace.
+// The Master validates this namespace before accepting a relayed upload, so one
+// Agent cannot overwrite another record's object on centrally mounted storage.
+func BuildRecordStorageKey(backupType string, startedAt time.Time, recordID uint, fileName string) string {
+	typeName := strings.TrimSpace(strings.ToLower(backupType))
+	if typeName == "" {
+		typeName = "file"
+	}
+	return filepath.ToSlash(filepath.Join("BackupX", typeName, startedAt.UTC().Format("060102"), "records", fmt.Sprintf("%d", recordID), fileName))
+}
+
 func sanitizeTaskName(value string) string {
 	trimmed := strings.TrimSpace(strings.ToLower(value))
 	trimmed = strings.ReplaceAll(trimmed, " ", "-")

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"backupx/server/internal/config"
 	"backupx/server/internal/model"
@@ -18,7 +19,14 @@ func Open(cfg config.DatabaseConfig, logger *zap.Logger) (*gorm.DB, error) {
 		return nil, fmt.Errorf("create database dir: %w", err)
 	}
 
-	db, err := gorm.Open(sqlite.Open(cfg.Path), &gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)})
+	separator := "?"
+	if strings.Contains(cfg.Path, "?") {
+		separator = "&"
+	}
+	// busy_timeout 减少 Agent 轮询、心跳和任务写入同时发生时的瞬时锁错误。
+	// 维持默认回滚日志模式，保证当前嵌入式 SQLite 依赖的数据完整性。
+	dsn := cfg.Path + separator + "_pragma=busy_timeout(5000)"
+	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: gormlogger.Default.LogMode(gormlogger.Silent)})
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}

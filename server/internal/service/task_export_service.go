@@ -14,9 +14,9 @@ import (
 
 // TaskExportService 管理备份任务的 JSON 导入 / 导出。
 // 用途：
-//   1. 集群迁移（旧 Master → 新 Master 的任务配置搬迁）
-//   2. 灾备恢复（任务配置本地文件化，Master 宕机后重建）
-//   3. 配置审计（版本化 Git 管理 JSON 快照）
+//  1. 集群迁移（旧 Master → 新 Master 的任务配置搬迁）
+//  2. 灾备恢复（任务配置本地文件化，Master 宕机后重建）
+//  3. 配置审计（版本化 Git 管理 JSON 快照）
 //
 // 出于安全考虑，导出/导入不包含任何敏感字段：
 //   - 数据库密码（DBPasswordCiphertext）：跳过，导入后需人工填补
@@ -40,35 +40,35 @@ func NewTaskExportService(
 
 // ExportedTask 导出格式：按名称引用存储/节点，不含敏感数据。
 type ExportedTask struct {
-	Name               string         `json:"name"`
-	Type               string         `json:"type"`
-	Enabled            bool           `json:"enabled"`
-	CronExpr           string         `json:"cronExpr,omitempty"`
-	SourcePath         string         `json:"sourcePath,omitempty"`
-	SourcePaths        []string       `json:"sourcePaths,omitempty"`
-	ExcludePatterns    []string       `json:"excludePatterns,omitempty"`
-	DBHost             string         `json:"dbHost,omitempty"`
-	DBPort             int            `json:"dbPort,omitempty"`
-	DBUser             string         `json:"dbUser,omitempty"`
-	DBName             string         `json:"dbName,omitempty"`
-	DBPath             string         `json:"dbPath,omitempty"`
-	ExtraConfig        map[string]any `json:"extraConfig,omitempty"`
+	Name            string         `json:"name"`
+	Type            string         `json:"type"`
+	Enabled         bool           `json:"enabled"`
+	CronExpr        string         `json:"cronExpr,omitempty"`
+	SourcePath      string         `json:"sourcePath,omitempty"`
+	SourcePaths     []string       `json:"sourcePaths,omitempty"`
+	ExcludePatterns []string       `json:"excludePatterns,omitempty"`
+	DBHost          string         `json:"dbHost,omitempty"`
+	DBPort          int            `json:"dbPort,omitempty"`
+	DBUser          string         `json:"dbUser,omitempty"`
+	DBName          string         `json:"dbName,omitempty"`
+	DBPath          string         `json:"dbPath,omitempty"`
+	ExtraConfig     map[string]any `json:"extraConfig,omitempty"`
 	// 按名称引用：导入时按名称查找对应 ID
-	StorageTargetNames    []string `json:"storageTargetNames"`
-	ReplicationTargetNames []string `json:"replicationTargetNames,omitempty"`
-	NodeName              string   `json:"nodeName,omitempty"`
-	DependsOnTaskNames    []string `json:"dependsOnTaskNames,omitempty"`
-	Tags                  string   `json:"tags,omitempty"`
-	Compression           string   `json:"compression,omitempty"`
-	Encrypt               bool     `json:"encrypt,omitempty"`
-	RetentionDays         int      `json:"retentionDays,omitempty"`
-	MaxBackups            int      `json:"maxBackups,omitempty"`
-	VerifyEnabled         bool     `json:"verifyEnabled,omitempty"`
-	VerifyCronExpr        string   `json:"verifyCronExpr,omitempty"`
-	VerifyMode            string   `json:"verifyMode,omitempty"`
-	SLAHoursRPO           int      `json:"slaHoursRpo,omitempty"`
-	AlertOnConsecutiveFails int    `json:"alertOnConsecutiveFails,omitempty"`
-	MaintenanceWindows    string   `json:"maintenanceWindows,omitempty"`
+	StorageTargetNames      []string `json:"storageTargetNames"`
+	ReplicationTargetNames  []string `json:"replicationTargetNames,omitempty"`
+	NodeName                string   `json:"nodeName,omitempty"`
+	DependsOnTaskNames      []string `json:"dependsOnTaskNames,omitempty"`
+	Tags                    string   `json:"tags,omitempty"`
+	Compression             string   `json:"compression,omitempty"`
+	Encrypt                 bool     `json:"encrypt,omitempty"`
+	RetentionDays           int      `json:"retentionDays,omitempty"`
+	MaxBackups              int      `json:"maxBackups,omitempty"`
+	VerifyEnabled           bool     `json:"verifyEnabled,omitempty"`
+	VerifyCronExpr          string   `json:"verifyCronExpr,omitempty"`
+	VerifyMode              string   `json:"verifyMode,omitempty"`
+	SLAHoursRPO             int      `json:"slaHoursRpo,omitempty"`
+	AlertOnConsecutiveFails int      `json:"alertOnConsecutiveFails,omitempty"`
+	MaintenanceWindows      string   `json:"maintenanceWindows,omitempty"`
 }
 
 // ExportPayload 导出整体结构，带元信息。
@@ -233,67 +233,67 @@ func (s *TaskExportService) toExported(item *model.BackupTask, targetNames, node
 		nodeName = nodeNames[item.NodeID]
 	}
 	return ExportedTask{
-		Name:                   item.Name,
-		Type:                   item.Type,
-		Enabled:                item.Enabled,
-		CronExpr:               item.CronExpr,
-		SourcePath:             item.SourcePath,
-		SourcePaths:            sourcePaths,
-		ExcludePatterns:        excludes,
-		DBHost:                 item.DBHost,
-		DBPort:                 item.DBPort,
-		DBUser:                 item.DBUser,
-		DBName:                 item.DBName,
-		DBPath:                 item.DBPath,
-		ExtraConfig:            extra,
-		StorageTargetNames:     storageNames,
-		ReplicationTargetNames: replicationNames,
-		NodeName:               nodeName,
-		DependsOnTaskNames:     dependsOnNames,
-		Tags:                   item.Tags,
-		Compression:            item.Compression,
-		Encrypt:                item.Encrypt,
-		RetentionDays:          item.RetentionDays,
-		MaxBackups:             item.MaxBackups,
-		VerifyEnabled:          item.VerifyEnabled,
-		VerifyCronExpr:         item.VerifyCronExpr,
-		VerifyMode:             item.VerifyMode,
-		SLAHoursRPO:            item.SLAHoursRPO,
+		Name:                    item.Name,
+		Type:                    item.Type,
+		Enabled:                 item.Enabled,
+		CronExpr:                item.CronExpr,
+		SourcePath:              item.SourcePath,
+		SourcePaths:             sourcePaths,
+		ExcludePatterns:         excludes,
+		DBHost:                  item.DBHost,
+		DBPort:                  item.DBPort,
+		DBUser:                  item.DBUser,
+		DBName:                  item.DBName,
+		DBPath:                  item.DBPath,
+		ExtraConfig:             extra,
+		StorageTargetNames:      storageNames,
+		ReplicationTargetNames:  replicationNames,
+		NodeName:                nodeName,
+		DependsOnTaskNames:      dependsOnNames,
+		Tags:                    item.Tags,
+		Compression:             item.Compression,
+		Encrypt:                 item.Encrypt,
+		RetentionDays:           item.RetentionDays,
+		MaxBackups:              item.MaxBackups,
+		VerifyEnabled:           item.VerifyEnabled,
+		VerifyCronExpr:          item.VerifyCronExpr,
+		VerifyMode:              item.VerifyMode,
+		SLAHoursRPO:             item.SLAHoursRPO,
 		AlertOnConsecutiveFails: item.AlertOnConsecutiveFails,
-		MaintenanceWindows:     item.MaintenanceWindows,
+		MaintenanceWindows:      item.MaintenanceWindows,
 	}
 }
 
 func (s *TaskExportService) toUpsertInput(t ExportedTask, targetsByName, nodesByName map[string]uint, deps []uint) BackupTaskUpsertInput {
 	return BackupTaskUpsertInput{
-		Name:                   t.Name,
-		Type:                   t.Type,
-		Enabled:                t.Enabled,
-		CronExpr:               t.CronExpr,
-		SourcePath:             t.SourcePath,
-		SourcePaths:            t.SourcePaths,
-		ExcludePatterns:        t.ExcludePatterns,
-		DBHost:                 t.DBHost,
-		DBPort:                 t.DBPort,
-		DBUser:                 t.DBUser,
-		DBName:                 t.DBName,
-		DBPath:                 t.DBPath,
-		ExtraConfig:            t.ExtraConfig,
-		StorageTargetIDs:       idsFromNames(t.StorageTargetNames, targetsByName),
-		ReplicationTargetIDs:   idsFromNames(t.ReplicationTargetNames, targetsByName),
-		NodeID:                 nodesByName[t.NodeName],
-		Tags:                   t.Tags,
-		Compression:            t.Compression,
-		Encrypt:                t.Encrypt,
-		RetentionDays:          t.RetentionDays,
-		MaxBackups:             t.MaxBackups,
-		VerifyEnabled:          t.VerifyEnabled,
-		VerifyCronExpr:         t.VerifyCronExpr,
-		VerifyMode:             t.VerifyMode,
-		SLAHoursRPO:            t.SLAHoursRPO,
+		Name:                    t.Name,
+		Type:                    t.Type,
+		Enabled:                 t.Enabled,
+		CronExpr:                t.CronExpr,
+		SourcePath:              t.SourcePath,
+		SourcePaths:             t.SourcePaths,
+		ExcludePatterns:         t.ExcludePatterns,
+		DBHost:                  t.DBHost,
+		DBPort:                  t.DBPort,
+		DBUser:                  t.DBUser,
+		DBName:                  t.DBName,
+		DBPath:                  t.DBPath,
+		ExtraConfig:             t.ExtraConfig,
+		StorageTargetIDs:        idsFromNames(t.StorageTargetNames, targetsByName),
+		ReplicationTargetIDs:    idsFromNames(t.ReplicationTargetNames, targetsByName),
+		NodeID:                  nodesByName[t.NodeName],
+		Tags:                    t.Tags,
+		Compression:             t.Compression,
+		Encrypt:                 t.Encrypt,
+		RetentionDays:           t.RetentionDays,
+		MaxBackups:              t.MaxBackups,
+		VerifyEnabled:           t.VerifyEnabled,
+		VerifyCronExpr:          t.VerifyCronExpr,
+		VerifyMode:              t.VerifyMode,
+		SLAHoursRPO:             t.SLAHoursRPO,
 		AlertOnConsecutiveFails: t.AlertOnConsecutiveFails,
-		MaintenanceWindows:     t.MaintenanceWindows,
-		DependsOnTaskIDs:       deps,
+		MaintenanceWindows:      t.MaintenanceWindows,
+		DependsOnTaskIDs:        deps,
 	}
 }
 

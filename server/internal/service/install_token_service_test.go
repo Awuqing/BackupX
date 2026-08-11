@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"encoding/base64"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,13 +179,16 @@ func TestInstallTokenServiceCreateCommandBuildsURLsAndScript(t *testing.T) {
 
 	out, err := svc.CreateCommand(context.Background(), InstallCommandInput{
 		InstallTokenInput: InstallTokenInput{
-			NodeID:       node.ID,
-			Mode:         model.InstallModeDocker,
-			Arch:         model.InstallArchAuto,
-			AgentVersion: "v1.7.0",
-			DownloadSrc:  model.InstallSourceGitHub,
-			TTLSeconds:   900,
-			CreatedByID:  1,
+			NodeID:         node.ID,
+			Mode:           model.InstallModeDocker,
+			Arch:           model.InstallArchAuto,
+			AgentVersion:   "v1.7.0",
+			DownloadSrc:    model.InstallSourceGitHub,
+			TTLSeconds:     900,
+			CreatedByID:    1,
+			AgentMasterURL: "http://127.0.0.1:18340",
+			ProxyURL:       "socks5h://127.0.0.1:1080",
+			CACertFile:     "/etc/pki/internal-ca.pem",
 		},
 		MasterURL: "https://public.example.com/base",
 	})
@@ -193,14 +198,65 @@ func TestInstallTokenServiceCreateCommandBuildsURLsAndScript(t *testing.T) {
 	if out.Token == "" || out.ScriptBase64 == "" {
 		t.Fatalf("missing token or script: %+v", out)
 	}
-	if out.URL != "https://public.example.com/base/api/install/"+out.Token {
+	if out.URL != "http://127.0.0.1:18340/api/install/"+out.Token {
 		t.Fatalf("bad url: %s", out.URL)
 	}
-	if out.FallbackURL != "https://public.example.com/base/install/"+out.Token {
+	if out.FallbackURL != "http://127.0.0.1:18340/install/"+out.Token {
 		t.Fatalf("bad fallback url: %s", out.FallbackURL)
 	}
-	if out.ComposeURL != "https://public.example.com/base/api/install/"+out.Token+"/compose.yml" {
+	if out.ComposeURL != "http://127.0.0.1:18340/api/install/"+out.Token+"/compose.yml" {
 		t.Fatalf("bad compose url: %s", out.ComposeURL)
+	}
+	script, err := base64.StdEncoding.DecodeString(out.ScriptBase64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`MASTER_URL="http://127.0.0.1:18340"`,
+		`PROXY_URL="socks5h://127.0.0.1:1080"`,
+		`CA_CERT_FILE="/etc/pki/internal-ca.pem"`,
+	} {
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("script missing %q", want)
+		}
+	}
+}
+
+func TestInstallTokenServiceRejectsUnsafeConnectionBeforeCreate(t *testing.T) {
+	db := openInstallTokenTestDB(t)
+	nodeRepo := repository.NewNodeRepository(db)
+	node := &model.Node{Name: "restricted", Token: "deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcdef"}
+	if err := nodeRepo.Create(context.Background(), node); err != nil {
+		t.Fatal(err)
+	}
+	tokenRepo := repository.NewAgentInstallTokenRepository(db)
+	svc := NewInstallTokenService(tokenRepo, nodeRepo)
+	_, err := svc.CreateCommand(context.Background(), InstallCommandInput{
+		InstallTokenInput: InstallTokenInput{
+			NodeID: node.ID, Mode: model.InstallModeSystemd, Arch: model.InstallArchAuto,
+			AgentVersion: "v2.4.0", DownloadSrc: model.InstallSourceGitHub, TTLSeconds: 900,
+			ProxyURL: "http://user:pass@proxy.example.com",
+		},
+		MasterURL: "https://public.example.com",
+	})
+	if err == nil {
+		t.Fatal("expected proxy credentials to be rejected")
+	}
+	count, countErr := tokenRepo.CountCreatedSince(context.Background(), node.ID, time.Now().UTC().Add(-time.Hour))
+	if countErr != nil || count != 0 {
+		t.Fatalf("invalid connection created token records: count=%d err=%v", count, countErr)
+	}
+
+	_, err = svc.CreateCommand(context.Background(), InstallCommandInput{
+		InstallTokenInput: InstallTokenInput{
+			NodeID: node.ID, Mode: model.InstallModeSystemd, Arch: model.InstallArchAuto,
+			AgentVersion: "v2.4.0", DownloadSrc: model.InstallSourceGitHub, TTLSeconds: 900,
+			AgentMasterURL: "https://master.internal",
+		},
+		MasterURL: "http://public.example.com/$unsafe",
+	})
+	if err == nil {
+		t.Fatal("expected unsafe public delivery URL to be rejected")
 	}
 }
 

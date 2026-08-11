@@ -1,5 +1,5 @@
 import { Button, Input, Message, Modal, Space, Spin, Tree, Typography, Empty } from '@arco-design/web-react'
-import { IconFolder, IconFile, IconFolderAdd } from '@arco-design/web-react/icon'
+import { IconFolder, IconFile, IconFolderAdd } from '../icons'
 import { useCallback, useState } from 'react'
 import { listNodeDirectory } from '../../services/nodes'
 import type { DirEntry } from '../../types/nodes'

@@ -41,7 +41,7 @@ export function createAgentDeployFlow(deps: AgentDeployFlowDeps) {
   const issueTokenForNode = async (node: AgentDeployNode, input: InstallTokenInput): Promise<AgentDeployRow> => {
     try {
       const token = await deps.createInstallToken(node.id, input)
-      return readyRow(node, token)
+      return readyRow(node, token, input)
     } catch (error) {
       return {
         nodeId: node.id,
@@ -77,12 +77,15 @@ export function useAgentDeployFlow() {
   return useMemo(() => createAgentDeployFlow({ batchCreateNodes, createInstallToken }), [])
 }
 
-function readyRow(node: AgentDeployNode, token: InstallTokenResult): AgentDeployRow {
+function readyRow(node: AgentDeployNode, token: InstallTokenResult, input: InstallTokenInput): AgentDeployRow {
   return {
     nodeId: node.id,
     nodeName: node.name,
     status: 'ready',
-    command: buildAgentInstallCommand(token.url, token.fallbackUrl),
+    command: buildAgentInstallCommand(token.url, token.fallbackUrl, {
+      proxyUrl: input.proxyUrl,
+      caCertFile: input.caCertFile,
+    }),
     expiresAt: token.expiresAt,
     installToken: token,
     embeddedCommand: token.scriptBase64

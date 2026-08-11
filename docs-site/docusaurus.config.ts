@@ -21,10 +21,10 @@ const config: Config = {
   deploymentBranch: 'gh-pages',
   trailingSlash: false,
 
-  onBrokenLinks: 'warn',
+  onBrokenLinks: 'throw',
   markdown: {
     hooks: {
-      onBrokenMarkdownLinks: 'warn',
+      onBrokenMarkdownLinks: 'throw',
     },
   },
 
@@ -33,7 +33,10 @@ const config: Config = {
     locales: ['en', 'zh-Hans'],
     localeConfigs: {
       en: {label: 'English', direction: 'ltr', htmlLang: 'en-US'},
-      'zh-Hans': {label: '简体中文', direction: 'ltr', htmlLang: 'zh-CN'},
+      // Keep the published /zh-Hans/ URL while loading the existing zh-CN
+      // translation tree. Without path, Docusaurus silently falls back to the
+      // English documents because i18n/zh-Hans does not exist.
+      'zh-Hans': {label: '简体中文', direction: 'ltr', htmlLang: 'zh-CN', path: 'zh-CN'},
     },
   },
 
@@ -44,6 +47,7 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/Awuqing/BackupX/edit/main/docs-site/',
+          editLocalizedFiles: true,
         },
         blog: false,
         theme: {
@@ -72,19 +76,24 @@ const config: Config = {
           label: 'Docs',
         },
         {
-          href: 'https://github.com/Awuqing/BackupX/releases',
-          label: 'Downloads',
+          to: '/docs/deployment/docker',
+          label: 'Deployment',
+          position: 'left',
+        },
+        {
+          to: '/docs/operations/monitoring',
+          label: 'Operations',
+          position: 'left',
+        },
+        {
+          to: '/docs/reference/api',
+          label: 'API',
           position: 'left',
         },
         {
           to: '/community',
           label: 'Community',
-          position: 'left',
-        },
-        {
-          to: '/sponsors',
-          label: 'Sponsors',
-          position: 'left',
+          position: 'right',
         },
         {
           type: 'localeDropdown',
@@ -101,44 +110,27 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: 'Docs',
+          title: 'Documentation',
           items: [
             {label: 'Introduction', to: '/docs/intro'},
             {label: 'Quick Start', to: '/docs/getting-started/quick-start'},
-            {label: 'Installation', to: '/docs/getting-started/installation'},
+            {label: 'Configuration', to: '/docs/deployment/configuration'},
           ],
         },
         {
-          title: 'Features',
+          title: 'Operations',
           items: [
-            {label: 'SAP HANA', to: '/docs/features/sap-hana'},
-            {label: 'Multi-Node Cluster', to: '/docs/features/multi-node'},
-            {label: 'API Reference', to: '/docs/reference/api'},
+            {label: 'Monitoring', to: '/docs/operations/monitoring'},
+            {label: 'Security', to: '/docs/operations/security'},
+            {label: 'Troubleshooting', to: '/docs/operations/troubleshooting'},
           ],
         },
         {
-          title: 'More',
+          title: 'Project',
           items: [
             {label: 'GitHub', href: 'https://github.com/Awuqing/BackupX'},
             {label: 'Releases', href: 'https://github.com/Awuqing/BackupX/releases'},
-            {label: 'Docker Hub', href: 'https://hub.docker.com/r/awuqing/backupx'},
-            {label: 'Issues', href: 'https://github.com/Awuqing/BackupX/issues'},
-          ],
-        },
-        {
-          title: 'Community',
-          items: [
-            {label: 'Contributors', href: 'https://github.com/Awuqing/BackupX/graphs/contributors'},
-            {label: 'Pull Requests', href: 'https://github.com/Awuqing/BackupX/pulls'},
-            {label: 'Sponsor', to: '/sponsors'},
-          ],
-        },
-        {
-          title: 'Sponsors',
-          items: [
-            {label: 'Sponsor BackupX', href: 'https://github.com/sponsors/Awuqing'},
-            {label: 'Partnership', href: 'https://github.com/Awuqing/BackupX/issues/new/choose'},
-            {label: 'Sponsor tiers', to: '/sponsors'},
+            {label: 'Community', to: '/community'},
           ],
         },
       ],

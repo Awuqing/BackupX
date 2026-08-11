@@ -19,7 +19,9 @@ BackupX aims to accept any place you'd want to drop a backup file.
 | **Google Drive** | Client ID/Secret + OAuth authorization |
 | **WebDAV** | URL + username/password |
 | **FTP / FTPS** | Host + port + username/password |
-| **Local disk** | Target directory (absolute path) |
+| **Local disk** | Target directory (absolute path) + optional Master relay for remote Agents |
+
+New local-disk targets enable **Relay remote backups through Master** by default. This makes the configured path belong to the Master, so a storage server mounted there can collect backups from many source Agents. Turn the switch off when the path intentionally belongs to each Agent. Existing targets retain their previous Agent-local behavior until explicitly changed.
 
 ## Rclone backends
 

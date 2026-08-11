@@ -1,41 +1,28 @@
-# Website
+# BackupX documentation site
 
-This website is built using [Docusaurus](https://docusaurus.io/), a modern static website generator.
+The public documentation is a Docusaurus site with English source documents and a complete Simplified Chinese translation.
 
-## Installation
-
-```bash
-yarn
-```
-
-## Local Development
+## Local development
 
 ```bash
-yarn start
+npm ci
+npm start
 ```
 
-This command starts a local development server and opens up a browser window. Most changes are reflected live without having to restart the server.
+Use `npm start -- --locale zh-Hans` to preview the Chinese site. The public Chinese URL remains `/zh-Hans/`; its source files live under `i18n/zh-CN/` through the locale `path` mapping in `docusaurus.config.ts`.
 
-## Build
+## Verification
 
 ```bash
-yarn build
+npm run typecheck
+npm run build
 ```
 
-This command generates static content into the `build` directory and can be served using any static contents hosting service.
+The production build renders both locales and fails on broken document links. GitHub Actions publishes `build/` to GitHub Pages after changes reach `main`; do not deploy the site manually from a feature branch.
 
-## Deployment
+When adding, renaming, or removing a document:
 
-Using SSH:
-
-```bash
-USE_SSH=true yarn deploy
-```
-
-Not using SSH:
-
-```bash
-GIT_USER=<Your GitHub username> yarn deploy
-```
-
-If you are using GitHub pages for hosting, this command is a convenient way to build the website and push to the `gh-pages` branch.
+1. Apply the same change under `docs/` and `i18n/zh-CN/docusaurus-plugin-content-docs/current/`.
+2. Update `sidebars.ts` and the translated sidebar labels when a category changes.
+3. Use relative links for links between documents so both locale prefixes resolve correctly.
+4. Run the full verification commands before opening a pull request.

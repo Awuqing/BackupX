@@ -10,7 +10,7 @@ ARG USE_CHINA_MIRROR=false
 
 
 # ---- Stage 1: Build frontend ----
-FROM node:20-alpine AS web-builder
+FROM node:24-alpine AS web-builder
 ARG USE_CHINA_MIRROR
 
 # 国内镜像：npm 使用淘宝源
@@ -51,12 +51,11 @@ RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
       sed -i 's|dl-cdn.alpinelinux.org|mirrors.aliyun.com|g' /etc/apk/repositories; \
     fi
 
+# Database client binaries are required by MySQL and PostgreSQL backup tasks.
 RUN apk add --no-cache \
-    nginx \
     tzdata \
     ca-certificates \
-    docker-cli docker-cli-compose \
-    # Required by mysql/postgresql backup tasks
+    su-exec \
     mysql-client \
     postgresql16-client \
     && rm -rf /var/cache/apk/*
@@ -70,24 +69,30 @@ COPY --from=server-builder /build/server/backupx /app/bin/backupx
 # Copy frontend static files
 COPY --from=web-builder /build/web/dist /app/web
 
-# Copy nginx config
-COPY deploy/docker/nginx.conf /etc/nginx/http.d/default.conf
-
 # Copy entrypoint
 COPY deploy/docker/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
 # Create data directories
 RUN mkdir -p /app/data /tmp/backupx && \
-    chown -R backupx:backupx /app /tmp/backupx
-
-# Nginx needs to write to these dirs
-RUN mkdir -p /var/lib/nginx/tmp /var/log/nginx && \
-    chown -R backupx:backupx /var/lib/nginx /var/log/nginx /run/nginx
+    touch /app/data/.backupx-owner-v2 && \
+    chown -R backupx:backupx /app/data /tmp/backupx && \
+    chmod 0750 /app/data /tmp/backupx
 
 WORKDIR /app
 EXPOSE 8340
 
 VOLUME ["/app/data"]
+
+ENV BACKUPX_SERVER_HOST=0.0.0.0 \
+    BACKUPX_SERVER_PORT=8340 \
+    BACKUPX_SERVER_WEB_ROOT=/app/web
+
+USER root
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD su-exec backupx:backupx wget -q -T 3 -O /dev/null http://127.0.0.1:8340/ready || exit 1
+
+STOPSIGNAL SIGTERM
 
 ENTRYPOINT ["/app/entrypoint.sh"]

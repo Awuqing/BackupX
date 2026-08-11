@@ -115,7 +115,7 @@ func setupInstallFlowRouterWithExternalURL(t *testing.T, externalURL string) (ht
 	return router, setupResp.Data.Token
 }
 
-func TestInstallTokenUsesConfiguredExternalURL(t *testing.T) {
+func TestInstallTokenUsesAgentSpecificURLAndConnectionSettings(t *testing.T) {
 	const externalURL = "https://public.example.com/base"
 	router, jwt := setupInstallFlowRouterWithExternalURL(t, externalURL)
 
@@ -141,11 +141,14 @@ func TestInstallTokenUsesConfiguredExternalURL(t *testing.T) {
 	}
 
 	genBody, _ := json.Marshal(map[string]any{
-		"mode":         "systemd",
-		"arch":         "auto",
-		"agentVersion": "v1.7.0",
-		"downloadSrc":  "github",
-		"ttlSeconds":   900,
+		"mode":           "systemd",
+		"arch":           "auto",
+		"agentVersion":   "v1.7.0",
+		"downloadSrc":    "github",
+		"ttlSeconds":     900,
+		"agentMasterUrl": "http://127.0.0.1:18340",
+		"proxyUrl":       "socks5h://127.0.0.1:1080",
+		"caCertFile":     "/etc/pki/internal-ca.pem",
 	})
 	genReq := httptest.NewRequest(http.MethodPost,
 		"/api/nodes/"+formatUint(batchResp.Data[0].ID)+"/install-tokens", bytes.NewBuffer(genBody))
@@ -155,6 +158,9 @@ func TestInstallTokenUsesConfiguredExternalURL(t *testing.T) {
 	router.ServeHTTP(genRec, genReq)
 	if genRec.Code != 200 {
 		t.Fatalf("install-tokens failed: %d %s", genRec.Code, genRec.Body.String())
+	}
+	if genRec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("install-token response must not be cached: %#v", genRec.Header())
 	}
 	var genResp struct {
 		Data struct {
@@ -167,18 +173,21 @@ func TestInstallTokenUsesConfiguredExternalURL(t *testing.T) {
 	if err := json.Unmarshal(genRec.Body.Bytes(), &genResp); err != nil {
 		t.Fatalf("unmarshal gen: %v", err)
 	}
-	if genResp.Data.URL != externalURL+"/api/install/"+genResp.Data.InstallToken {
-		t.Fatalf("url should use external URL, got %q", genResp.Data.URL)
+	if genResp.Data.URL != "http://127.0.0.1:18340/api/install/"+genResp.Data.InstallToken {
+		t.Fatalf("url should use Agent-specific URL, got %q", genResp.Data.URL)
 	}
-	if genResp.Data.FallbackURL != externalURL+"/install/"+genResp.Data.InstallToken {
-		t.Fatalf("fallbackUrl should use external URL, got %q", genResp.Data.FallbackURL)
+	if genResp.Data.FallbackURL != "http://127.0.0.1:18340/install/"+genResp.Data.InstallToken {
+		t.Fatalf("fallbackUrl should use Agent-specific URL, got %q", genResp.Data.FallbackURL)
 	}
 	decodedScript, err := base64.StdEncoding.DecodeString(genResp.Data.ScriptBase64)
 	if err != nil {
 		t.Fatalf("scriptBase64 should be valid base64: %v", err)
 	}
-	if !strings.Contains(string(decodedScript), `MASTER_URL="`+externalURL+`"`) {
-		t.Fatalf("script should use external MASTER_URL:\n%s", string(decodedScript))
+	if !strings.Contains(string(decodedScript), `MASTER_URL="http://127.0.0.1:18340"`) {
+		t.Fatalf("script should use the Agent-specific Master URL:\n%s", string(decodedScript))
+	}
+	if !strings.Contains(string(decodedScript), `PROXY_URL="socks5h://127.0.0.1:1080"`) || !strings.Contains(string(decodedScript), `CA_CERT_FILE="/etc/pki/internal-ca.pem"`) {
+		t.Fatalf("script should include restricted-network settings:\n%s", string(decodedScript))
 	}
 }
 
@@ -258,8 +267,9 @@ func TestOneClickInstallFlow(t *testing.T) {
 	if scriptRec.Code != 200 {
 		t.Fatalf("script fetch failed: %d %s", scriptRec.Code, scriptRec.Body.String())
 	}
-	if !strings.Contains(scriptRec.Body.String(), "systemctl enable --now backupx-agent") {
-		t.Fatalf("script missing systemctl enable:\n%s", scriptRec.Body.String())
+	if !strings.Contains(scriptRec.Body.String(), "systemctl enable backupx-agent") ||
+		!strings.Contains(scriptRec.Body.String(), "systemctl restart backupx-agent") {
+		t.Fatalf("script missing systemctl enable/restart:\n%s", scriptRec.Body.String())
 	}
 	// Issue #46 防嗅探 headers：text/plain + nosniff + no-store + Content-Disposition
 	if ct := scriptRec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
@@ -354,7 +364,8 @@ func TestInstallScriptAliasUnderAPI(t *testing.T) {
 	if aliasRec.Code != 200 {
 		t.Fatalf("/api/install alias failed: %d %s", aliasRec.Code, aliasRec.Body.String())
 	}
-	if !strings.Contains(aliasRec.Body.String(), "systemctl enable --now backupx-agent") {
+	if !strings.Contains(aliasRec.Body.String(), "systemctl enable backupx-agent") ||
+		!strings.Contains(aliasRec.Body.String(), "systemctl restart backupx-agent") {
 		t.Errorf("alias should return rendered script, got:\n%s", aliasRec.Body.String())
 	}
 	if ct := aliasRec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/plain") {
@@ -556,6 +567,9 @@ func TestInstallFlowComposeSuccessConsumesToken(t *testing.T) {
 	}
 	if !strings.Contains(composeRec.Body.String(), "BACKUPX_AGENT_TOKEN") {
 		t.Fatalf("compose missing token env:\n%s", composeRec.Body.String())
+	}
+	if composeRec.Header().Get("Cache-Control") != "no-store" || composeRec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("compose response missing secret-safe headers: %#v", composeRec.Header())
 	}
 
 	scriptReq := httptest.NewRequest(http.MethodGet, "/api/install/"+genResp.Data.InstallToken, nil)

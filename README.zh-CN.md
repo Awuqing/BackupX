@@ -10,6 +10,8 @@
   <p align="center">
     <a href="https://github.com/Awuqing/BackupX/stargazers"><img src="https://img.shields.io/github/stars/Awuqing/BackupX?style=flat-square&color=f5c542" alt="Stars"></a>
     <a href="https://github.com/Awuqing/BackupX/releases"><img src="https://img.shields.io/github/v/release/Awuqing/BackupX?style=flat-square&color=brightgreen" alt="Release"></a>
+    <a href="https://github.com/Awuqing/BackupX/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/Awuqing/BackupX/ci.yml?branch=main&style=flat-square" alt="CI"></a>
+    <a href="https://github.com/Awuqing/BackupX/actions/workflows/docs.yml"><img src="https://img.shields.io/github/actions/workflow/status/Awuqing/BackupX/docs.yml?branch=main&style=flat-square&label=docs" alt="Docs"></a>
     <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go" alt="Go">
     <img src="https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react" alt="React">
     <img src="https://img.shields.io/badge/SQLite-embedded-003B57?style=flat-square&logo=sqlite" alt="SQLite">
@@ -43,37 +45,62 @@
 | **SAP HANA Backint 代理** | 内置 SAP HANA Backint 协议代理，HANA 原生备份接口可直接把数据路由到 BackupX 支持的任意存储后端 |
 | **70+ 存储后端** | 内置阿里云 OSS / 腾讯云 COS / 七牛云 / S3 / Google Drive / WebDAV / FTP + 通过 rclone 集成 SFTP、Azure Blob、Dropbox、OneDrive 等 70+ 后端 |
 | **自动调度** | Cron 定时 + 可视化编辑器 + 自动保留策略（按天数/份数清理，自动回收空目录） |
-| **多节点集群** | Master-Agent 模式，基于 HTTP 长轮询跨多台服务器管理备份。Agent 本地执行任务并直接上传到存储，无需反向连通性 |
+| **多节点集群** | Master-Agent 模式，基于 Agent 主动出站的 HTTP 轮询跨服务器管理备份，支持代理、私有 CA 与 SSH 堡垒机，无需反向连通性 |
 | **安全** | JWT + bcrypt + AES-256-GCM 加密配置 + 可选备份文件加密 + 完整审计日志 |
 | **通知** | 邮件 / Webhook / Telegram，备份成功或失败时自动推送 |
 | **可观测性** | Prometheus `/metrics` 端点 + `/health` + `/ready` 探针 + SLA 违约监控 |
 | **审计外输** | HMAC-SHA256 签名 Webhook，对接 SIEM / WORM 存储满足 SOC2 / GDPR 合规 |
 | **流控** | 节点级带宽限速 + 节点级并发控制，大小节点分别配置，避免小内存 Agent 被挤爆 |
-| **部署** | 单二进制 + 内嵌 SQLite，Docker 一键启动，零外部依赖 |
+| **部署** | 单二进制 + 内嵌 SQLite，无需外部控制面数据库（数据库备份工具需安装在任务执行主机） |
 
 ## 快速开始
 
-```bash
-# Docker（推荐）
-docker run -d --name backupx -p 8340:8340 -v backupx-data:/app/data awuqing/backupx:latest
+Docker Compose（推荐）：
 
-# 或使用预编译包
+```bash
+git clone --depth 1 https://github.com/Awuqing/BackupX.git
+cd BackupX
+docker compose up -d
+```
+
+预编译包：
+
+```bash
 curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-linux-amd64.tar.gz
-tar xzf backupx-*.tar.gz && cd backupx-* && sudo ./install.sh
+curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-linux-amd64.tar.gz.sha256
+sha256sum -c backupx-linux-amd64.tar.gz.sha256
+tar xzf backupx-linux-amd64.tar.gz
+cd backupx-*-linux-amd64
+sudo ./install.sh
+```
+
+从源码构建并裸机安装：
+
+```bash
+git clone https://github.com/Awuqing/BackupX.git
+cd BackupX
+make build
+sudo ./deploy/install.sh
 ```
 
 ARM64 主机请下载 `backupx-linux-arm64.tar.gz`。预编译包内包含 `backupx`、`web/`、`config.example.yaml` 和 `install.sh`，请在解压后的目录内执行 `install.sh`。
 
-打开 `http://your-server:8340`，创建管理员账户，按 [5 分钟快速开始](https://awuqing.github.io/BackupX/zh-Hans/docs/getting-started/quick-start) 完成首次备份。
+Compose 快速开始为便于体验默认使用 `latest`。生产环境应把 `BACKUPX_IMAGE` 固定到 Release 标签或摘要，并先阅读安全与恢复指南。
+
+打开 `http://your-server:8340`，在初始化页选择中文或 English 并创建首个管理员账户，按 [5 分钟快速开始](https://awuqing.github.io/BackupX/zh-Hans/docs/getting-started/quick-start) 完成首次备份。
 
 ## 文档
 
-完整文档见 **https://awuqing.github.io/BackupX/zh-Hans/** — 快速开始、部署、SAP HANA、多节点集群、API 参考等。
+完整文档见 **https://awuqing.github.io/BackupX/zh-Hans/** — 快速开始、部署、运维、SAP HANA、多节点集群、API 参考等。
 
 快捷链接：
 
 - [快速开始](https://awuqing.github.io/BackupX/zh-Hans/docs/getting-started/quick-start) — 五分钟跑通第一个备份
 - [安装](https://awuqing.github.io/BackupX/zh-Hans/docs/getting-started/installation) — Docker / 裸机 / 源码
+- [升级与恢复](https://awuqing.github.io/BackupX/zh-Hans/docs/operations/upgrade-recovery) — 快照、升级、回滚与灾难恢复
+- [安全加固](https://awuqing.github.io/BackupX/zh-Hans/docs/operations/security) — 生产暴露、角色与密钥
+- [监控与告警](https://awuqing.github.io/BackupX/zh-Hans/docs/operations/monitoring) — 探针、指标与初始告警
+- [故障排查](https://awuqing.github.io/BackupX/zh-Hans/docs/operations/troubleshooting) — Master、代理、Agent 与任务诊断
 - [多节点集群](https://awuqing.github.io/BackupX/zh-Hans/docs/features/multi-node) — 远程服务器部署 Agent
 - [SAP HANA 支持](https://awuqing.github.io/BackupX/zh-Hans/docs/features/sap-hana) — hdbsql Runner 与原生 Backint
 - [API 参考](https://awuqing.github.io/BackupX/zh-Hans/docs/reference/api) — REST 端点

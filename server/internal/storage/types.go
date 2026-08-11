@@ -34,6 +34,14 @@ const (
 	TypeFTP         = string(ProviderTypeFTP)
 )
 
+const (
+	// TransferModeDirect lets an Agent write to a network-accessible backend.
+	TransferModeDirect = "direct"
+	// TransferModeMasterRelay streams an artifact through the authenticated
+	// Agent API so a remote source can use storage mounted only on the Master.
+	TransferModeMasterRelay = "master_relay"
+)
+
 type ObjectInfo struct {
 	Key       string    `json:"key"`
 	Size      int64     `json:"size"`
@@ -47,6 +55,13 @@ type StorageProvider interface {
 	Download(ctx context.Context, objectKey string) (io.ReadCloser, error)
 	Delete(ctx context.Context, objectKey string) error
 	List(ctx context.Context, prefix string) ([]ObjectInfo, error)
+}
+
+// StorageRangeDownloader is an optional capability used by packed repository
+// backups. Implementations return exactly the requested byte range when the
+// backend supports ranged reads and may transparently fall back to a full read.
+type StorageRangeDownloader interface {
+	DownloadRange(ctx context.Context, objectKey string, offset, length int64) (io.ReadCloser, error)
 }
 
 type ProviderFactory interface {
@@ -92,7 +107,8 @@ func ParseProviderType(value string) ProviderType {
 }
 
 type LocalDiskConfig struct {
-	BasePath string `json:"basePath"`
+	BasePath    string `json:"basePath"`
+	MasterRelay bool   `json:"masterRelay"`
 }
 
 type S3Config struct {
@@ -151,4 +167,3 @@ type FTPConfig struct {
 type StorageDirCleaner interface {
 	RemoveEmptyDirs(ctx context.Context, prefix string) error
 }
-

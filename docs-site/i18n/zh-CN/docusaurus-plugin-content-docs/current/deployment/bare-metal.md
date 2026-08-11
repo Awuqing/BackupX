@@ -1,7 +1,7 @@
 ---
 sidebar_position: 2
 title: 裸机部署
-description: 从预编译包或源码部署 BackupX（systemd + Nginx）。
+description: 从预编译包或源码加固部署 BackupX，Nginx 改为显式启用。
 ---
 
 # 裸机部署
@@ -10,20 +10,31 @@ description: 从预编译包或源码部署 BackupX（systemd + Nginx）。
 
 ```bash
 # 下载对应平台的压缩包
-curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-v1.6.0-linux-amd64.tar.gz
+curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-linux-amd64.tar.gz
+curl -LO https://github.com/Awuqing/BackupX/releases/latest/download/backupx-linux-amd64.tar.gz.sha256
+sha256sum -c backupx-linux-amd64.tar.gz.sha256
 
 # 解压并安装
-tar xzf backupx-v*-linux-amd64.tar.gz && cd backupx-*
+tar xzf backupx-linux-amd64.tar.gz && cd backupx-*-linux-amd64
 sudo ./install.sh
 ```
 
 安装脚本自动完成以下步骤：
 
 1. 创建系统用户 `backupx`
-2. 复制二进制到 `/opt/backupx/`
-3. 生成默认 `config.yaml`（含安全的 JWT/加密密钥）
+2. 复制二进制到 `/opt/backupx/bin/backupx`，并把 Web 控制台复制到 `/opt/backupx/web`
+3. 把默认配置安装到 `/etc/backupx/config.yaml`
 4. 安装并启用 `backupx.service` systemd 单元
-5. （可选）生成 Nginx 站点配置 — 参见 [Nginx 反向代理](./nginx)
+5. 默认不修改 Nginx；只有显式设置 `INSTALL_NGINX=1` 时才安装模板
+6. 验证首次初始化接口就绪后才报告安装成功
+
+可执行文件与前端资源由 root 所有，只有 `/opt/backupx/data` 允许 `backupx` 服务账户写入。`/etc/backupx/config.yaml` 以 `root:backupx`、`0640` 权限安装。
+
+仓库提供的 Nginx 模板只是起点，可能与现有默认站点冲突。先审核域名与 TLS 策略，再显式启用：
+
+```bash
+sudo INSTALL_NGINX=1 ./install.sh
+```
 
 如果要部署多节点集群，安装后请编辑 `/etc/backupx/config.yaml`，设置远程 Agent 可访问到的 Master URL：
 
@@ -57,17 +68,21 @@ sudo ./deploy/install.sh
 
 ```ini title="/etc/systemd/system/backupx.service"
 [Unit]
-Description=BackupX backup management service
-After=network.target
+Description=BackupX API Service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=backupx
+Group=backupx
 WorkingDirectory=/opt/backupx
-ExecStart=/opt/backupx/backupx --config /opt/backupx/config.yaml
+ExecStart=/opt/backupx/bin/backupx -config /etc/backupx/config.yaml
 Restart=on-failure
-RestartSec=5s
-LimitNOFILE=65536
+RestartSec=5
+NoNewPrivileges=true
+UMask=0027
+LimitNOFILE=65535
 
 [Install]
 WantedBy=multi-user.target
@@ -79,17 +94,24 @@ WantedBy=multi-user.target
 sudo systemctl status backupx
 sudo journalctl -u backupx -f    # 实时日志
 sudo systemctl restart backupx
+curl -fsS http://127.0.0.1:8340/api/auth/setup/status
 ```
+
+访问 `http://your-server:8340`，可按需切换到 English，然后在“系统初始化 / System setup”页面创建首个管理员。若监听端口不是默认值，请为安装脚本传入对应的 `HEALTH_URL`。
+
+生产环境应通过 HTTPS 暴露 BackupX，或在防火墙限制 `8340` 端口。安装器不会自动修改防火墙。
+
+替换版本前，应在服务停止时同时快照 `/etc/backupx`、`/opt/backupx/data`、已安装二进制和前端文件。请按[升级与恢复](../operations/upgrade-recovery)中的版本化流程操作；让旧版本二进制直接读取已由新版本迁移的数据库并不是安全回滚。
 
 ## 密码重置
 
 忘记管理员密码时：
 
 ```bash
-/opt/backupx/backupx reset-password \
+/opt/backupx/bin/backupx reset-password \
   --username admin \
   --password 'newpass123' \
-  --config /opt/backupx/config.yaml
+  --config /etc/backupx/config.yaml
 ```
 
 Docker 等效命令：

@@ -3,30 +3,46 @@
 # 快速启动：docker compose up -d
 # 访问地址：http://localhost:8340
 #
-# 如需从源码构建镜像（而非拉取线上镜像），取消注释 build 行并注释 image 行。
+# 生产环境建议在 .env 中固定 BACKUPX_IMAGE 版本，并通过 HTTPS 反向代理暴露服务。
 
 services:
   backupx:
-    image: awuqing/backupx:latest
-    # build: .                              # 从源码构建时取消此行注释
+    image: ${BACKUPX_IMAGE:-awuqing/backupx:latest}
+    # build: .
     container_name: backupx
     restart: unless-stopped
+    init: true
+    stop_grace_period: 30s
     ports:
-      - "8340:8340"
+      - "${BACKUPX_BIND_ADDRESS:-0.0.0.0}:${BACKUPX_PORT:-8340}:8340"
     volumes:
       - backupx-data:/app/data
-      - /var/run/docker.sock:/var/run/docker.sock  # 支持 Web 一键更新
       # 挂载需要备份的宿主机目录（按需添加，:ro 表示只读）：
       # - /var/www:/mnt/www:ro
       # - /etc/nginx:/mnt/nginx-conf:ro
       # - /home/user/data:/mnt/data:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      # 仅用于旧数据卷迁移与降权；应用进程随后以 backupx 运行。
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
     environment:
-      - TZ=Asia/Shanghai
-      # 远程 Agent 需要通过公网或可路由地址连接 Master 时，取消注释并改成真实 URL：
-      # - BACKUPX_SERVER_EXTERNAL_URL=https://backup.example.com
-      # 通过 BACKUPX_ 前缀环境变量覆盖配置：
-      # - BACKUPX_LOG_LEVEL=debug
-      # - BACKUPX_BACKUP_MAX_CONCURRENT=4
+      TZ: ${TZ:-Asia/Shanghai}
+      # 远程 Agent 连接 Master 时，配置为所有节点可达的稳定 HTTPS URL：
+      # BACKUPX_SERVER_EXTERNAL_URL: https://backup.example.com
+      # BACKUPX_LOG_LEVEL: debug
+      # BACKUPX_BACKUP_MAX_CONCURRENT: "4"
+    healthcheck:
+      test: ["CMD", "su-exec", "backupx:backupx", "wget", "-q", "-T", "3", "-O", "/dev/null", "http://127.0.0.1:8340/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
 volumes:
   backupx-data:
