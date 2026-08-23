@@ -26,7 +26,7 @@ RUN npm run build
 
 
 # ---- Stage 2: Build backend ----
-FROM golang:1.26-alpine AS server-builder
+FROM golang:1.27-alpine AS server-builder
 ARG USE_CHINA_MIRROR
 ARG VERSION=dev
 
