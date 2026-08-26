@@ -10,7 +10,7 @@ ARG USE_CHINA_MIRROR=false
 
 
 # ---- Stage 1: Build frontend ----
-FROM node:24-alpine AS web-builder
+FROM node:26-alpine AS web-builder
 ARG USE_CHINA_MIRROR
 
 # 国内镜像：npm 使用淘宝源
@@ -26,7 +26,7 @@ RUN npm run build
 
 
 # ---- Stage 2: Build backend ----
-FROM golang:1.25-alpine AS server-builder
+FROM golang:1.27-alpine AS server-builder
 ARG USE_CHINA_MIRROR
 ARG VERSION=dev
 
