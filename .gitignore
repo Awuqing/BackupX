@@ -36,3 +36,4 @@ desktop.ini
 *~
 .claude/
 .codex/
+.build-tmp/

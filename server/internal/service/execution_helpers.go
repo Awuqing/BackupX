@@ -185,12 +185,13 @@ func buildBackupTaskSpec(cipher *codec.ConfigCipher, task *model.BackupTask, sta
 		}
 	}
 	dbSpec := backup.DatabaseSpec{
-		Host:     task.DBHost,
-		Port:     task.DBPort,
-		User:     task.DBUser,
-		Password: password,
-		Names:    []string{task.DBName},
-		Path:     task.DBPath,
+		Host:        task.DBHost,
+		Port:        task.DBPort,
+		User:        task.DBUser,
+		Password:    password,
+		Names:       []string{task.DBName},
+		Path:        task.DBPath,
+		ExtraConfig: task.ExtraConfig,
 	}
 	// 解析 ExtraConfig 填充类型特有字段（目前主要用于 SAP HANA）
 	if strings.TrimSpace(task.ExtraConfig) != "" {

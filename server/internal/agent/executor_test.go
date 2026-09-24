@@ -407,3 +407,15 @@ func writeAgentEnvelope(t *testing.T, w http.ResponseWriter, data any) {
 		t.Fatalf("Encode response returned error: %v", err)
 	}
 }
+
+func TestSQLServerSpecsPreserveInstanceAndTLS(t *testing.T) {
+	extra := `{"instanceName":"SQLEXPRESS","trustServerCertificate":true}`
+	backupSpec := buildBackupTaskSpec(&TaskSpec{Type: "sqlserver", DBName: "app", ExtraConfig: extra}, time.Now(), t.TempDir())
+	restoreSpec := buildRestoreBackupTaskSpec(&RestoreSpec{Type: "sqlserver", DBName: "app", ExtraConfig: extra}, time.Now(), t.TempDir())
+	if backupSpec.Database.ExtraConfig != extra || restoreSpec.Database.ExtraConfig != extra {
+		t.Fatal("SQL Server instance/TLS options were lost on the agent")
+	}
+	if _, err := NewExecutor(nil, t.TempDir()).backupRegistry.Runner("sqlserver"); err != nil {
+		t.Fatal(err)
+	}
+}

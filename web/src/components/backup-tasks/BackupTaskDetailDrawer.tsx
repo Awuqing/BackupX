@@ -78,7 +78,7 @@ export function BackupTaskDetailDrawer({ visible, task, onCancel }: BackupTaskDe
               data={[{ label: 'SQLite 路径', value: task.dbPath || '-' }]}
             />
           ) : null}
-          {task.type === 'mysql' || task.type === 'postgresql' ? (
+          {task.type === 'mysql' || task.type === 'postgresql' || task.type === 'sqlserver' ? (
             <Descriptions
               column={1}
               border
@@ -91,6 +91,18 @@ export function BackupTaskDetailDrawer({ visible, task, onCancel }: BackupTaskDe
                   label: '数据库密码',
                   value: task.maskedFields?.includes('dbPassword') ? '已配置' : '未配置',
                 },
+                ...(task.type === 'sqlserver'
+                  ? [
+                      {
+                        label: 'Windows 实例',
+                        value: String(task.extraConfig?.instanceName || '默认实例'),
+                      },
+                      {
+                        label: '信任服务器证书',
+                        value: task.extraConfig?.trustServerCertificate === true ? '是' : '否',
+                      },
+                    ]
+                  : []),
               ]}
             />
           ) : null}

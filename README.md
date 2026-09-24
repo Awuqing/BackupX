@@ -41,7 +41,7 @@
 
 | Capability | Details |
 |-----------|---------|
-| **Backup Types** | Files/directories (multi-source), MySQL, PostgreSQL, SQLite, SAP HANA (full / incremental / differential / log + parallel channels + retry) |
+| **Backup Types** | Files/directories (multi-source), MySQL, PostgreSQL, SQLite, SQL Server (VDI; Linux/Windows worker), SAP HANA (full / incremental / differential / log + parallel channels + retry) |
 | **SAP HANA Backint Agent** | Built-in Backint protocol — HANA's native interface routes data directly to any BackupX storage backend |
 | **70+ Storage Backends** | Alibaba OSS, Tencent COS, Qiniu, S3, Google Drive, WebDAV, FTP + SFTP, Azure Blob, Dropbox, OneDrive and dozens more via rclone |
 | **Scheduling** | Cron + visual editor + auto-retention (by days/count + empty-directory cleanup) |

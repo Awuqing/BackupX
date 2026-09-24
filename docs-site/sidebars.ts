@@ -39,6 +39,7 @@ const sidebars: SidebarsConfig = {
         'features/backup-types',
         'features/storage-backends',
         'features/sap-hana',
+        'features/sql-server',
         'features/multi-node',
         'features/notifications',
       ],

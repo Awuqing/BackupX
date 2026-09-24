@@ -227,8 +227,16 @@ export function BackupTaskFormDrawer({
       sourcePath: value === 'file' ? current.sourcePath : '',
       sourcePaths: value === 'file' ? current.sourcePaths : [''],
       excludePatterns: value === 'file' ? current.excludePatterns : [],
-      dbHost: isDatabaseBackupTask(value) ? current.dbHost : '',
-      dbPort: isDatabaseBackupTask(value) ? current.dbPort || getDefaultPort(value) : 0,
+      dbHost:
+        value === 'sqlserver' ? 'localhost' : isDatabaseBackupTask(value) ? current.dbHost : '',
+      dbPort:
+        value === 'sqlserver'
+          ? getDefaultPort(value)
+          : isDatabaseBackupTask(value)
+            ? current.dbPort || getDefaultPort(value)
+            : 0,
+      nodePoolTag: value === 'sqlserver' ? '' : current.nodePoolTag,
+      verifyEnabled: value === 'sqlserver' ? false : current.verifyEnabled,
       dbUser: isDatabaseBackupTask(value) ? current.dbUser : '',
       dbPassword: isDatabaseBackupTask(value) ? current.dbPassword : '',
       dbName: isDatabaseBackupTask(value) ? current.dbName : '',
@@ -309,6 +317,12 @@ export function BackupTaskFormDrawer({
       if (!value.dbName.trim()) {
         return '请输入数据库名称'
       }
+    }
+    if (value.type === 'sqlserver') {
+      if (value.nodePoolTag?.trim())
+        return 'SQL Server VDI 必须选择数据库所在固定节点，不能使用节点池'
+      if (value.dbName.includes(',') || /[\r\n]/.test(value.dbName))
+        return 'SQL Server 每个任务只能填写一个数据库'
     }
     return ''
   }
@@ -546,6 +560,33 @@ export function BackupTaskFormDrawer({
                 />
               )}
             </div>
+            {draft.type === 'sqlserver' ? (
+              <>
+                <Alert
+                  type="info"
+                  content="VDI 组件须安装在 SQL Server 所在主机。请选择该固定节点，主机填 localhost 或回环 IP，账号需要 sysadmin。每个任务备份一个数据库，使用 COPY_ONLY 完整备份；暂不支持自动验证演练，请在隔离环境恢复验证。"
+                />
+                <div>
+                  <Typography.Text>Windows 实例名称（可选）</Typography.Text>
+                  <Input
+                    value={String(draft.extraConfig?.instanceName ?? '')}
+                    placeholder="默认实例留空，例如 SQLEXPRESS；端口填写该实例实际 TCP 端口"
+                    onChange={(instanceName) =>
+                      updateDraft({ extraConfig: { ...draft.extraConfig, instanceName } })
+                    }
+                  />
+                </div>
+                <Space>
+                  <Typography.Text>信任服务器证书（仅用于自签名证书）</Typography.Text>
+                  <Switch
+                    checked={draft.extraConfig?.trustServerCertificate === true}
+                    onChange={(trustServerCertificate) =>
+                      updateDraft({ extraConfig: { ...draft.extraConfig, trustServerCertificate } })
+                    }
+                  />
+                </Space>
+              </>
+            ) : null}
             {isSapHanaBackupTask(draft.type) ? renderSapHanaExtraFields() : null}
           </>
         ) : null}
@@ -920,6 +961,7 @@ export function BackupTaskFormDrawer({
         <Space align="center" size="medium">
           <Typography.Text>启用定时验证</Typography.Text>
           <Switch
+            disabled={draft.type === 'sqlserver'}
             checked={draft.verifyEnabled}
             onChange={(checked) => updateDraft({ verifyEnabled: checked })}
           />

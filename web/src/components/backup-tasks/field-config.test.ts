@@ -21,6 +21,9 @@ describe('backup task field config', () => {
     expect(isDatabaseBackupTask('mysql')).toBe(true)
     expect(isDatabaseBackupTask('postgresql')).toBe(true)
     expect(isDatabaseBackupTask('file')).toBe(false)
+    expect(isDatabaseBackupTask('sqlserver')).toBe(true)
+    expect(getBackupTaskTypeLabel('sqlserver')).toBe('SQL Server (VDI)')
+    expect(getDefaultPort('sqlserver')).toBe(1433)
   })
 
   it('returns expected status meta and default ports', () => {
