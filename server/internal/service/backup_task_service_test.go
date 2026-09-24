@@ -295,3 +295,22 @@ func TestBackupTaskServiceKeepsMaskedPasswordOnUpdate(t *testing.T) {
 		t.Fatalf("expected ciphertext unchanged")
 	}
 }
+
+func TestSQLServerTaskValidation(t *testing.T) {
+	input := BackupTaskUpsertInput{Type: "sqlserver", DBHost: "localhost", DBPort: 1433, DBUser: "backup", DBPassword: "secret", DBName: "app", ExtraConfig: map[string]any{"instanceName": "SQLEXPRESS", "trustServerCertificate": true}}
+	if err := validateTaskTypeSpecificFields(input, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, change := range []func(*BackupTaskUpsertInput){
+		func(in *BackupTaskUpsertInput) { in.DBHost = "192.0.2.1" },
+		func(in *BackupTaskUpsertInput) { in.NodePoolTag = "any-node" },
+		func(in *BackupTaskUpsertInput) { in.VerifyEnabled = true },
+		func(in *BackupTaskUpsertInput) { in.DBName = "app,other" },
+	} {
+		invalid := input
+		change(&invalid)
+		if err := validateTaskTypeSpecificFields(invalid, true); err == nil {
+			t.Fatalf("accepted invalid SQL Server configuration: %+v", invalid)
+		}
+	}
+}

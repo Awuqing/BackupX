@@ -1,12 +1,12 @@
 ---
 sidebar_position: 1
 title: Backup Types
-description: File, MySQL, PostgreSQL, SQLite and SAP HANA — what they back up and what to configure.
+description: File, MySQL, PostgreSQL, SQLite, SQL Server and SAP HANA — what they back up and what to configure.
 ---
 
 # Backup Types
 
-BackupX supports five built-in backup types. Type determines which runner executes the job.
+BackupX supports the following built-in backup types. Type determines which runner executes the job.
 
 When a task is routed to a remote Agent, the source tools and paths are resolved on that Agent host. Multi-target uploads are still tracked per storage target; if at least one target succeeds, the backup record is marked successful and the per-target result table shows partial failures.
 
@@ -52,3 +52,7 @@ Two modes are supported — see the dedicated [SAP HANA](./sap-hana) page.
 ## Deletion behavior
 
 When a task is deleted, BackupX removes backup artifacts from every storage target but preserves backup records for audit. Task deletion also tears down the cron schedule entry.
+
+## SQL Server (VDI)
+
+[SQL Server VDI](./sql-server) requires a native worker on the database host; supports Linux and Windows COPY_ONLY full backups.

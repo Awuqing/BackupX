@@ -6,12 +6,13 @@ import (
 )
 
 type DatabaseSpec struct {
-	Host     string
-	Port     int
-	User     string
-	Password string
-	Names    []string
-	Path     string
+	Host        string
+	Port        int
+	User        string
+	Password    string
+	Names       []string
+	Path        string
+	ExtraConfig string // 类型特有配置，SQL Server 在执行节点解析
 	// SAP HANA 特有字段（其他类型忽略）
 	InstanceNumber string // 实例编号（从端口推断或手动指定）
 	BackupLevel    string // "full"(默认) / "incremental" / "differential"

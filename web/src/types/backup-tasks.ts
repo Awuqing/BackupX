@@ -1,4 +1,5 @@
-export type BackupTaskType = 'file' | 'mysql' | 'sqlite' | 'postgresql' | 'saphana' | 'mongodb'
+export type BackupTaskType =
+  'file' | 'mysql' | 'sqlite' | 'postgresql' | 'saphana' | 'mongodb' | 'sqlserver'
 export type BackupTaskStatus = 'idle' | 'running' | 'success' | 'failed'
 export type BackupCompression = 'gzip' | 'zstd' | 'none'
 export type BackupMode = 'full' | 'differential' | 'repository'

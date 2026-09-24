@@ -7,6 +7,7 @@ export const backupTaskTypeOptions = [
   { label: 'PostgreSQL', value: 'postgresql' },
   { label: 'SAP HANA', value: 'saphana' },
   { label: 'MongoDB', value: 'mongodb' },
+  { label: 'SQL Server (VDI)', value: 'sqlserver' },
 ] as const
 
 export const backupCompressionOptions = [
@@ -29,6 +30,8 @@ export function getBackupTaskTypeLabel(type: BackupTaskType) {
       return 'SAP HANA'
     case 'mongodb':
       return 'MongoDB'
+    case 'sqlserver':
+      return 'SQL Server (VDI)'
     default:
       return type
   }
@@ -71,7 +74,13 @@ export function isSQLiteBackupTask(type: BackupTaskType) {
 }
 
 export function isDatabaseBackupTask(type: BackupTaskType) {
-  return type === 'mysql' || type === 'postgresql' || type === 'saphana' || type === 'mongodb'
+  return (
+    type === 'mysql' ||
+    type === 'postgresql' ||
+    type === 'saphana' ||
+    type === 'mongodb' ||
+    type === 'sqlserver'
+  )
 }
 
 export function getDefaultPort(type: BackupTaskType) {
@@ -84,6 +93,8 @@ export function getDefaultPort(type: BackupTaskType) {
       return 30015
     case 'mongodb':
       return 27017
+    case 'sqlserver':
+      return 1433
     default:
       return 0
   }

@@ -4,6 +4,7 @@ web/node_modules/
 # Build artifacts
 server/bin/
 web/dist/
+.build-tmp/
 
 # Data & logs
 data/

@@ -41,7 +41,7 @@
 
 | 能力 | 说明 |
 |------|------|
-| **备份类型** | 文件/目录（多源路径）、MySQL、PostgreSQL、SQLite、SAP HANA（完整/增量/差异/日志备份 + 并行通道 + 失败重试） |
+| **备份类型** | 文件/目录（多源路径）、MySQL、PostgreSQL、SQLite、SQL Server（VDI，需 Linux/Windows 原生组件）、SAP HANA（完整/增量/差异/日志备份 + 并行通道 + 失败重试） |
 | **SAP HANA Backint 代理** | 内置 SAP HANA Backint 协议代理，HANA 原生备份接口可直接把数据路由到 BackupX 支持的任意存储后端 |
 | **70+ 存储后端** | 内置阿里云 OSS / 腾讯云 COS / 七牛云 / S3 / Google Drive / WebDAV / FTP + 通过 rclone 集成 SFTP、Azure Blob、Dropbox、OneDrive 等 70+ 后端 |
 | **自动调度** | Cron 定时 + 可视化编辑器 + 自动保留策略（按天数/份数清理，自动回收空目录） |

@@ -415,6 +415,8 @@ func typeLabel(key string) string {
 		return "PostgreSQL"
 	case "sqlite":
 		return "SQLite"
+	case "sqlserver":
+		return "SQL Server"
 	case "saphana":
 		return "SAP HANA"
 	default:

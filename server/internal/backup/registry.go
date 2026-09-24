@@ -29,6 +29,7 @@ func NewDefaultRegistry() *Registry {
 		NewPostgreSQLRunner(nil),
 		NewSAPHANARunner(nil),
 		NewMongoDBRunner(nil),
+		NewSQLServerRunner(),
 	)
 }
 

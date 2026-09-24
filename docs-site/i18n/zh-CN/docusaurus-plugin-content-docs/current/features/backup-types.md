@@ -1,12 +1,12 @@
 ---
 sidebar_position: 1
 title: 备份类型
-description: 文件、MySQL、PostgreSQL、SQLite 和 SAP HANA — 各自的能力与配置说明。
+description: 文件、MySQL、PostgreSQL、SQLite、SQL Server 和 SAP HANA — 各自的能力与配置说明。
 ---
 
 # 备份类型
 
-BackupX 支持五种内置备份类型，类型决定了用哪个 runner 执行。
+BackupX 支持以下内置备份类型，类型决定了用哪个 runner 执行。
 
 当任务路由到远程 Agent 时，源路径和外部工具都会在该 Agent 主机上解析。多存储目标上传仍会逐目标记录结果；只要至少一个目标上传成功，备份记录即为成功，详情中的目标结果表会展示部分失败。
 
@@ -52,3 +52,7 @@ CDC 仓库会在不同文件、不同快照之间复用相同内容。完整恢�
 ## 删除行为
 
 删除备份任务时，BackupX 会从所有存储目标上移除备份产物，但保留备份记录以供审计。删除任务同时拆除其 Cron 定时调度。
+
+## SQL Server (VDI)
+
+[SQL Server VDI](./sql-server) 需要在数据库主机安装原生组件，支持 Linux 和 Windows 的 COPY_ONLY 完整备份。

@@ -22,7 +22,7 @@ const backupTaskMaskedValue = "********"
 
 type BackupTaskUpsertInput struct {
 	Name             string   `json:"name" binding:"required,min=1,max=100"`
-	Type             string   `json:"type" binding:"required,oneof=file mysql sqlite postgresql pgsql saphana mongodb"`
+	Type             string   `json:"type" binding:"required,oneof=file mysql sqlite postgresql pgsql saphana mongodb sqlserver"`
 	Enabled          bool     `json:"enabled"`
 	CronExpr         string   `json:"cronExpr" binding:"max=64"`
 	SourcePath       string   `json:"sourcePath" binding:"max=500"`
@@ -648,7 +648,7 @@ func validateTaskTypeSpecificFields(input BackupTaskUpsertInput, passwordRequire
 		if !hasSourcePaths {
 			return apperror.BadRequest("BACKUP_TASK_INVALID", "文件备份必须填写源路径", nil)
 		}
-	case "mysql", "postgresql", "saphana", "mongodb":
+	case "mysql", "postgresql", "saphana", "mongodb", "sqlserver":
 		if strings.TrimSpace(input.DBHost) == "" {
 			return apperror.BadRequest("BACKUP_TASK_INVALID", "数据库主机不能为空", nil)
 		}
@@ -663,6 +663,21 @@ func validateTaskTypeSpecificFields(input BackupTaskUpsertInput, passwordRequire
 		}
 		if strings.TrimSpace(input.DBName) == "" {
 			return apperror.BadRequest("BACKUP_TASK_INVALID", "数据库名称不能为空", nil)
+		}
+		if normalizeBackupTaskType(input.Type) == "sqlserver" {
+			extra, err := json.Marshal(input.ExtraConfig)
+			if err != nil {
+				return apperror.BadRequest("BACKUP_TASK_INVALID", "SQL Server 配置不合法", err)
+			}
+			if _, err := backup.ValidateSQLServerDatabase(backup.DatabaseSpec{Host: input.DBHost, Port: input.DBPort, User: input.DBUser, Names: []string{input.DBName}, ExtraConfig: string(extra)}); err != nil {
+				return apperror.BadRequest("BACKUP_TASK_INVALID", err.Error(), err)
+			}
+			if strings.TrimSpace(input.NodePoolTag) != "" {
+				return apperror.BadRequest("BACKUP_TASK_INVALID", "SQL Server VDI 必须绑定数据库所在的固定节点，不能使用节点池", nil)
+			}
+			if input.VerifyEnabled {
+				return apperror.BadRequest("BACKUP_TASK_INVALID", "SQL Server 暂不支持自动验证演练，请在隔离数据库中执行恢复验证", nil)
+			}
 		}
 	case "sqlite":
 		if strings.TrimSpace(input.DBPath) == "" {
