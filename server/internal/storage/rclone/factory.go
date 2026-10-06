@@ -66,7 +66,9 @@ type S3Factory struct{}
 func NewS3Factory() S3Factory { return S3Factory{} }
 
 func (S3Factory) Type() storage.ProviderType { return storage.ProviderTypeS3 }
-func (S3Factory) SensitiveFields() []string  { return []string{"accessKeyId", "secretAccessKey"} }
+func (S3Factory) SensitiveFields() []string {
+	return []string{"accessKeyId", "secretAccessKey", "minioMetricsToken"}
+}
 
 func (S3Factory) New(ctx context.Context, rawConfig map[string]any) (storage.StorageProvider, error) {
 	cfg, err := storage.DecodeConfig[storage.S3Config](rawConfig)
@@ -79,7 +81,20 @@ func (S3Factory) New(ctx context.Context, rawConfig map[string]any) (storage.Sto
 	if strings.TrimSpace(cfg.AccessKeyID) == "" || strings.TrimSpace(cfg.SecretAccessKey) == "" {
 		return nil, fmt.Errorf("s3 credentials are required")
 	}
-	return newFs(ctx, storage.ProviderTypeS3, buildS3Remote("Other", cfg.AccessKeyID, cfg.SecretAccessKey, cfg.Endpoint, cfg.Region, cfg.Bucket, cfg.ForcePathStyle))
+	metricsURL := ""
+	if cfg.MinIOCapacity {
+		metricsURL, err = minioMetricsURL(cfg.Endpoint, cfg.MinIOMetricsToken)
+		if err != nil {
+			return nil, err
+		}
+	}
+	p, err := newFs(ctx, storage.ProviderTypeS3, buildS3Remote("Other", cfg.AccessKeyID, cfg.SecretAccessKey, cfg.Endpoint, cfg.Region, cfg.Bucket, cfg.ForcePathStyle))
+	if err != nil {
+		return nil, err
+	}
+	p.minioMetricsURL = metricsURL
+	p.minioMetricsToken = strings.TrimSpace(cfg.MinIOMetricsToken)
+	return p, nil
 }
 
 // buildS3Remote 构建 S3 兼容存储的 rclone 连接字符串。

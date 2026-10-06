@@ -53,6 +53,20 @@ const BUILTIN_FIELD_CONFIG: Record<string, StorageTargetFieldConfig[]> = {
       type: 'switch',
       description: 'MinIO 等兼容存储需要开启。',
     },
+    {
+      key: 'minioCapacity',
+      label: '查询 MinIO 集群容量',
+      type: 'switch',
+      description: '使用 MinIO 监控接口查询整个集群的物理容量；普通 S3 存储无需开启。',
+    },
+    {
+      key: 'minioMetricsToken',
+      label: 'MinIO 监控 Token',
+      type: 'password',
+      sensitive: true,
+      description:
+        '填写 mc admin prometheus generate 生成的 bearer_token；仅监控接口允许匿名访问时可留空。',
+    },
   ],
   webdav: [
     {

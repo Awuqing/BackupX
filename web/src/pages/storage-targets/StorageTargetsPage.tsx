@@ -310,7 +310,12 @@ export function StorageTargetsPage() {
                         <div>
                           <Space size="mini" style={{ marginBottom: 4 }}>
                             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              {hasDiskCapacity ? '使用率' : '备份配额使用率'} {percent}%
+                              {hasDiskCapacity
+                                ? disk.scope === 'minio_cluster'
+                                  ? 'MinIO 集群物理容量使用率'
+                                  : '使用率'
+                                : '备份配额使用率'}{' '}
+                              {percent}%
                             </Typography.Text>
                             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                               {formatBytes(used)} / {formatBytes(total)}
@@ -327,6 +332,11 @@ export function StorageTargetsPage() {
                             size="small"
                             showText={false}
                           />
+                          {usage.capacityError && (
+                            <Typography.Text type="warning" style={{ fontSize: 12 }}>
+                              {usage.capacityError}
+                            </Typography.Text>
+                          )}
                           {!hasDiskCapacity && (
                             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
                               按备份记录大小与设置配额计算，不代表存储物理容量。
@@ -341,7 +351,8 @@ export function StorageTargetsPage() {
                           备份记录大小：{formatBytes(usage.totalSize)}
                         </Typography.Text>
                         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          未获取到存储总容量，无法计算物理空间使用率；可设置备份配额。
+                          {usage.capacityError ??
+                            '未获取到存储总容量，无法计算物理空间使用率；可设置备份配额。'}
                         </Typography.Text>
                       </Space>
                     )
