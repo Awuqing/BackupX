@@ -647,6 +647,10 @@ func (s *RestoreService) GetAgentRestoreSpec(ctx context.Context, node *model.No
 		if err != nil {
 			return nil, fmt.Errorf("decrypt storage config: %w", err)
 		}
+		configRaw, err = storage.ConfigForAgent(configRaw)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return &AgentRestoreSpec{
 		RestoreRecordID: restore.ID,

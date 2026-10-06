@@ -239,6 +239,10 @@ func (s *AgentService) GetTaskSpec(ctx context.Context, node *model.Node, taskID
 		if err != nil {
 			return nil, fmt.Errorf("decrypt storage config: %w", err)
 		}
+		configRaw, err = storage.ConfigForAgent(configRaw)
+		if err != nil {
+			return nil, err
+		}
 		transferMode := storage.TransferModeDirect
 		if strings.EqualFold(target.Type, storage.TypeLocalDisk) {
 			var localConfig storage.LocalDiskConfig
