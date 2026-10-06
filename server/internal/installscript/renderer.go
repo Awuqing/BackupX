@@ -39,7 +39,7 @@ type Context struct {
 func DownloadBaseFor(src string) string {
 	switch src {
 	case model.InstallSourceGhproxy:
-		return "https://ghproxy.com/https://github.com/Awuqing/BackupX/releases/download"
+		return "https://ghfast.top/https://github.com/Awuqing/BackupX/releases/download"
 	default:
 		return "https://github.com/Awuqing/BackupX/releases/download"
 	}

@@ -298,38 +298,53 @@ export function StorageTargetsPage() {
                     const usage = usageMap[target.id]
                     if (!usage) return null
                     const disk = usage.diskUsage
-                    // 优先后端 About（远端真实容量），否则展示"已用量"（累计备份大小）
-                    if (disk && disk.total && disk.used !== undefined) {
-                      const rate = disk.total > 0 ? disk.used / disk.total : 0
+                    // 真实容量优先；S3 等未提供容量的后端可按备份软配额展示。
+                    const hasDiskCapacity = disk && disk.total && disk.used !== undefined
+                    const total = hasDiskCapacity ? disk.total : target.quotaBytes
+                    const used = hasDiskCapacity ? disk.used : usage.totalSize
+                    if (total && total > 0 && used !== undefined) {
+                      const rate = used / total
                       const percent = Math.round(rate * 100)
                       const color = rate >= 0.85 ? '#F53F3F' : rate >= 0.7 ? '#FF7D00' : '#00B42A'
                       return (
                         <div>
                           <Space size="mini" style={{ marginBottom: 4 }}>
                             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              使用率 {percent}%
+                              {hasDiskCapacity ? '使用率' : '备份配额使用率'} {percent}%
                             </Typography.Text>
                             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              {formatBytes(disk.used)} / {formatBytes(disk.total)}
+                              {formatBytes(used)} / {formatBytes(total)}
                             </Typography.Text>
                             {rate >= 0.85 && (
                               <Tag color="red" bordered size="small">
-                                容量预警
+                                {hasDiskCapacity ? '容量预警' : '配额预警'}
                               </Tag>
                             )}
                           </Space>
-                          <Progress percent={percent} color={color} size="small" showText={false} />
+                          <Progress
+                            percent={Math.min(100, percent)}
+                            color={color}
+                            size="small"
+                            showText={false}
+                          />
+                          {!hasDiskCapacity && (
+                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                              按备份记录大小与设置配额计算，不代表存储物理容量。
+                            </Typography.Text>
+                          )}
                         </div>
                       )
                     }
-                    if (usage.totalSize > 0) {
-                      return (
+                    return (
+                      <Space direction="vertical" size="mini">
                         <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                          已用备份：{formatBytes(usage.totalSize)}（{usage.recordCount} 个记录）
+                          备份记录大小：{formatBytes(usage.totalSize)}
                         </Typography.Text>
-                      )
-                    }
-                    return null
+                        <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                          未获取到存储总容量，无法计算物理空间使用率；可设置备份配额。
+                        </Typography.Text>
+                      </Space>
+                    )
                   })()}
                   <Typography.Text type="secondary">更新时间：{target.updatedAt}</Typography.Text>
 

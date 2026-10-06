@@ -332,7 +332,7 @@ func TestRenderScriptRejectsBadVersion(t *testing.T) {
 func TestDownloadBaseMapping(t *testing.T) {
 	cases := map[string]string{
 		model.InstallSourceGitHub:  "https://github.com/Awuqing/BackupX/releases/download",
-		model.InstallSourceGhproxy: "https://ghproxy.com/https://github.com/Awuqing/BackupX/releases/download",
+		model.InstallSourceGhproxy: "https://ghfast.top/https://github.com/Awuqing/BackupX/releases/download",
 	}
 	for src, want := range cases {
 		got := DownloadBaseFor(src)
