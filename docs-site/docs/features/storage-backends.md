@@ -23,6 +23,12 @@ BackupX aims to accept any place you'd want to drop a backup file.
 
 New local-disk targets enable **Relay remote backups through Master** by default. This makes the configured path belong to the Master, so a storage server mounted there can collect backups from many source Agents. Turn the switch off when the path intentionally belongs to each Agent. Existing targets retain their previous Agent-local behavior until explicitly changed.
 
+## Storage capacity and backup quotas
+
+Physical storage usage is shown only when the backend returns total capacity and used bytes. S3-compatible storage, including MinIO, does not provide this through the standard S3 API or rclone About capability. Missing capacity is not treated as zero.
+
+For these targets, BackupX displays the size tracked by backup records. Set a **backup quota** on the storage target to display a backup quota percentage. This soft quota is enforced by BackupX; it is not the bucket quota or the total disk capacity of the MinIO cluster. The tracked size does not include objects created by other applications or untracked object versions. Use the MinIO console or its monitoring interfaces for physical cluster and bucket capacity.
+
 ## Rclone backends
 
 Every [rclone backend](https://rclone.org/overview/) is exposed as a first-class storage type — SFTP, Azure Blob, Dropbox, OneDrive, Backblaze B2, Wasabi, pCloud, HDFS, and many more.

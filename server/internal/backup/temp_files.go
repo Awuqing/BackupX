@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-var fileNameCleaner = regexp.MustCompile(`[^a-zA-Z0-9._-]+`)
+var fileNameCleaner = regexp.MustCompile(`[^\p{L}\p{N}._-]+`)
 
 func EnsureTempRoot() (string, error) {
 	root := filepath.Join(os.TempDir(), "backupx")

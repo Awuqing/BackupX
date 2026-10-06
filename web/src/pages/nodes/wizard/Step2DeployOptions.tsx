@@ -107,7 +107,7 @@ export function Step2DeployOptions({ masterVersion, value, onChange }: Props) {
 
       <Form.Item
         label="二进制下载源"
-        extra={<Text type="secondary">国内服务器选 ghproxy 镜像加速</Text>}
+        extra={<Text type="secondary">国内服务器可选 GitHub 镜像加速</Text>}
       >
         <Radio.Group
           type="button"
@@ -115,7 +115,7 @@ export function Step2DeployOptions({ masterVersion, value, onChange }: Props) {
           onChange={(v) => update({ downloadSrc: v as InstallSource })}
           options={[
             { label: 'GitHub 直连', value: 'github' },
-            { label: 'ghproxy 镜像', value: 'ghproxy' },
+            { label: 'GitHub 镜像（ghfast.top）', value: 'ghproxy' },
           ]}
         />
       </Form.Item>
