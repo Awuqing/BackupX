@@ -84,6 +84,7 @@ export async function completeGoogleDriveAuth(queryString: string) {
 }
 
 export interface StorageDiskUsage {
+  scope?: string
   total?: number
   used?: number
   free?: number
@@ -96,6 +97,7 @@ export interface StorageTargetUsage {
   recordCount: number
   totalSize: number
   diskUsage?: StorageDiskUsage
+  capacityError?: string
 }
 
 export async function toggleStorageTargetStar(id: number) {
