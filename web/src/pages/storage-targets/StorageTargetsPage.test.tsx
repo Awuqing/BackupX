@@ -73,10 +73,23 @@ describe('storage usage', () => {
       targetName: 'MinIO',
       recordCount: 0,
       totalSize: 512,
-      diskUsage: { total: 4096, used: 1024 },
+      diskUsage: { total: 4096, used: 1024, scope: 'minio_cluster' },
     })
     render(<StorageTargetsPage />)
-    expect(await screen.findByText('使用率 25%')).toBeInTheDocument()
+    expect(await screen.findByText('MinIO 集群物理容量使用率 25%')).toBeInTheDocument()
     expect(screen.queryByText(/备份配额使用率/)).not.toBeInTheDocument()
+  })
+  it('shows a failed capacity query without reporting zero capacity', async () => {
+    mockTarget()
+    vi.mocked(getStorageTargetUsage).mockResolvedValue({
+      targetId: 1,
+      targetName: 'MinIO',
+      recordCount: 0,
+      totalSize: 0,
+      capacityError: 'MinIO 容量查询失败，请检查监控 Token、访问权限和网络连接。',
+    })
+    render(<StorageTargetsPage />)
+    expect(await screen.findByText(/MinIO 容量查询失败/)).toBeInTheDocument()
+    expect(screen.queryByText(/使用率.*%/)).not.toBeInTheDocument()
   })
 })
