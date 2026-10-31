@@ -71,13 +71,14 @@ type ProviderFactory interface {
 }
 
 // StorageAbout 是可选能力接口，支持查询远端存储空间。
-// 并非所有后端都支持（如 S3/FTP 不支持），通过 type assertion 检测。
+// 并非所有后端都支持；MinIO 可通过专用监控接口查询集群容量。
 type StorageAbout interface {
 	About(ctx context.Context) (*StorageUsageInfo, error)
 }
 
 // StorageUsageInfo 描述远端存储的空间使用情况。
 type StorageUsageInfo struct {
+	Scope   string `json:"scope,omitempty"`   // minio_cluster 表示整个集群的物理容量
 	Total   *int64 `json:"total,omitempty"`   // 总空间（字节）
 	Used    *int64 `json:"used,omitempty"`    // 已用空间
 	Free    *int64 `json:"free,omitempty"`    // 可用空间
@@ -114,12 +115,14 @@ type LocalDiskConfig struct {
 }
 
 type S3Config struct {
-	Endpoint        string `json:"endpoint"`
-	Region          string `json:"region"`
-	Bucket          string `json:"bucket"`
-	AccessKeyID     string `json:"accessKeyId"`
-	SecretAccessKey string `json:"secretAccessKey"`
-	ForcePathStyle  bool   `json:"forcePathStyle"`
+	Endpoint          string `json:"endpoint"`
+	Region            string `json:"region"`
+	Bucket            string `json:"bucket"`
+	AccessKeyID       string `json:"accessKeyId"`
+	SecretAccessKey   string `json:"secretAccessKey"`
+	ForcePathStyle    bool   `json:"forcePathStyle"`
+	MinIOCapacity     bool   `json:"minioCapacity"`
+	MinIOMetricsToken string `json:"minioMetricsToken"`
 }
 
 type WebDAVConfig struct {
