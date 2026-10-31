@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 )
 
 func createTempArtifact(baseDir, taskName string, extension string) (string, string, error) {
@@ -29,7 +30,7 @@ func sanitizeFileName(value string) string {
 			builder.WriteRune(char)
 		case char >= 'A' && char <= 'Z':
 			builder.WriteRune(char + ('a' - 'A'))
-		case char >= '0' && char <= '9':
+		case unicode.IsLetter(char) || unicode.IsNumber(char):
 			builder.WriteRune(char)
 		case char == '-' || char == '_':
 			builder.WriteRune(char)

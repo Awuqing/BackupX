@@ -453,8 +453,9 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 	task.LastRunAt = &startedAt
 	task.LastStatus = "running"
 	if err := s.tasks.Update(ctx, task); err != nil {
-		finalizeErr := s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecordStatusFailed,
-			"无法更新任务状态: "+err.Error(), "", "", 0, "", "", primaryTargetID)
+		finalizeErr := s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecord{
+			Status: model.BackupRecordStatusFailed, ErrorMessage: "无法更新任务状态: " + err.Error(), StorageTargetID: primaryTargetID,
+		})
 		if finalizeErr != nil {
 			err = errors.Join(err, finalizeErr)
 		}
@@ -466,8 +467,9 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 		// 节点离线 → 立即把刚创建的 running 记录标记 failed，返回明确错误
 		if remoteNode.Status != model.NodeStatusOnline {
 			offlineMsg := fmt.Sprintf("节点 %s 当前离线，无法执行备份任务", remoteNode.Name)
-			if finalizeErr := s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecordStatusFailed,
-				offlineMsg, "", "", 0, "", "", primaryTargetID); finalizeErr != nil {
+			if finalizeErr := s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecord{
+				Status: model.BackupRecordStatusFailed, ErrorMessage: offlineMsg, StorageTargetID: primaryTargetID,
+			}); finalizeErr != nil {
 				return nil, apperror.Internal("BACKUP_RECORD_FINALIZE_FAILED", "无法写回备份失败状态", finalizeErr)
 			}
 			return nil, apperror.BadRequest("NODE_OFFLINE", offlineMsg, nil)
@@ -477,8 +479,9 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 			"recordId": record.ID,
 		}); enqueueErr != nil {
 			// 入队失败 → 在记录中标记失败，继续返回详情
-			if finalizeErr := s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecordStatusFailed,
-				"无法下发任务到远程节点: "+enqueueErr.Error(), "", "", 0, "", "", primaryTargetID); finalizeErr != nil {
+			if finalizeErr := s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecord{
+				Status: model.BackupRecordStatusFailed, ErrorMessage: "无法下发任务到远程节点: " + enqueueErr.Error(), StorageTargetID: primaryTargetID,
+			}); finalizeErr != nil {
 				enqueueErr = errors.Join(enqueueErr, finalizeErr)
 			}
 			return nil, apperror.Internal("AGENT_COMMAND_ENQUEUE_FAILED", "无法下发任务到远程节点", enqueueErr)
@@ -491,8 +494,9 @@ func (s *BackupExecutionService) startTask(ctx context.Context, id uint, async b
 	if async {
 		if !s.async(run) {
 			message := "服务正在关闭，备份任务未启动"
-			if finalizeErr := s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecordStatusFailed,
-				message, "", "", 0, "", "", primaryTargetID); finalizeErr != nil {
+			if finalizeErr := s.finalizeRecord(ctx, &runTask, record.ID, startedAt, model.BackupRecord{
+				Status: model.BackupRecordStatusFailed, ErrorMessage: message, StorageTargetID: primaryTargetID,
+			}); finalizeErr != nil {
 				return nil, apperror.Internal("BACKUP_RECORD_FINALIZE_FAILED", "无法写回备份失败状态", finalizeErr)
 			}
 			return nil, backgroundTaskUnavailable("BACKUP_SERVICE_SHUTTING_DOWN")
@@ -857,52 +861,31 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 		persistCtx, cancel := finalizationContext(ctx)
 		defer cancel()
 		readyForRepositoryRetention := status == model.BackupRecordStatusSuccess
-		if finalizeErr := s.finalizeRecord(persistCtx, task, recordID, startedAt, status, errMessage, logger.String(), fileName, fileSize, checksum, storagePath, selectedStorageTargetID); finalizeErr != nil {
-			logger.Errorf("写回备份记录失败：%v", finalizeErr)
-			readyForRepositoryRetention = false
+		result := model.BackupRecord{
+			Status: status, ErrorMessage: errMessage, FileName: fileName, FileSize: fileSize,
+			Checksum: checksum, StoragePath: storagePath, StorageTargetID: selectedStorageTargetID,
 		}
-		// 采集任务执行结果到 Prometheus（耗时 + 产出字节 + 状态计数）
-		s.metrics.ObserveTaskRun(task.Type, status, time.Since(startedAt).Seconds(), fileSize)
-		// 写入多目标上传结果
 		if len(uploadResults) > 0 {
 			resultsJSON, marshalErr := json.Marshal(uploadResults)
 			if marshalErr != nil {
 				logger.Warnf("序列化多目标上传结果失败：%v", marshalErr)
 				readyForRepositoryRetention = false
-			} else if record, findErr := s.records.FindByID(persistCtx, recordID); findErr != nil || record == nil {
-				if findErr != nil {
-					logger.Warnf("读取备份记录以写回多目标结果失败：%v", findErr)
-				} else {
-					logger.Warnf("备份记录 #%d 不存在，无法写回多目标结果", recordID)
-				}
-				readyForRepositoryRetention = false
 			} else {
-				record.StorageUploadResults = string(resultsJSON)
-				if updateErr := s.records.Update(persistCtx, record); updateErr != nil {
-					logger.Warnf("写回多目标上传结果失败：%v", updateErr)
-					readyForRepositoryRetention = false
-				}
+				result.StorageUploadResults = string(resultsJSON)
 			}
 		}
-		// 持久化差异链信息：全量记录其清单（供后续差异比对），差异记录其基线全量 ID。
-		if status == model.BackupRecordStatusSuccess && (backupKind != model.BackupKindFull || baseRecordID != 0 || manifestJSON != "") {
-			if record, findErr := s.records.FindByID(persistCtx, recordID); findErr == nil && record != nil {
-				record.BackupKind = backupKind
-				record.BaseRecordID = baseRecordID
-				record.Manifest = manifestJSON
-				if updErr := s.records.Update(persistCtx, record); updErr != nil {
-					logger.Warnf("写回差异链信息失败：%v", updErr)
-					readyForRepositoryRetention = false
-				}
-			} else {
-				if findErr != nil {
-					logger.Warnf("读取备份记录以写回备份类型失败：%v", findErr)
-				} else {
-					logger.Warnf("备份记录 #%d 不存在，无法写回备份类型", recordID)
-				}
-				readyForRepositoryRetention = false
-			}
+		if status == model.BackupRecordStatusSuccess {
+			result.BackupKind = backupKind
+			result.BaseRecordID = baseRecordID
+			result.Manifest = manifestJSON
 		}
+		result.LogContent = logger.String()
+		if finalizeErr := s.finalizeRecord(persistCtx, task, recordID, startedAt, result); finalizeErr != nil {
+			logger.Errorf("写回备份记录失败：%v", finalizeErr)
+			readyForRepositoryRetention = false
+		}
+		// 采集任务执行结果到 Prometheus（耗时 + 产出字节 + 状态计数）
+		s.metrics.ObserveTaskRun(task.Type, status, time.Since(startedAt).Seconds(), fileSize)
 		if ctx.Err() == nil && readyForRepositoryRetention && backupKind == model.BackupKindRepository && s.retention != nil && len(repositoryProviders) > 0 {
 			targetIDs := make([]uint, 0, len(repositoryProviders))
 			for targetID := range repositoryProviders {
@@ -1243,7 +1226,7 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	}
 }
 
-func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time, status string, errorMessage string, logContent string, fileName string, fileSize int64, checksum string, storagePath string, storageTargetID uint) error {
+func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model.BackupTask, recordID uint, startedAt time.Time, result model.BackupRecord) error {
 	record, err := s.records.FindByID(ctx, recordID)
 	if err != nil {
 		return err
@@ -1252,23 +1235,30 @@ func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model
 		return fmt.Errorf("backup record %d not found", recordID)
 	}
 	completedAt := s.now()
-	record.Status = status
-	if storageTargetID > 0 {
-		record.StorageTargetID = storageTargetID
+	record.Status = result.Status
+	if result.StorageTargetID > 0 {
+		record.StorageTargetID = result.StorageTargetID
 	}
-	record.FileName = fileName
-	record.FileSize = fileSize
-	record.Checksum = checksum
-	record.StoragePath = storagePath
+	record.FileName = result.FileName
+	record.FileSize = result.FileSize
+	record.Checksum = result.Checksum
+	record.StoragePath = result.StoragePath
+	record.StorageUploadResults = result.StorageUploadResults
+	// 成功状态与恢复元数据一次写入，避免超时后留下无法恢复的成功记录。
+	if result.Status == model.BackupRecordStatusSuccess {
+		record.BackupKind = result.BackupKind
+		record.BaseRecordID = result.BaseRecordID
+		record.Manifest = result.Manifest
+	}
 	record.DurationSeconds = int(completedAt.Sub(startedAt).Seconds())
-	record.ErrorMessage = strings.TrimSpace(errorMessage)
-	record.LogContent = strings.TrimSpace(logContent)
+	record.ErrorMessage = strings.TrimSpace(result.ErrorMessage)
+	record.LogContent = strings.TrimSpace(result.LogContent)
 	record.CompletedAt = &completedAt
 	if err := s.records.Update(ctx, record); err != nil {
 		return err
 	}
 	task.LastRunAt = &startedAt
-	task.LastStatus = status
+	task.LastStatus = result.Status
 	return s.tasks.Update(ctx, task)
 }
 
