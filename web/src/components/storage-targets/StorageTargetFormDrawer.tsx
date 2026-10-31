@@ -211,11 +211,13 @@ export function StorageTargetFormDrawer({
               {field.description}
             </Typography.Paragraph>
           )}
-          {initialValue?.maskedFields?.includes(field.key) && !draft.config[field.key] && (
-            <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
-              已存在敏感配置，留空则保持不变。
-            </Typography.Paragraph>
-          )}
+          {initialValue?.maskedFields?.includes(field.key) &&
+            initialValue.config[field.key] &&
+            !draft.config[field.key] && (
+              <Typography.Paragraph type="secondary" style={{ marginBottom: 0, marginTop: 4 }}>
+                已存在敏感配置，留空则保持不变。
+              </Typography.Paragraph>
+            )}
         </div>
       )
     })
