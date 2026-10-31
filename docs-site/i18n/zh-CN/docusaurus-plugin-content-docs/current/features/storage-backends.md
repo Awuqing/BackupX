@@ -27,7 +27,11 @@ BackupX 的目标是接入任何你想放置备份文件的地方。
 
 只有后端返回总容量和已用字节时，才显示真实存储空间使用率。包括 MinIO 在内的 S3 兼容存储不通过标准 S3 API 或 rclone About 能力提供这些数据；未获取到容量不代表容量为零。
 
-此类目标会显示备份记录统计的大小。可在存储目标中设置 **备份配额**，显示备份配额使用率。这是 BackupX 执行的软限额，不是桶配额，也不是 MinIO 集群磁盘总容量；统计不包含其他应用写入的对象或未被记录的对象版本。集群物理容量与桶容量请使用 MinIO 控制台或监控接口查询。
+此类目标会显示备份记录统计的大小。可在存储目标中设置 **备份配额**，显示备份配额使用率。这是 BackupX 执行的软限额，不是桶配额，也不是 MinIO 集群磁盘总容量；统计不包含其他应用写入的对象或未被记录的对象版本。使用 MinIO 时，可在 S3 存储目标中开启 **查询 MinIO 集群容量**，填写 `mc admin prometheus generate <alias>` 生成的监控 `bearer_token`。只有监控接口已允许匿名访问时才可留空。BackupX 会访问所配置 S3 Endpoint 下的 `/minio/v2/metrics/cluster`，保留反向代理的路径前缀。页面明确标为整个集群的物理容量，使用原始总容量与剩余容量计算；不代表当前桶用量，也不代表扣除纠删码开销后的可用容量。
+
+监控 Token 会加密保存并脱敏展示，仅留在 Master，不随备份或恢复配置下发给 Agent。容量请求有超时限制，并拒绝重定向。权限不足、接口不可达或指标无效时，页面会提示查询失败，不会显示为零容量。未开启此选项的普通 S3 目标仍显示备份记录大小及配额。桶用量和桶配额仍需使用 MinIO 控制台或其他监控工具查询。
+
+接口与鉴权见 [MinIO 指标参考](https://github.com/minio/minio/blob/master/docs/metrics/prometheus/list.md) 和 [监控鉴权说明](https://github.com/minio/minio/blob/master/docs/metrics/prometheus/README.md)。
 
 ## Rclone 后端
 
