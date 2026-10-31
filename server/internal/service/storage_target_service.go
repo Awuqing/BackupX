@@ -355,6 +355,9 @@ func (s *StorageTargetService) runCapacityCheckOnce(ctx context.Context, dispatc
 
 func (s *StorageTargetService) dispatchCapacityWarning(ctx context.Context, dispatcher EventDispatcher, target *model.StorageTarget, info *storage.StorageUsageInfo, usage float64) {
 	title := "BackupX 存储容量预警"
+	if info.Scope == "minio_cluster" {
+		title = "BackupX MinIO 集群物理容量预警"
+	}
 	usedGB := float64(*info.Used) / (1 << 30)
 	totalGB := float64(*info.Total) / (1 << 30)
 	body := fmt.Sprintf("存储目标：%s (类型: %s)\n使用率：%.1f%%\n已用：%.2f GB / 总量：%.2f GB\n建议清理旧备份或扩容。",
@@ -366,6 +369,9 @@ func (s *StorageTargetService) dispatchCapacityWarning(ctx context.Context, disp
 		"usageRate":         usage,
 		"usedBytes":         *info.Used,
 		"totalBytes":        *info.Total,
+	}
+	if info.Scope != "" {
+		fields["capacityScope"] = info.Scope
 	}
 	_ = dispatcher.DispatchEvent(ctx, model.NotificationEventStorageCapacity, title, body, fields)
 }
@@ -738,11 +744,12 @@ func cloneMap(source map[string]any) map[string]any {
 }
 
 type StorageTargetUsage struct {
-	TargetID    uint                      `json:"targetId"`
-	TargetName  string                    `json:"targetName"`
-	RecordCount int64                     `json:"recordCount"`
-	TotalSize   int64                     `json:"totalSize"`
-	DiskUsage   *storage.StorageUsageInfo `json:"diskUsage,omitempty"`
+	TargetID      uint                      `json:"targetId"`
+	TargetName    string                    `json:"targetName"`
+	RecordCount   int64                     `json:"recordCount"`
+	TotalSize     int64                     `json:"totalSize"`
+	DiskUsage     *storage.StorageUsageInfo `json:"diskUsage,omitempty"`
+	CapacityError string                    `json:"capacityError,omitempty"`
 }
 
 func (s *StorageTargetService) GetUsage(ctx context.Context, id uint) (*StorageTargetUsage, error) {
@@ -772,6 +779,8 @@ func (s *StorageTargetService) GetUsage(ctx context.Context, id uint) (*StorageT
 			if abouter, ok := provider.(storage.StorageAbout); ok {
 				if diskUsage, aboutErr := abouter.About(ctx); aboutErr == nil {
 					result.DiskUsage = diskUsage
+				} else if storage.ParseProviderType(target.Type) == storage.TypeS3 && configMap["minioCapacity"] == true {
+					result.CapacityError = "MinIO 容量查询失败，请检查监控 Token、访问权限和网络连接。"
 				}
 			}
 		}
