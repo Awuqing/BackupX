@@ -193,6 +193,16 @@ func TestBackupExecutionServiceSQLiteBackupRemainsFull(t *testing.T) {
 
 func TestBackupExecutionServiceRepositoryModeRoundTrip(t *testing.T) {
 	executionService, recordService, tasks, _, records, sourceDir, storageDir := newExecutionTestServices(t)
+	executionService.records = &backupRecordUpdateObserver{
+		BackupRecordRepository: records,
+		onUpdate: func(record *model.BackupRecord) {
+			if record.Status == model.BackupRecordStatusSuccess &&
+				(record.BackupKind != model.BackupKindRepository || record.Manifest == "" || record.StorageUploadResults == "") {
+				t.Errorf("successful repository record published without recovery metadata: kind=%q manifest=%t uploads=%t",
+					record.BackupKind, record.Manifest != "", record.StorageUploadResults != "")
+			}
+		},
+	}
 	ctx := context.Background()
 	task, err := tasks.FindByID(ctx, 1)
 	if err != nil {
@@ -277,6 +287,16 @@ func TestBackupExecutionServiceRepositoryModeRoundTrip(t *testing.T) {
 	if remainingPacks != 0 {
 		t.Fatalf("repository prune left %d packs after deleting all snapshots", remainingPacks)
 	}
+}
+
+type backupRecordUpdateObserver struct {
+	repository.BackupRecordRepository
+	onUpdate func(*model.BackupRecord)
+}
+
+func (r *backupRecordUpdateObserver) Update(ctx context.Context, record *model.BackupRecord) error {
+	r.onUpdate(record)
+	return r.BackupRecordRepository.Update(ctx, record)
 }
 
 func TestBackupExecutionServiceNodePoolSelectionDoesNotPersistTaskNodeID(t *testing.T) {
