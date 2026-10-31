@@ -18,8 +18,10 @@ import (
 
 // Provider 包装 rclone fs.Fs，实现 storage.StorageProvider 接口。
 type Provider struct {
-	providerType storage.ProviderType
-	rfs          fs.Fs
+	providerType      storage.ProviderType
+	rfs               fs.Fs
+	minioMetricsURL   string
+	minioMetricsToken string
 }
 
 func newProvider(providerType storage.ProviderType, rfs fs.Fs) *Provider {
@@ -156,6 +158,9 @@ func (p *Provider) List(ctx context.Context, prefix string) ([]storage.ObjectInf
 
 // About 查询远端存储空间。并非所有 rclone 后端都支持。
 func (p *Provider) About(ctx context.Context) (*storage.StorageUsageInfo, error) {
+	if p.minioMetricsURL != "" {
+		return minioCapacity(ctx, p.minioMetricsURL, p.minioMetricsToken)
+	}
 	about := p.rfs.Features().About
 	if about == nil {
 		return nil, fmt.Errorf("rclone about: backend %s does not support About", p.providerType)
