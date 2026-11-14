@@ -40,6 +40,7 @@ const sidebars: SidebarsConfig = {
         'features/storage-backends',
         'features/sap-hana',
         'features/sql-server',
+        'features/mysql-pitr',
         'features/multi-node',
         'features/notifications',
       ],

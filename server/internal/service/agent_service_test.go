@@ -887,3 +887,35 @@ type failingUpdateTaskRepo struct {
 func (r *failingUpdateTaskRepo) Update(context.Context, *model.BackupTask) error {
 	return r.err
 }
+
+func TestAgentEncryptionKeyIsRecordScopedAndOwnerOnly(t *testing.T) {
+	svc, db, records, _, owner, other := newAgentServicePoolTestHarness(t)
+	ctx := context.Background()
+	if err := db.Model(&model.BackupTask{}).Where("id = ?", 1).Update("encrypt", true).Error; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.GetTaskSpec(ctx, owner, 1); err == nil {
+		t.Fatal("old Agent received encrypted task without record")
+	}
+	spec, err := svc.GetTaskSpec(ctx, owner, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if spec.EncryptionKey == "" || spec.EncryptionKey == fmt.Sprintf("%x", svc.cipher.Key()) {
+		t.Fatal("missing scoped key or exposed Master key")
+	}
+	if _, err := svc.GetTaskSpec(ctx, other, 1, 1); err == nil {
+		t.Fatal("other node received key")
+	}
+	record, err := records.FindByID(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Status = model.BackupRecordStatusSuccess
+	if err := records.Update(ctx, record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.GetTaskSpec(ctx, owner, 1, 1); err == nil {
+		t.Fatal("completed record received backup key")
+	}
+}

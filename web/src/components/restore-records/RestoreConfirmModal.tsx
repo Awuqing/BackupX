@@ -9,7 +9,7 @@ interface RestoreConfirmModalProps {
   backupRecord: BackupRecordDetail | null
   task: BackupTaskDetail | null
   onCancel: () => void
-  onConfirm: (targetPath?: string) => void
+  onConfirm: (targetPath?: string, restoreTime?: string) => void
 }
 
 // RestoreConfirmModal 展示即将恢复的备份摘要与覆盖风险，强制用户二次确认。
@@ -24,6 +24,7 @@ export function RestoreConfirmModal({
   onConfirm,
 }: RestoreConfirmModalProps) {
   const [targetPath, setTargetPath] = useState('')
+  const [restoreTime, setRestoreTime] = useState('')
 
   if (!backupRecord || !task) {
     return (
@@ -40,6 +41,19 @@ export function RestoreConfirmModal({
     )
   }
 
+  const checkpoint = backupRecord.mysqlCheckpoint
+  const allowPitr = task.type === 'mysql' && backupRecord.backupKind === 'binlog' && checkpoint
+  const requested = restoreTime.trim() ? Date.parse(restoreTime) : null
+  const invalidTime = Boolean(
+    allowPitr &&
+    requested !== null &&
+    (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(
+      restoreTime.trim(),
+    ) ||
+      !Number.isFinite(requested) ||
+      requested < Date.parse(checkpoint.baselineAt) ||
+      requested >= Date.parse(checkpoint.capturedAt)),
+  )
   const restoreTarget = renderRestoreTarget(task)
   const isLocal = !task.nodeId || task.nodeId === 0
   const allowAltPath = task.type === 'file' && isLocal
@@ -56,11 +70,21 @@ export function RestoreConfirmModal({
       title="确认执行恢复"
       okText="开始恢复"
       cancelText="取消"
-      okButtonProps={{ status: 'danger', loading }}
+      okButtonProps={{ status: 'danger', loading, disabled: invalidTime }}
       onCancel={onCancel}
-      onOk={() => onConfirm(targetPath.trim() || undefined)}
+      onOk={() => {
+        if (!invalidTime) {
+          onConfirm(
+            targetPath.trim() || undefined,
+            allowPitr && requested !== null ? new Date(requested).toISOString() : undefined,
+          )
+        }
+      }}
       unmountOnExit
-      afterClose={() => setTargetPath('')}
+      afterClose={() => {
+        setTargetPath('')
+        setRestoreTime('')
+      }}
     >
       <Space direction="vertical" size="medium" style={{ width: '100%' }}>
         <Alert
@@ -92,6 +116,29 @@ export function RestoreConfirmModal({
             },
           ]}
         />
+        {allowPitr && (
+          <div>
+            <Typography.Text>
+              恢复时间（可选，带时区的 RFC3339；留空恢复至日志截止位置）
+            </Typography.Text>
+            <Input
+              value={restoreTime}
+              placeholder="2026-11-14T12:30:00+08:00"
+              onChange={setRestoreTime}
+              error={invalidTime}
+              allowClear
+              aria-label="MySQL 恢复时间"
+            />
+            <Typography.Paragraph
+              type={invalidTime ? 'error' : 'secondary'}
+              style={{ marginTop: 4 }}
+            >
+              可选范围：{new Date(checkpoint.baselineAt).toLocaleString()} 至{' '}
+              {new Date(checkpoint.capturedAt).toLocaleString()}
+              （不含截止秒）。仅填写带时区的时间；恢复覆盖整个实例，建议先在隔离实例演练。
+            </Typography.Paragraph>
+          </div>
+        )}
         {allowAltPath && (
           <div>
             <Typography.Text type="secondary" style={{ fontSize: 12 }}>

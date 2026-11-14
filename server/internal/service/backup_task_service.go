@@ -564,9 +564,27 @@ func (s *BackupTaskService) validateInput(ctx context.Context, existing *model.B
 		return apperror.BadRequest("BACKUP_TASK_INVALID",
 			"固定执行节点与节点池标签只能选其一", nil)
 	}
-	if input.Encrypt && (strings.TrimSpace(input.NodePoolTag) != "" || (fixedNode != nil && !fixedNode.IsLocal)) {
-		return apperror.BadRequest("BACKUP_TASK_REMOTE_ENCRYPT_UNSUPPORTED",
-			"远程节点暂不支持加密备份。请关闭加密，或将任务固定在 Master 本机执行。", nil)
+	if value, exists := input.ExtraConfig["mysqlPitr"]; exists {
+		if _, ok := value.(bool); !ok {
+			return apperror.BadRequest("MYSQL_PITR_INVALID", "mysqlPitr 必须为布尔值", nil)
+		}
+	}
+	if enabled, _ := input.ExtraConfig["mysqlPitr"].(bool); enabled {
+		if input.Type != "mysql" || strings.TrimSpace(input.DBName) != "*" {
+			return apperror.BadRequest("MYSQL_PITR_INVALID", "MySQL PITR 必须备份整个实例（数据库名称填写 *）", nil)
+		}
+		if strings.TrimSpace(input.NodePoolTag) != "" {
+			return apperror.BadRequest("MYSQL_PITR_INVALID", "MySQL PITR 请绑定固定执行节点，避免切换数据源", nil)
+		}
+		if input.VerifyEnabled {
+			return apperror.BadRequest("MYSQL_PITR_INVALID", "PITR 请在隔离实例演练恢复，暂不支持自动验证", nil)
+		}
+		if value, ok := input.ExtraConfig["fullIntervalHours"]; ok {
+			hours, ok := value.(float64)
+			if !ok || hours < 1 || hours > 720 || hours != float64(int(hours)) {
+				return apperror.BadRequest("MYSQL_PITR_INVALID", "全量间隔须为 1 至 720 小时的整数", nil)
+			}
+		}
 	}
 	if strings.EqualFold(strings.TrimSpace(input.BackupMode), model.BackupModeDifferential) {
 		if input.Type != model.BackupTaskTypeFile {

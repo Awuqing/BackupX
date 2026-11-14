@@ -104,6 +104,16 @@ func (s *Service) cleanup(ctx context.Context, task *model.BackupTask, resolvePr
 	repositoryProviders := make(map[uint]storage.StorageProvider)
 	touchedProviders := make(map[uint]storage.StorageProvider)
 	for _, record := range candidates {
+		if record.BackupKind == model.BackupKindFull {
+			count, err := s.records.CountDependentDifferentials(ctx, record.ID)
+			if err != nil {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("check dependencies for record %d: %v", record.ID, err))
+				continue
+			}
+			if count > 0 {
+				continue
+			} // A dependent deletion may have failed earlier in this cleanup.
+		}
 		objects, objectErr := cleanupObjectsForRecord(record)
 		if objectErr != nil {
 			result.Warnings = append(result.Warnings, fmt.Sprintf("decode storage copies for record %d failed: %v", record.ID, objectErr))
@@ -209,7 +219,7 @@ func protectDifferentialBases(all []model.BackupRecord, candidates []model.Backu
 	}
 	protected := make(map[uint]struct{})
 	for _, r := range all {
-		if r.BackupKind != model.BackupKindDifferential || r.BaseRecordID == 0 {
+		if (r.BackupKind != model.BackupKindDifferential && r.BackupKind != model.BackupKindBinlog) || r.BaseRecordID == 0 {
 			continue
 		}
 		if _, beingDeleted := deleting[r.ID]; beingDeleted {

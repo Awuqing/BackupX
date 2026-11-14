@@ -2,9 +2,11 @@ package agent
 
 import (
 	"archive/tar"
+	backupcrypto "backupx/server/pkg/crypto"
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -417,5 +419,75 @@ func TestSQLServerSpecsPreserveInstanceAndTLS(t *testing.T) {
 	}
 	if _, err := NewExecutor(nil, t.TempDir()).backupRegistry.Runner("sqlserver"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEncryptedAgentBackupAndRestoreRoundTrip(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "source")
+	if err := os.Mkdir(source, 0700); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(source, "hello.txt")
+	if err := os.WriteFile(file, []byte("original"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	master := bytes.Repeat([]byte{7}, 32)
+	key := backupcrypto.RecordKey(master, 99)
+	provider := &agentTestStorageProvider{name: "ok", objects: map[string][]byte{}}
+	var final RecordUpdate
+	restored := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/agent/tasks/1":
+			if r.URL.Query().Get("recordId") != "99" {
+				t.Error("missing record scope")
+			}
+			writeAgentEnvelope(t, w, TaskSpec{TaskID: 1, Name: "encrypted", Type: "file", SourcePath: source, Compression: "gzip", Encrypt: true, EncryptionKey: hex.EncodeToString(key), StorageTargets: []StorageTargetConfig{{ID: 1, Type: "agent_test_storage", Config: json.RawMessage(`{"name":"ok"}`)}}})
+		case "/api/agent/records/99":
+			var update RecordUpdate
+			if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+				t.Fatal(err)
+			}
+			if update.Status != "" {
+				final = update
+			}
+			writeAgentEnvelope(t, w, map[string]string{"status": "ok"})
+		case "/api/agent/restores/5/spec":
+			writeAgentEnvelope(t, w, RestoreSpec{RestoreRecordID: 5, BackupRecordID: 99, TaskID: 1, TaskName: "encrypted", Type: "file", SourcePath: source, Encrypt: true, EncryptionKey: hex.EncodeToString(key), Storage: StorageTargetConfig{ID: 1, Type: "agent_test_storage", Config: json.RawMessage(`{"name":"ok"}`)}, StoragePath: final.StoragePath, FileName: final.FileName, Checksum: final.Checksum})
+		case "/api/agent/restores/5":
+			var update RestoreUpdate
+			if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+				t.Fatal(err)
+			}
+			if update.Status == "success" {
+				restored = true
+			}
+			writeAgentEnvelope(t, w, map[string]string{"status": "ok"})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	executor := NewExecutor(NewMasterClient(server.URL, "token", false), t.TempDir())
+	executor.storageRegistry = storage.NewRegistry(&agentTestStorageFactory{providers: map[string]*agentTestStorageProvider{"ok": provider}})
+	if err := executor.ExecuteRunTask(context.Background(), 1, 99); err != nil {
+		t.Fatal(err)
+	}
+	if final.Status != "success" || !strings.HasSuffix(final.FileName, ".gz.enc") {
+		t.Fatalf("bad encrypted report: %+v", final)
+	}
+	data := provider.objects[final.StoragePath]
+	if !bytes.HasPrefix(data, []byte("BXENC2")) || bytes.Contains(data, []byte("original")) {
+		t.Fatal("uploaded plaintext")
+	}
+	if err := os.WriteFile(file, []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := executor.ExecuteRestore(context.Background(), 5); err != nil {
+		t.Fatal(err)
+	}
+	actual, err := os.ReadFile(file)
+	if err != nil || string(actual) != "original" || !restored {
+		t.Fatalf("roundtrip: %q %v success=%v", actual, err, restored)
 	}
 }

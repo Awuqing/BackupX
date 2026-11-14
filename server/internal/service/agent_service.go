@@ -19,6 +19,7 @@ import (
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage"
 	"backupx/server/internal/storage/codec"
+	backupcrypto "backupx/server/pkg/crypto"
 	"go.uber.org/zap"
 )
 
@@ -176,6 +177,9 @@ func agentCommandFailureMessage(message string) string {
 // AgentTaskSpec 给 Agent 返回的任务规格，包含解密后的存储配置，供 Agent 直接执行。
 // 敏感信息：此接口仅供 Agent 调用（token 认证），避免通过公共 API 泄露。
 type AgentTaskSpec struct {
+	MySQLPITR       bool                       `json:"mysqlPitr"`
+	MySQLBase       *backup.MySQLCheckpoint    `json:"mysqlBase,omitempty"`
+	BaseRecordID    uint                       `json:"baseRecordId,omitempty"`
 	TaskID          uint                       `json:"taskId"`
 	Name            string                     `json:"name"`
 	Type            string                     `json:"type"`
@@ -190,6 +194,7 @@ type AgentTaskSpec struct {
 	DBPath          string                     `json:"dbPath,omitempty"`
 	ExtraConfig     string                     `json:"extraConfig,omitempty"`
 	Compression     string                     `json:"compression"`
+	EncryptionKey   string                     `json:"encryptionKey,omitempty"`
 	Encrypt         bool                       `json:"encrypt"`
 	StorageTargets  []AgentStorageTargetConfig `json:"storageTargets"`
 }
@@ -204,7 +209,7 @@ type AgentStorageTargetConfig struct {
 }
 
 // GetTaskSpec 返回 Agent 执行任务所需的完整规格。
-func (s *AgentService) GetTaskSpec(ctx context.Context, node *model.Node, taskID uint) (*AgentTaskSpec, error) {
+func (s *AgentService) GetTaskSpec(ctx context.Context, node *model.Node, taskID uint, recordIDs ...uint) (*AgentTaskSpec, error) {
 	task, err := s.taskRepo.FindByID(ctx, taskID)
 	if err != nil {
 		return nil, err
@@ -214,6 +219,20 @@ func (s *AgentService) GetTaskSpec(ctx context.Context, node *model.Node, taskID
 	}
 	if err := s.ensureTaskSpecAccess(ctx, node, task); err != nil {
 		return nil, err
+	}
+	encryptionKey := ""
+	if task.Encrypt {
+		if len(recordIDs) != 1 || recordIDs[0] == 0 {
+			return nil, apperror.BadRequest("AGENT_ENCRYPTION_RECORD_REQUIRED", "加密备份需要升级 Agent 并指定备份记录", nil)
+		}
+		record, err := s.recordRepo.FindByID(ctx, recordIDs[0])
+		if err != nil {
+			return nil, err
+		}
+		if record == nil || record.TaskID != taskID || !recordBelongsToNode(record, task, node.ID) || record.Status != model.BackupRecordStatusRunning {
+			return nil, apperror.Unauthorized("BACKUP_RECORD_FORBIDDEN", "备份记录不属于当前节点的运行任务", nil)
+		}
+		encryptionKey = hex.EncodeToString(backupcrypto.RecordKey(s.cipher.Key(), record.ID))
 	}
 	// 解密数据库密码（若有）
 	dbPassword := ""
@@ -261,7 +280,29 @@ func (s *AgentService) GetTaskSpec(ctx context.Context, node *model.Node, taskID
 			TransferMode: transferMode,
 		})
 	}
+	baseID, mysqlBase, err := resolveMySQLBase(ctx, s.recordRepo, task, node.ID, time.Now().UTC())
+	if err != nil {
+		return nil, err
+	}
+	if baseID > 0 {
+		if len(recordIDs) != 1 {
+			return nil, apperror.BadRequest("MYSQL_PITR_INVALID", "PITR 需要升级 Agent 并指定备份记录", nil)
+		}
+		record, err := s.recordRepo.FindByID(ctx, recordIDs[0])
+		if err != nil {
+			return nil, err
+		}
+		if record == nil || record.TaskID != taskID || !recordBelongsToNode(record, task, node.ID) || record.Status != model.BackupRecordStatusRunning {
+			return nil, apperror.Unauthorized("BACKUP_RECORD_FORBIDDEN", "备份记录不属于当前运行任务", nil)
+		}
+		record.BackupKind, record.BaseRecordID = model.BackupKindBinlog, baseID
+		if err := s.recordRepo.Update(ctx, record); err != nil {
+			return nil, err
+		}
+	}
 	return &AgentTaskSpec{
+		MySQLPITR: task.Type == model.BackupTaskTypeMySQL && backup.MySQLPITREnabled(task.ExtraConfig),
+		MySQLBase: mysqlBase, BaseRecordID: baseID,
 		TaskID:          task.ID,
 		Name:            task.Name,
 		Type:            task.Type,
@@ -277,6 +318,7 @@ func (s *AgentService) GetTaskSpec(ctx context.Context, node *model.Node, taskID
 		ExtraConfig:     task.ExtraConfig,
 		Compression:     task.Compression,
 		Encrypt:         task.Encrypt,
+		EncryptionKey:   encryptionKey,
 		StorageTargets:  storageTargets,
 	}, nil
 }
@@ -393,6 +435,8 @@ func (s *AgentService) ensureTaskSpecAccess(ctx context.Context, node *model.Nod
 
 // AgentRecordUpdate Agent 上报备份记录的最终状态。
 type AgentRecordUpdate struct {
+	MySQLCheckpoint      *backup.MySQLCheckpoint   `json:"mysqlCheckpoint,omitempty"`
+	BaseRecordID         uint                      `json:"baseRecordId,omitempty"`
 	Status               string                    `json:"status"` // running | success | failed
 	FileName             string                    `json:"fileName,omitempty"`
 	FileSize             int64                     `json:"fileSize,omitempty"`
@@ -516,6 +560,48 @@ func (s *AgentService) UpdateRecord(ctx context.Context, node *model.Node, recor
 			return apperror.BadRequest("AGENT_ARTIFACT_INVALID", "Agent 上报的 SHA-256 无效", checksumErr)
 		}
 		update.Checksum = strings.ToLower(strings.TrimSpace(update.Checksum))
+	}
+	if update.Status == model.BackupRecordStatusSuccess && task.Type == model.BackupTaskTypeMySQL && backup.MySQLPITREnabled(task.ExtraConfig) && update.MySQLCheckpoint == nil {
+		return apperror.BadRequest("MYSQL_PITR_INVALID", "Agent 未上报 PITR 元数据，请升级 Agent", nil)
+	}
+	if update.Status == model.BackupRecordStatusSuccess && task.Encrypt && !strings.HasSuffix(strings.ToLower(update.FileName), ".enc") {
+		return apperror.BadRequest("AGENT_ENCRYPTION_REQUIRED", "加密任务不能上报未加密产物", nil)
+	}
+	if update.MySQLCheckpoint != nil {
+		checkpoint := update.MySQLCheckpoint
+		if task.Type != model.BackupTaskTypeMySQL || !backup.MySQLPITREnabled(task.ExtraConfig) {
+			return apperror.BadRequest("MYSQL_PITR_INVALID", "任务未启用 MySQL PITR", nil)
+		}
+		if err := checkpoint.Validate(); err != nil {
+			return apperror.BadRequest("MYSQL_PITR_INVALID", err.Error(), err)
+		}
+		if checkpoint.Source != backup.MySQLSource(backup.DatabaseSpec{Host: task.DBHost, Port: task.DBPort}) {
+			return apperror.BadRequest("MYSQL_PITR_INVALID", "MySQL 数据源不匹配", nil)
+		}
+		if !checkpoint.Full {
+			base, err := s.recordRepo.FindByID(ctx, update.BaseRecordID)
+			if err != nil {
+				return err
+			}
+			if base == nil || base.TaskID != task.ID || base.NodeID != record.NodeID || base.Status != model.BackupRecordStatusSuccess || base.BackupKind != model.BackupKindFull {
+				return apperror.BadRequest("MYSQL_PITR_INVALID", "MySQL 基线不存在或不匹配", nil)
+			}
+			var metadata backup.MySQLCheckpoint
+			if err := json.Unmarshal([]byte(base.MySQLCheckpoint), &metadata); err != nil {
+				return err
+			}
+			if metadata.ServerUUID != checkpoint.ServerUUID || metadata.StartFile != checkpoint.StartFile || metadata.StartPosition != checkpoint.StartPosition || !metadata.BaselineAt.Equal(checkpoint.BaselineAt) {
+				return apperror.BadRequest("MYSQL_PITR_INVALID", "MySQL 日志与基线不匹配", nil)
+			}
+			record.BackupKind, record.BaseRecordID = model.BackupKindBinlog, base.ID
+		} else {
+			record.BackupKind, record.BaseRecordID = model.BackupKindFull, 0
+		}
+		metadata, err := json.Marshal(checkpoint)
+		if err != nil {
+			return err
+		}
+		record.MySQLCheckpoint = string(metadata)
 	}
 	if update.Status != "" {
 		record.Status = update.Status

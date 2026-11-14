@@ -45,8 +45,24 @@ func (r *fakeRecordRepository) ListByTask(_ context.Context, _ uint) ([]model.Ba
 func (r *fakeRecordRepository) ListSuccessfulByTask(_ context.Context, _ uint) ([]model.BackupRecord, error) {
 	return r.records, nil
 }
-func (r *fakeRecordRepository) CountDependentDifferentials(context.Context, uint) (int64, error) {
-	return 0, nil
+func (r *fakeRecordRepository) CountDependentDifferentials(_ context.Context, id uint) (int64, error) {
+	var count int64
+	for _, record := range r.records {
+		if record.BaseRecordID != id {
+			continue
+		}
+		deleted := false
+		for _, deletedID := range r.deleted {
+			if deletedID == record.ID {
+				deleted = true
+				break
+			}
+		}
+		if !deleted {
+			count++
+		}
+	}
+	return count, nil
 }
 func (r *fakeRecordRepository) Count(context.Context) (int64, error)                 { return 0, nil }
 func (r *fakeRecordRepository) CountSince(context.Context, time.Time) (int64, error) { return 0, nil }

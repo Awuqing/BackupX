@@ -47,14 +47,16 @@ export async function startRestoreFromBackup(
   backupRecordId: number,
   selectedPaths?: string[],
   targetPath?: string,
+  restoreTime?: string,
 ) {
-  const body: { selectedPaths?: string[]; targetPath?: string } = {}
+  const body: { selectedPaths?: string[]; targetPath?: string; restoreTime?: string } = {}
   if (selectedPaths && selectedPaths.length > 0) {
     body.selectedPaths = selectedPaths
   }
   if (targetPath && targetPath.trim()) {
     body.targetPath = targetPath.trim()
   }
+  if (restoreTime) body.restoreTime = restoreTime
   const response = await http.post<ApiEnvelope<RestoreRecordDetail>>(
     `/backup/records/${backupRecordId}/restore`,
     body,

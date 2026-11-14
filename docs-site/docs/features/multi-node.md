@@ -224,6 +224,6 @@ Environment variables: `BACKUPX_AGENT_MASTER`, `BACKUPX_AGENT_TOKEN`, `BACKUPX_A
 ## Known limitations
 
 - The Master is single-active because it uses embedded SQLite.
-- Encrypted backups are Master-only because Agents do not hold the Master encryption key.
+- Encrypted remote backups require upgrading both Master and Agent. The Agent receives only a record-specific derived key; the Master key stays on the Master. Newly created remote archives can be decrypted by the owning restore Agent or Master. Legacy Master-only BXENC1 archives must be restored on the Master. Back up the Master configuration encryption key: changing or losing it makes previous encrypted backups unreadable. Use HTTPS for Agent traffic.
 - Remote directory browsing is a synchronous queue RPC with a 15-second timeout.
 - Claimed commands that stop reporting progress are timed out according to the Master command monitor.

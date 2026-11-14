@@ -856,6 +856,7 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 	backupKind := model.BackupKindFull
 	var baseRecordID uint
 	var manifestJSON string
+	var mysqlCheckpoint string
 	var repositoryProviders map[uint]storage.StorageProvider
 	completeRecord := func() {
 		persistCtx, cancel := finalizationContext(ctx)
@@ -878,6 +879,7 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 			result.BackupKind = backupKind
 			result.BaseRecordID = baseRecordID
 			result.Manifest = manifestJSON
+			result.MySQLCheckpoint = mysqlCheckpoint
 		}
 		result.LogContent = logger.String()
 		if finalizeErr := s.finalizeRecord(persistCtx, task, recordID, startedAt, result); finalizeErr != nil {
@@ -974,6 +976,27 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 		baseRecordID = baseID
 		logger.Infof("差异备份模式：基于全量备份 #%d 仅打包变更", baseID)
 	}
+	if spec.MySQLPITR {
+		baseID, base, err := resolveMySQLBase(ctx, s.records, task, task.NodeID, startedAt)
+		if err != nil {
+			errMessage = err.Error()
+			logger.Errorf("读取 MySQL 基线失败：%v", err)
+			return
+		}
+		spec.MySQLBase, baseRecordID = base, baseID
+		if baseID > 0 {
+			record, err := s.records.FindByID(ctx, recordID)
+			if err != nil || record == nil {
+				errMessage = "无法为 MySQL 日志归档保留基线"
+				return
+			}
+			record.BackupKind, record.BaseRecordID = model.BackupKindBinlog, baseID
+			if err := s.records.Update(ctx, record); err != nil {
+				errMessage = err.Error()
+				return
+			}
+		}
+	}
 	runner, err := s.runnerRegistry.Runner(spec.Type)
 	if err != nil {
 		errMessage = err.Error()
@@ -1000,6 +1023,18 @@ func (s *BackupExecutionService) executeTask(ctx context.Context, task *model.Ba
 		backupKind = model.BackupKindDifferential
 	} else {
 		backupKind = model.BackupKindFull
+	}
+	if result.MySQLCheckpoint != nil {
+		metadata, err := json.Marshal(result.MySQLCheckpoint)
+		if err != nil {
+			errMessage = err.Error()
+			return
+		}
+		// Persist checkpoint with the terminal record, never advertise a failed upload as a baseline.
+		mysqlCheckpoint = string(metadata)
+		if !result.MySQLCheckpoint.Full {
+			backupKind = model.BackupKindBinlog
+		}
 	}
 	finalPath := result.ArtifactPath
 	if strings.EqualFold(task.Compression, "gzip") && !strings.HasSuffix(strings.ToLower(finalPath), ".gz") {
@@ -1249,6 +1284,7 @@ func (s *BackupExecutionService) finalizeRecord(ctx context.Context, task *model
 		record.BackupKind = result.BackupKind
 		record.BaseRecordID = result.BaseRecordID
 		record.Manifest = result.Manifest
+		record.MySQLCheckpoint = result.MySQLCheckpoint
 	}
 	record.DurationSeconds = int(completedAt.Sub(startedAt).Seconds())
 	record.ErrorMessage = strings.TrimSpace(result.ErrorMessage)

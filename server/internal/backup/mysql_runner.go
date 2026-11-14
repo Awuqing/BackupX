@@ -27,6 +27,9 @@ func (r *MySQLRunner) Type() string {
 }
 
 func (r *MySQLRunner) Run(ctx context.Context, task TaskSpec, writer LogWriter) (*RunResult, error) {
+	if task.MySQLPITR {
+		return r.runPITR(ctx, task, writer)
+	}
 	if _, err := r.executor.LookPath("mysqldump"); err != nil {
 		return nil, fmt.Errorf("未找到 mysqldump 命令 (请确保服务器已安装 mysql-client 或 mariadb-client)")
 	}
@@ -83,6 +86,17 @@ func (r *MySQLRunner) Run(ctx context.Context, task TaskSpec, writer LogWriter) 
 }
 
 func (r *MySQLRunner) Restore(ctx context.Context, task TaskSpec, artifactPath string, writer LogWriter) error {
+	if strings.HasSuffix(artifactPath, ".pitr.tar") {
+		prepared, err := r.PrepareRestore(ctx, task, artifactPath, writer)
+		if err != nil {
+			return err
+		}
+		return r.restoreSQL(ctx, task, prepared, writer)
+	}
+	return r.restoreSQL(ctx, task, artifactPath, writer)
+}
+
+func (r *MySQLRunner) restoreSQL(ctx context.Context, task TaskSpec, artifactPath string, writer LogWriter) error {
 	if _, err := r.executor.LookPath("mysql"); err != nil {
 		return fmt.Errorf("未找到 mysql 命令 (请确保服务器已安装 mysql-client 或 mariadb-client)")
 	}

@@ -17,6 +17,7 @@ import (
 	"backupx/server/internal/storage"
 	storageRclone "backupx/server/internal/storage/rclone"
 	"backupx/server/pkg/compress"
+	backupcrypto "backupx/server/pkg/crypto"
 	"go.uber.org/zap"
 )
 
@@ -51,8 +52,7 @@ func (e *Executor) SetLogger(logger *zap.Logger) {
 
 // ExecuteRunTask 处理 run_task 命令：拉规格 → 执行 runner → 压缩 → 上传 → 上报记录。
 //
-// 注意：Agent 当前不支持 Encrypt=true（加密密钥不下发到 Agent，避免密钥扩散）。
-// 遇到启用加密的任务会向 Master 上报失败并返回错误。
+// 加密任务仅接收该备份记录的派生密钥，主密钥不离开 Master。
 func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) error {
 	if err := e.ensureTempDir(); err != nil {
 		e.reportRecordFailure(ctx, recordID, err.Error())
@@ -60,15 +60,10 @@ func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) er
 	}
 
 	// 1) 拉取任务规格
-	spec, err := e.client.GetTaskSpec(ctx, taskID)
+	spec, err := e.client.GetTaskSpec(ctx, taskID, recordID)
 	if err != nil {
 		e.reportRecordFailure(ctx, recordID, fmt.Sprintf("拉取任务规格失败: %v", err))
 		return err
-	}
-	if spec.Encrypt {
-		msg := "Agent 不支持加密备份（加密密钥仅在 Master 端持有）"
-		e.reportRecordFailure(ctx, recordID, msg)
-		return fmt.Errorf("%s", msg)
 	}
 	e.appendLog(ctx, recordID, fmt.Sprintf("[agent] 开始执行任务 %s (type=%s)\n", spec.Name, spec.Type))
 
@@ -108,6 +103,16 @@ func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) er
 			return compressErr
 		}
 		finalPath = compressedPath
+	}
+	if spec.Encrypt {
+		key, err := hex.DecodeString(spec.EncryptionKey)
+		if err == nil {
+			finalPath, err = backupcrypto.EncryptRecordFile(key, recordID, finalPath)
+		}
+		if err != nil {
+			e.reportRecordFailure(ctx, recordID, fmt.Sprintf("加密失败: %v", err))
+			return err
+		}
 	}
 	info, err := os.Stat(finalPath)
 	if err != nil {
@@ -172,7 +177,8 @@ func (e *Executor) ExecuteRunTask(ctx context.Context, taskID, recordID uint) er
 	reportCtx, cancel := agentFinalizationContext(ctx)
 	defer cancel()
 	if err := e.client.UpdateRecord(reportCtx, recordID, RecordUpdate{
-		Status:               "success",
+		Status:          "success",
+		MySQLCheckpoint: result.MySQLCheckpoint, BaseRecordID: spec.BaseRecordID,
 		FileName:             fileName,
 		FileSize:             fileSize,
 		Checksum:             checksum,
@@ -260,6 +266,7 @@ func buildBackupTaskSpec(spec *TaskSpec, startedAt time.Time, tempDir string) ba
 	sourcePaths := parseStringListField(spec.SourcePaths)
 	excludes := parseStringListField(spec.ExcludePatterns)
 	return backup.TaskSpec{
+		MySQLPITR: spec.MySQLPITR, MySQLBase: spec.MySQLBase,
 		ID:              spec.TaskID,
 		Name:            spec.Name,
 		Type:            spec.Type,
@@ -367,7 +374,7 @@ func (e *Executor) DeleteStorageObject(ctx context.Context, targetType string, t
 //
 // 与 ExecuteRunTask 对称，但方向相反：
 //   - 下载：直连共享存储，或通过 Master 中转其本地磁盘对象
-//   - 解密：当前 Agent 不支持加密恢复（密钥未下发），spec.Encrypt=true 会直接失败
+//   - 解密：使用 Master 为该记录下发的派生密钥
 //   - 执行：backup.Registry.Runner(spec.Type).Restore
 //   - 上报：通过 UpdateRestore（status/logAppend）
 func (e *Executor) ExecuteRestore(ctx context.Context, restoreRecordID uint) error {
@@ -381,11 +388,6 @@ func (e *Executor) ExecuteRestore(ctx context.Context, restoreRecordID uint) err
 		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("拉取恢复规格失败: %v", err))
 		return err
 	}
-	if spec.Encrypt {
-		msg := "Agent 不支持加密恢复（加密密钥仅在 Master 端持有）"
-		e.reportRestoreFailure(ctx, restoreRecordID, msg)
-		return fmt.Errorf("%s", msg)
-	}
 	e.appendRestoreLog(ctx, restoreRecordID, fmt.Sprintf("[agent] 开始恢复 %s (type=%s)\n", spec.TaskName, spec.Type))
 
 	tmpDir, err := os.MkdirTemp(e.tempDir, "restore-*")
@@ -395,82 +397,24 @@ func (e *Executor) ExecuteRestore(ctx context.Context, restoreRecordID uint) err
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// 1) 下载
-	fileName := spec.FileName
-	if strings.TrimSpace(fileName) == "" {
-		fileName = filepath.Base(spec.StoragePath)
+	artifacts := spec.Artifacts
+	if len(artifacts) == 0 {
+		artifacts = []RestoreArtifact{{BackupRecordID: spec.BackupRecordID, FileName: spec.FileName, StoragePath: spec.StoragePath, Checksum: spec.Checksum, EncryptionKey: spec.EncryptionKey, Storage: spec.Storage}}
 	}
-	artifactPath := filepath.Join(tmpDir, filepath.Base(fileName))
-	e.appendRestoreLog(ctx, restoreRecordID, fmt.Sprintf("[agent] 下载备份文件 %s\n", spec.StoragePath))
-	var reader io.ReadCloser
-	if spec.Storage.TransferMode == storage.TransferModeMasterRelay {
-		reader, err = e.client.DownloadRestoreArtifact(ctx, restoreRecordID)
-	} else {
-		var rawConfig map[string]any
-		if len(spec.Storage.Config) > 0 {
-			if err := jsonUnmarshalMap(spec.Storage.Config, &rawConfig); err != nil {
-				e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解析存储配置失败: %v", err))
-				return err
-			}
-		}
-		provider, providerErr := e.storageRegistry.Create(ctx, spec.Storage.Type, rawConfig)
-		if providerErr != nil {
-			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("创建存储客户端失败: %v", providerErr))
-			return providerErr
-		}
-		reader, err = provider.Download(ctx, spec.StoragePath)
-	}
-	if err != nil {
-		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("下载备份失败: %v", err))
-		return err
-	}
-	if err := writeReaderToLocal(artifactPath, reader); err != nil {
-		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("写入备份文件失败: %v", err))
-		return err
-	}
-
-	// 2.5) 完整性校验：还原前比对下载对象的 SHA-256（与 Master 本地恢复路径一致）。
-	// 拒绝还原损坏或被篡改的备份；早期无 checksum 的备份跳过（向后兼容）。
-	if strings.TrimSpace(spec.Checksum) != "" {
-		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 校验备份完整性（SHA-256）\n")
-		actual, sumErr := computeFileSHA256(artifactPath)
-		if sumErr != nil {
-			msg := fmt.Sprintf("计算校验和失败: %v", sumErr)
-			e.reportRestoreFailure(ctx, restoreRecordID, msg)
-			return fmt.Errorf("%s", msg)
-		}
-		if !strings.EqualFold(actual, spec.Checksum) {
-			msg := "备份文件完整性校验失败：SHA-256 不匹配，文件可能已损坏或被篡改"
-			e.reportRestoreFailure(ctx, restoreRecordID, msg)
-			return fmt.Errorf("%s（期望 %s，实际 %s）", msg, spec.Checksum, actual)
-		}
-		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 完整性校验通过\n")
-	}
-
-	// 3) 解压（Agent 不支持加密，遇到 .enc 会直接失败）
-	preparedPath := artifactPath
-	if strings.HasSuffix(strings.ToLower(preparedPath), ".enc") {
-		msg := "检测到加密后缀，Agent 不支持加密恢复"
-		e.reportRestoreFailure(ctx, restoreRecordID, msg)
-		return fmt.Errorf("%s", msg)
-	}
-	if strings.HasSuffix(strings.ToLower(preparedPath), ".gz") {
-		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 解压 gzip 压缩\n")
-		decompressed, err := compress.GunzipFile(preparedPath)
+	paths := make([]string, 0, len(artifacts))
+	for _, artifact := range artifacts {
+		item := *spec
+		item.BackupRecordID, item.FileName, item.StoragePath, item.Checksum, item.EncryptionKey, item.Storage = artifact.BackupRecordID, artifact.FileName, artifact.StoragePath, artifact.Checksum, artifact.EncryptionKey, artifact.Storage
+		dir, err := os.MkdirTemp(tmpDir, "artifact-*")
 		if err != nil {
-			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解压失败: %v", err))
+			e.reportRestoreFailure(ctx, restoreRecordID, err.Error())
 			return err
 		}
-		preparedPath = decompressed
-	}
-	if strings.HasSuffix(strings.ToLower(preparedPath), ".zst") {
-		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 解压 zstd 压缩\n")
-		decompressed, err := compress.UnzstdFile(preparedPath)
+		prepared, err := e.prepareRestoreArtifact(ctx, restoreRecordID, &item, dir)
 		if err != nil {
-			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解压失败: %v", err))
 			return err
 		}
-		preparedPath = decompressed
+		paths = append(paths, prepared)
 	}
 
 	// 4) 运行 runner.Restore
@@ -481,9 +425,24 @@ func (e *Executor) ExecuteRestore(ctx context.Context, restoreRecordID uint) err
 		return err
 	}
 	logger := newRestoreLogger(ctx, e.client, e.logger, restoreRecordID)
-	if err := runner.Restore(ctx, taskSpec, preparedPath, logger); err != nil {
-		e.reportRestoreFailure(ctx, restoreRecordID, err.Error())
-		return err
+	if spec.RestoreTime != nil {
+		taskSpec.RestoreTime = *spec.RestoreTime
+	}
+	if mysqlRunner, ok := runner.(*backup.MySQLRunner); ok {
+		for i, artifact := range paths {
+			prepared, err := mysqlRunner.PrepareRestore(ctx, taskSpec, artifact, logger)
+			if err != nil {
+				e.reportRestoreFailure(ctx, restoreRecordID, err.Error())
+				return err
+			}
+			paths[i] = prepared
+		}
+	}
+	for _, preparedPath := range paths {
+		if err := runner.Restore(ctx, taskSpec, preparedPath, logger); err != nil {
+			e.reportRestoreFailure(ctx, restoreRecordID, err.Error())
+			return err
+		}
 	}
 
 	// 5) 上报成功
@@ -586,4 +545,92 @@ func splitCommaOrNewline(s string) []string {
 		}
 	}
 	return result
+}
+
+func (e *Executor) prepareRestoreArtifact(ctx context.Context, restoreRecordID uint, spec *RestoreSpec, tmpDir string) (string, error) {
+	// 1) 下载
+	fileName := spec.FileName
+	if strings.TrimSpace(fileName) == "" {
+		fileName = filepath.Base(spec.StoragePath)
+	}
+	artifactPath := filepath.Join(tmpDir, filepath.Base(fileName))
+	e.appendRestoreLog(ctx, restoreRecordID, fmt.Sprintf("[agent] 下载备份文件 %s\n", spec.StoragePath))
+	var reader io.ReadCloser
+	var err error
+	if spec.Storage.TransferMode == storage.TransferModeMasterRelay {
+		reader, err = e.client.DownloadRestoreArtifact(ctx, restoreRecordID, spec.BackupRecordID)
+	} else {
+		var rawConfig map[string]any
+		if len(spec.Storage.Config) > 0 {
+			if err := jsonUnmarshalMap(spec.Storage.Config, &rawConfig); err != nil {
+				e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解析存储配置失败: %v", err))
+				return "", err
+			}
+		}
+		provider, providerErr := e.storageRegistry.Create(ctx, spec.Storage.Type, rawConfig)
+		if providerErr != nil {
+			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("创建存储客户端失败: %v", providerErr))
+			return "", providerErr
+		}
+		reader, err = provider.Download(ctx, spec.StoragePath)
+	}
+	if err != nil {
+		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("下载备份失败: %v", err))
+		return "", err
+	}
+	if err := writeReaderToLocal(artifactPath, reader); err != nil {
+		e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("写入备份文件失败: %v", err))
+		return "", err
+	}
+
+	// 2.5) 完整性校验：还原前比对下载对象的 SHA-256（与 Master 本地恢复路径一致）。
+	// 拒绝还原损坏或被篡改的备份；早期无 checksum 的备份跳过（向后兼容）。
+	if strings.TrimSpace(spec.Checksum) != "" {
+		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 校验备份完整性（SHA-256）\n")
+		actual, sumErr := computeFileSHA256(artifactPath)
+		if sumErr != nil {
+			msg := fmt.Sprintf("计算校验和失败: %v", sumErr)
+			e.reportRestoreFailure(ctx, restoreRecordID, msg)
+			return "", fmt.Errorf("%s", msg)
+		}
+		if !strings.EqualFold(actual, spec.Checksum) {
+			msg := "备份文件完整性校验失败：SHA-256 不匹配，文件可能已损坏或被篡改"
+			e.reportRestoreFailure(ctx, restoreRecordID, msg)
+			return "", fmt.Errorf("%s（期望 %s，实际 %s）", msg, spec.Checksum, actual)
+		}
+		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 完整性校验通过\n")
+	}
+
+	// 3) 校验后解密，再解压
+	preparedPath := artifactPath
+	if strings.HasSuffix(strings.ToLower(preparedPath), ".enc") {
+		key, err := hex.DecodeString(spec.EncryptionKey)
+		if err == nil {
+			preparedPath, err = backupcrypto.DecryptRecordFile(key, spec.BackupRecordID, preparedPath)
+		}
+		if err != nil {
+			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解密失败: %v", err))
+			return "", err
+		}
+	}
+	if strings.HasSuffix(strings.ToLower(preparedPath), ".gz") {
+		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 解压 gzip 压缩\n")
+		decompressed, err := compress.GunzipFile(preparedPath)
+		if err != nil {
+			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解压失败: %v", err))
+			return "", err
+		}
+		preparedPath = decompressed
+	}
+	if strings.HasSuffix(strings.ToLower(preparedPath), ".zst") {
+		e.appendRestoreLog(ctx, restoreRecordID, "[agent] 解压 zstd 压缩\n")
+		decompressed, err := compress.UnzstdFile(preparedPath)
+		if err != nil {
+			e.reportRestoreFailure(ctx, restoreRecordID, fmt.Sprintf("解压失败: %v", err))
+			return "", err
+		}
+		preparedPath = decompressed
+	}
+
+	return preparedPath, nil
 }

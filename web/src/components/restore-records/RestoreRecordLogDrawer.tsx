@@ -164,6 +164,9 @@ export function RestoreRecordLogDrawer({
               },
               { label: '开始时间', value: formatDateTime(record.startedAt) },
               { label: '完成时间', value: formatDateTime(record.completedAt) },
+              ...(record.restoreTime
+                ? [{ label: '目标恢复时间', value: formatDateTime(record.restoreTime) }]
+                : []),
               { label: '耗时', value: formatDuration(record.durationSeconds) },
               { label: '错误信息', value: record.errorMessage || '-' },
             ]}

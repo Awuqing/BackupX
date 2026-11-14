@@ -167,7 +167,8 @@ func buildBackupTaskSpec(cipher *codec.ConfigCipher, task *model.BackupTask, sta
 	excludePatterns := []string{}
 	if strings.TrimSpace(task.ExcludePatterns) != "" {
 		if err := json.Unmarshal([]byte(task.ExcludePatterns), &excludePatterns); err != nil {
-			return backup.TaskSpec{}, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析排除规则", err)
+			return backup.TaskSpec{
+				MySQLPITR: task.Type == model.BackupTaskTypeMySQL && backup.MySQLPITREnabled(task.ExtraConfig)}, apperror.Internal("BACKUP_TASK_DECODE_FAILED", "无法解析排除规则", err)
 		}
 	}
 	password := ""

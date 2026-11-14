@@ -151,11 +151,11 @@ func (r *GormBackupRecordRepository) ListSuccessfulByTask(ctx context.Context, t
 	return items, nil
 }
 
-// CountDependentDifferentials 统计依赖某全量记录（作为基线）的成功差异备份数量。
+// CountDependentDifferentials 统计成功或执行中的差异/MySQL 日志对全量基线的依赖。
 func (r *GormBackupRecordRepository) CountDependentDifferentials(ctx context.Context, baseID uint) (int64, error) {
 	var count int64
 	err := r.db.WithContext(ctx).Model(&model.BackupRecord{}).
-		Where("base_record_id = ? AND backup_kind = ? AND status = ?", baseID, model.BackupKindDifferential, model.BackupRecordStatusSuccess).
+		Where("base_record_id = ? AND backup_kind IN ? AND status IN ?", baseID, []string{model.BackupKindDifferential, model.BackupKindBinlog}, []string{model.BackupRecordStatusSuccess, model.BackupRecordStatusRunning}).
 		Count(&count).Error
 	return count, err
 }
