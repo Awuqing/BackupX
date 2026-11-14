@@ -22,6 +22,9 @@ type DatabaseSpec struct {
 }
 
 type TaskSpec struct {
+	MySQLPITR         bool
+	MySQLBase         *MySQLCheckpoint
+	RestoreTime       time.Time
 	ID                uint
 	Name              string
 	Type              string
@@ -49,11 +52,12 @@ type TaskSpec struct {
 }
 
 type RunResult struct {
-	ArtifactPath string
-	FileName     string
-	TempDir      string
-	Size         int64
-	StorageKey   string
+	MySQLCheckpoint *MySQLCheckpoint
+	ArtifactPath    string
+	FileName        string
+	TempDir         string
+	Size            int64
+	StorageKey      string
 	// Manifest 为全量备份产出的条目清单，供后续差异备份比对；差异备份运行时为 nil。
 	Manifest *Manifest
 }

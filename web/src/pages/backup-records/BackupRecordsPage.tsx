@@ -154,6 +154,11 @@ export function BackupRecordsPage() {
                 差异
               </Tag>
             )}
+            {record.backupKind === 'binlog' && (
+              <Tag color="cyan" size="small" bordered>
+                MySQL binlog
+              </Tag>
+            )}
             {record.backupKind === 'repository' && (
               <Tag color="blue" size="small" bordered>
                 CDC

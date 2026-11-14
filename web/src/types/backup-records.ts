@@ -27,7 +27,7 @@ export interface BackupRecordSummary {
   startedAt: string
   completedAt?: string
   locked: boolean
-  backupKind: 'full' | 'differential' | 'repository'
+  backupKind: 'full' | 'differential' | 'repository' | 'binlog'
 }
 
 export interface BackupRecordContentEntry {
@@ -55,6 +55,7 @@ export interface StorageUploadResultItem {
 }
 
 export interface BackupRecordDetail extends BackupRecordSummary {
+  mysqlCheckpoint?: { baselineAt: string; capturedAt: string; full: boolean }
   logContent: string
   logEvents?: BackupLogEvent[]
   storageUploadResults?: StorageUploadResultItem[]

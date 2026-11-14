@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"backupx/server/internal/repository"
 	"backupx/server/internal/storage"
 	"backupx/server/internal/storage/codec"
+	backupcrypto "backupx/server/pkg/crypto"
 )
 
 // RestoreService 管理恢复记录生命周期并在集群中路由执行。
@@ -103,6 +105,7 @@ func (s *RestoreService) SetEventDispatcher(dispatcher EventDispatcher) {
 
 // RestoreRecordSummary 列表项。
 type RestoreRecordSummary struct {
+	RestoreTime     *time.Time `json:"restoreTime,omitempty"`
 	ID              uint       `json:"id"`
 	BackupRecordID  uint       `json:"backupRecordId"`
 	TaskID          uint       `json:"taskId"`
@@ -135,7 +138,7 @@ func (s *RestoreService) Start(ctx context.Context, backupRecordID uint, trigger
 // StartSelective 启动恢复。两个可选项均仅适用于本机文件备份：
 //   - selectedPaths 非空时仅恢复选中的文件/目录（及其子项），用于按需（选择性）恢复；
 //   - targetPath 非空时把归档恢复到该绝对目录而非原始源路径父目录（迁移/测试/并排恢复）。
-func (s *RestoreService) StartSelective(ctx context.Context, backupRecordID uint, selectedPaths []string, targetPath string, triggeredBy string) (*RestoreRecordDetail, error) {
+func (s *RestoreService) StartSelective(ctx context.Context, backupRecordID uint, selectedPaths []string, targetPath string, triggeredBy string, restoreTimes ...string) (*RestoreRecordDetail, error) {
 	record, err := s.records.FindByID(ctx, backupRecordID)
 	if err != nil {
 		return nil, apperror.Internal("BACKUP_RECORD_GET_FAILED", "无法获取备份记录", err)
@@ -179,8 +182,32 @@ func (s *RestoreService) StartSelective(ctx context.Context, backupRecordID uint
 		}
 	}
 
+	var restoreTime *time.Time
+	if len(restoreTimes) > 0 && strings.TrimSpace(restoreTimes[0]) != "" {
+		parsed, err := time.Parse(time.RFC3339, strings.TrimSpace(restoreTimes[0]))
+		if err != nil {
+			return nil, apperror.BadRequest("MYSQL_PITR_TIME_INVALID", "恢复时间须为带时区的 RFC3339 格式", err)
+		}
+		parsed = parsed.UTC().Truncate(time.Second)
+		var checkpoint backup.MySQLCheckpoint
+		if task.Type != model.BackupTaskTypeMySQL || record.BackupKind != model.BackupKindBinlog || json.Unmarshal([]byte(record.MySQLCheckpoint), &checkpoint) != nil {
+			return nil, apperror.BadRequest("MYSQL_PITR_TIME_INVALID", "指定时间点恢复需要选择 MySQL binlog 备份", nil)
+		}
+		if err := checkpoint.Validate(); err != nil {
+			return nil, err
+		}
+		if parsed.Before(checkpoint.BaselineAt) || !parsed.Before(checkpoint.CapturedAt) {
+			return nil, apperror.BadRequest("MYSQL_PITR_TIME_INVALID", "恢复时间须处于全量基线完成至本次日志归档截止之间（不含截止秒）", nil)
+		}
+		parsed = parsed.UTC()
+		restoreTime = &parsed
+	}
+	if _, err := s.buildRestoreChain(ctx, record); err != nil {
+		return nil, apperror.BadRequest("RESTORE_CHAIN_INVALID", err.Error(), err)
+	}
 	restore := &model.RestoreRecord{
 		BackupRecordID: backupRecordID,
+		RestoreTime:    restoreTime,
 		TaskID:         record.TaskID,
 		NodeID:         restoreNodeID,
 		TargetPath:     targetPath,
@@ -226,7 +253,7 @@ func (s *RestoreService) StartSelective(ctx context.Context, backupRecordID uint
 
 	// 本地节点：异步执行
 	run := func(runCtx context.Context) {
-		s.executeLocally(runCtx, restore.ID, task, record, selectedPaths, targetPath)
+		s.executeLocally(runCtx, restore.ID, task, record, selectedPaths, targetPath, restoreTime)
 	}
 	if !s.async(run) {
 		message := "服务正在关闭，恢复任务未启动"
@@ -259,7 +286,7 @@ func (s *RestoreService) resolveRemoteNode(ctx context.Context, nodeID uint) *mo
 }
 
 // executeLocally 在 Master 本地执行恢复。
-func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, task *model.BackupTask, backupRecord *model.BackupRecord, selectedPaths []string, targetPath string) {
+func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, task *model.BackupTask, backupRecord *model.BackupRecord, selectedPaths []string, targetPath string, restoreTimes ...*time.Time) {
 	logger := backup.NewExecutionLogger(restoreID, s.logHub)
 	status := model.RestoreRecordStatusFailed
 	errMessage := ""
@@ -322,11 +349,39 @@ func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, tas
 	}
 	defer os.RemoveAll(tempDir)
 
+	if len(restoreTimes) > 0 && restoreTimes[0] != nil {
+		spec.RestoreTime = *restoreTimes[0]
+	}
 	// 恢复链：全量 → [自身]；差异 → [基线全量, 自身]，按序应用（全量铺底，差异覆盖并删除）。
 	chain, chainErr := s.buildRestoreChain(ctx, backupRecord)
 	if chainErr != nil {
 		errMessage = chainErr.Error()
 		logger.Errorf("%v", chainErr)
+		return
+	}
+	if mysqlRunner, ok := runner.(*backup.MySQLRunner); ok {
+		paths := make([]string, 0, len(chain))
+		for i := range chain {
+			artifact, err := s.downloadRestoreArtifact(ctx, &chain[i], tempDir, logger)
+			if err == nil {
+				artifact, err = mysqlRunner.PrepareRestore(ctx, spec, artifact, logger)
+			}
+			if err != nil {
+				errMessage = err.Error()
+				logger.Errorf("MySQL 恢复预检失败：%v", err)
+				return
+			}
+			paths = append(paths, artifact)
+		}
+		for _, artifact := range paths {
+			if err := runner.Restore(ctx, spec, artifact, logger); err != nil {
+				errMessage = err.Error()
+				logger.Errorf("MySQL 恢复失败：%v", err)
+				return
+			}
+		}
+		status = model.RestoreRecordStatusSuccess
+		logger.Infof("MySQL 恢复执行成功")
 		return
 	}
 	logger.Infof("开始执行 %s 恢复（恢复链含 %d 个备份）", spec.Type, len(chain))
@@ -348,43 +403,17 @@ func (s *RestoreService) executeLocally(ctx context.Context, restoreID uint, tas
 // restoreArtifact 下载、完整性校验、解密解压并通过 runner 应用单个备份记录的归档。
 // 每个记录使用独立子目录，避免恢复链中基线/差异的同名归档相互覆盖。
 func (s *RestoreService) restoreArtifact(ctx context.Context, record *model.BackupRecord, spec backup.TaskSpec, runner backup.BackupRunner, parentTempDir string, logger *backup.ExecutionLogger) error {
-	provider, err := s.resolveProvider(ctx, record.StorageTargetID)
-	if err != nil {
-		return fmt.Errorf("创建存储客户端失败：%w", err)
-	}
 	if record.BackupKind == model.BackupKindRepository {
+		provider, err := s.resolveProvider(ctx, record.StorageTargetID)
+		if err != nil {
+			return err
+		}
 		logger.Infof("读取 CDC 仓库快照：%s", record.StoragePath)
-		if err := backup.NewRepositoryStore(s.cipher.Key()).Restore(ctx, provider, record.StoragePath, record.Checksum, spec, logger); err != nil {
-			return fmt.Errorf("恢复 CDC 仓库快照失败：%w", err)
-		}
-		return nil
+		return backup.NewRepositoryStore(s.cipher.Key()).Restore(ctx, provider, record.StoragePath, record.Checksum, spec, logger)
 	}
-	recDir, err := os.MkdirTemp(parentTempDir, fmt.Sprintf("rec-%d-*", record.ID))
+	preparedPath, err := s.downloadRestoreArtifact(ctx, record, parentTempDir, logger)
 	if err != nil {
-		return fmt.Errorf("创建恢复子目录失败：%w", err)
-	}
-	fileName := record.FileName
-	if strings.TrimSpace(fileName) == "" {
-		fileName = filepath.Base(record.StoragePath)
-	}
-	artifactPath := filepath.Join(recDir, filepath.Base(fileName))
-	logger.Infof("开始下载备份文件：%s", record.StoragePath)
-	reader, err := provider.Download(ctx, record.StoragePath)
-	if err != nil {
-		return fmt.Errorf("下载备份文件失败：%w", err)
-	}
-	if err := writeReaderToFile(artifactPath, reader); err != nil {
-		return fmt.Errorf("写入恢复文件失败：%w", err)
-	}
-	// 完整性校验：解密/解压前比对 SHA-256；早期无 checksum 的备份跳过（向后兼容）。
-	if record.Checksum != "" {
-		if err := verifyArtifactChecksum(artifactPath, record.Checksum); err != nil {
-			return fmt.Errorf("完整性校验失败：%w", err)
-		}
-	}
-	preparedPath, err := s.prepareArtifact(artifactPath, logger)
-	if err != nil {
-		return fmt.Errorf("准备恢复文件失败：%w", err)
+		return err
 	}
 	return runner.Restore(ctx, spec, preparedPath, logger)
 }
@@ -392,15 +421,24 @@ func (s *RestoreService) restoreArtifact(ctx context.Context, record *model.Back
 // buildRestoreChain 返回恢复某记录所需、按应用顺序排列的记录链：
 // 全量 → [自身]；差异 → [基线全量, 自身]。基线缺失/不可用时报错，杜绝残缺恢复。
 func (s *RestoreService) buildRestoreChain(ctx context.Context, record *model.BackupRecord) ([]model.BackupRecord, error) {
-	if record.BackupKind != model.BackupKindDifferential || record.BaseRecordID == 0 {
+	if record.BackupKind == model.BackupKindBinlog && record.BaseRecordID == 0 {
+		return nil, fmt.Errorf("MySQL 日志归档缺少全量基线")
+	}
+	if (record.BackupKind != model.BackupKindDifferential && record.BackupKind != model.BackupKindBinlog) || record.BaseRecordID == 0 {
 		return []model.BackupRecord{*record}, nil
 	}
 	base, err := s.records.FindByID(ctx, record.BaseRecordID)
 	if err != nil || base == nil {
 		return nil, fmt.Errorf("差异备份的基线全量 #%d 不存在，无法恢复", record.BaseRecordID)
 	}
-	if base.Status != model.BackupRecordStatusSuccess || strings.TrimSpace(base.StoragePath) == "" {
+	if base.Status != model.BackupRecordStatusSuccess || strings.TrimSpace(base.StoragePath) == "" || base.TaskID != record.TaskID || base.BackupKind != model.BackupKindFull {
 		return nil, fmt.Errorf("差异备份的基线全量 #%d 不可用，无法恢复", record.BaseRecordID)
+	}
+	if record.BackupKind == model.BackupKindBinlog {
+		var full, logs backup.MySQLCheckpoint
+		if json.Unmarshal([]byte(base.MySQLCheckpoint), &full) != nil || json.Unmarshal([]byte(record.MySQLCheckpoint), &logs) != nil || full.Validate() != nil || logs.Validate() != nil || !full.Full || logs.Full || full.ServerUUID != logs.ServerUUID || full.Source != logs.Source || full.StartFile != logs.StartFile || full.StartPosition != logs.StartPosition || !full.BaselineAt.Equal(logs.BaselineAt) || base.NodeID != record.NodeID {
+			return nil, fmt.Errorf("MySQL 全量基线与日志归档不匹配，无法恢复")
+		}
 	}
 	return []model.BackupRecord{*base, *record}, nil
 }
@@ -408,6 +446,9 @@ func (s *RestoreService) buildRestoreChain(ctx context.Context, record *model.Ba
 func backupKindLabel(kind string) string {
 	if kind == model.BackupKindRepository {
 		return "CDC 仓库快照"
+	}
+	if kind == model.BackupKindBinlog {
+		return "MySQL binlog"
 	}
 	if kind == model.BackupKindDifferential {
 		return "差异"
@@ -558,7 +599,18 @@ type RestoreRecordListInput struct {
 // --- Agent 侧调用接口 ---
 
 // AgentRestoreSpec 下发给 Agent 执行恢复的完整规格。
+type AgentRestoreArtifact struct {
+	BackupRecordID uint                     `json:"backupRecordId"`
+	FileName       string                   `json:"fileName"`
+	StoragePath    string                   `json:"storagePath"`
+	Checksum       string                   `json:"checksum"`
+	EncryptionKey  string                   `json:"encryptionKey,omitempty"`
+	Storage        AgentStorageTargetConfig `json:"storage"`
+}
+
 type AgentRestoreSpec struct {
+	RestoreTime     *time.Time               `json:"restoreTime,omitempty"`
+	Artifacts       []AgentRestoreArtifact   `json:"artifacts,omitempty"`
 	RestoreRecordID uint                     `json:"restoreRecordId"`
 	BackupRecordID  uint                     `json:"backupRecordId"`
 	TaskID          uint                     `json:"taskId"`
@@ -574,6 +626,7 @@ type AgentRestoreSpec struct {
 	DBPath          string                   `json:"dbPath,omitempty"`
 	ExtraConfig     string                   `json:"extraConfig,omitempty"`
 	Compression     string                   `json:"compression"`
+	EncryptionKey   string                   `json:"encryptionKey,omitempty"`
 	Encrypt         bool                     `json:"encrypt"`
 	Storage         AgentStorageTargetConfig `json:"storage"`
 	StoragePath     string                   `json:"storagePath"`
@@ -598,7 +651,7 @@ func (s *RestoreService) GetAgentRestoreSpec(ctx context.Context, node *model.No
 	if restore == nil {
 		return nil, apperror.New(404, "RESTORE_RECORD_NOT_FOUND", "恢复记录不存在", nil)
 	}
-	if restore.NodeID != node.ID {
+	if node == nil || restore.NodeID != node.ID || restore.Status != model.RestoreRecordStatusRunning {
 		return nil, apperror.Unauthorized("RESTORE_RECORD_FORBIDDEN", "恢复记录不属于当前节点", nil)
 	}
 	backupRecord, err := s.records.FindByID(ctx, restore.BackupRecordID)
@@ -624,35 +677,42 @@ func (s *RestoreService) GetAgentRestoreSpec(ctx context.Context, node *model.No
 		}
 		dbPassword = string(plain)
 	}
-	// 解密备份时使用的存储目标
-	target, err := s.targets.FindByID(ctx, backupRecord.StorageTargetID)
-	if err != nil {
-		return nil, err
-	}
-	if target == nil {
-		return nil, apperror.BadRequest("BACKUP_STORAGE_TARGET_INVALID", "存储目标不存在", nil)
-	}
 	// 拆开 sourcePaths
 	sourcePaths := []string{}
 	if strings.TrimSpace(task.SourcePaths) != "" {
 		_ = json.Unmarshal([]byte(task.SourcePaths), &sourcePaths)
 	}
-	transferMode := storage.TransferModeDirect
-	if backupRecord.StorageTransferMode == storage.TransferModeMasterRelay {
-		transferMode = storage.TransferModeMasterRelay
+	chain, err := s.buildRestoreChain(ctx, backupRecord)
+	if err != nil {
+		return nil, err
 	}
-	var configRaw []byte
-	if transferMode == storage.TransferModeDirect {
-		configRaw, err = s.cipher.Decrypt(target.ConfigCiphertext)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt storage config: %w", err)
-		}
-		configRaw, err = storage.ConfigForAgent(configRaw)
+	artifacts := make([]AgentRestoreArtifact, 0, len(chain))
+	for _, rec := range chain {
+		itemTarget, err := s.targets.FindByID(ctx, rec.StorageTargetID)
 		if err != nil {
 			return nil, err
 		}
+		if itemTarget == nil {
+			return nil, apperror.BadRequest("BACKUP_STORAGE_TARGET_INVALID", "恢复链存储目标不存在", nil)
+		}
+		mode := storage.TransferModeDirect
+		var cfg []byte
+		if rec.StorageTransferMode == storage.TransferModeMasterRelay {
+			mode = storage.TransferModeMasterRelay
+		} else {
+			cfg, err = s.cipher.Decrypt(itemTarget.ConfigCiphertext)
+			if err != nil {
+				return nil, err
+			}
+			cfg, err = storage.ConfigForAgent(cfg)
+			if err != nil {
+				return nil, err
+			}
+		}
+		artifacts = append(artifacts, AgentRestoreArtifact{BackupRecordID: rec.ID, FileName: rec.FileName, StoragePath: rec.StoragePath, Checksum: rec.Checksum, EncryptionKey: hex.EncodeToString(backupcrypto.RecordKey(s.cipher.Key(), rec.ID)), Storage: AgentStorageTargetConfig{ID: itemTarget.ID, Type: itemTarget.Type, Name: itemTarget.Name, Config: json.RawMessage(cfg), TransferMode: mode}})
 	}
 	return &AgentRestoreSpec{
+		RestoreTime: restore.RestoreTime, Artifacts: artifacts,
 		RestoreRecordID: restore.ID,
 		BackupRecordID:  backupRecord.ID,
 		TaskID:          task.ID,
@@ -668,17 +728,12 @@ func (s *RestoreService) GetAgentRestoreSpec(ctx context.Context, node *model.No
 		DBPath:          task.DBPath,
 		ExtraConfig:     task.ExtraConfig,
 		Compression:     task.Compression,
-		Encrypt:         task.Encrypt,
-		Storage: AgentStorageTargetConfig{
-			ID:           target.ID,
-			Type:         target.Type,
-			Name:         target.Name,
-			Config:       json.RawMessage(configRaw),
-			TransferMode: transferMode,
-		},
-		StoragePath: backupRecord.StoragePath,
-		FileName:    backupRecord.FileName,
-		Checksum:    backupRecord.Checksum,
+		Encrypt:         strings.HasSuffix(strings.ToLower(backupRecord.FileName), ".enc"),
+		EncryptionKey:   hex.EncodeToString(backupcrypto.RecordKey(s.cipher.Key(), backupRecord.ID)),
+		Storage:         artifacts[len(artifacts)-1].Storage,
+		StoragePath:     backupRecord.StoragePath,
+		FileName:        backupRecord.FileName,
+		Checksum:        backupRecord.Checksum,
 	}, nil
 }
 
@@ -689,7 +744,7 @@ type AgentArtifactDownload struct {
 
 // DownloadAgentArtifact opens a Master-local object for authenticated streaming
 // back to the Agent that owns the restore record.
-func (s *RestoreService) DownloadAgentArtifact(ctx context.Context, node *model.Node, restoreID uint) (*AgentArtifactDownload, error) {
+func (s *RestoreService) DownloadAgentArtifact(ctx context.Context, node *model.Node, restoreID uint, recordIDs ...uint) (*AgentArtifactDownload, error) {
 	if node == nil {
 		return nil, apperror.Unauthorized("RESTORE_RECORD_FORBIDDEN", "恢复记录不属于当前节点", nil)
 	}
@@ -712,6 +767,23 @@ func (s *RestoreService) DownloadAgentArtifact(ctx context.Context, node *model.
 	}
 	if record == nil {
 		return nil, apperror.New(404, "BACKUP_RECORD_NOT_FOUND", "源备份记录不存在", nil)
+	}
+	if len(recordIDs) > 0 && recordIDs[0] != record.ID {
+		chain, err := s.buildRestoreChain(ctx, record)
+		if err != nil {
+			return nil, err
+		}
+		var selected *model.BackupRecord
+		for i := range chain {
+			if chain[i].ID == recordIDs[0] {
+				selected = &chain[i]
+				break
+			}
+		}
+		if selected == nil {
+			return nil, apperror.Unauthorized("RESTORE_RECORD_FORBIDDEN", "对象不在本次恢复链中", nil)
+		}
+		record = selected
 	}
 	target, err := s.targets.FindByID(ctx, record.StorageTargetID)
 	if err != nil {
@@ -832,6 +904,7 @@ func (s *RestoreService) getDetail(ctx context.Context, restoreID uint) (*Restor
 
 func toRestoreRecordSummary(item *model.RestoreRecord, nodeName string) RestoreRecordSummary {
 	summary := RestoreRecordSummary{
+		RestoreTime:     item.RestoreTime,
 		ID:              item.ID,
 		BackupRecordID:  item.BackupRecordID,
 		TaskID:          item.TaskID,
@@ -849,4 +922,40 @@ func toRestoreRecordSummary(item *model.RestoreRecord, nodeName string) RestoreR
 		summary.BackupFileName = item.BackupRecord.FileName
 	}
 	return summary
+}
+
+func (s *RestoreService) downloadRestoreArtifact(ctx context.Context, record *model.BackupRecord, parentTempDir string, logger *backup.ExecutionLogger) (string, error) {
+	provider, err := s.resolveProvider(ctx, record.StorageTargetID)
+	if err != nil {
+		return "", err
+	}
+
+	recDir, err := os.MkdirTemp(parentTempDir, fmt.Sprintf("rec-%d-*", record.ID))
+	if err != nil {
+		return "", fmt.Errorf("创建恢复子目录失败：%w", err)
+	}
+	fileName := record.FileName
+	if strings.TrimSpace(fileName) == "" {
+		fileName = filepath.Base(record.StoragePath)
+	}
+	artifactPath := filepath.Join(recDir, filepath.Base(fileName))
+	logger.Infof("开始下载备份文件：%s", record.StoragePath)
+	reader, err := provider.Download(ctx, record.StoragePath)
+	if err != nil {
+		return "", fmt.Errorf("下载备份文件失败：%w", err)
+	}
+	if err := writeReaderToFile(artifactPath, reader); err != nil {
+		return "", fmt.Errorf("写入恢复文件失败：%w", err)
+	}
+	// 完整性校验：解密/解压前比对 SHA-256；早期无 checksum 的备份跳过（向后兼容）。
+	if record.Checksum != "" {
+		if err := verifyArtifactChecksum(artifactPath, record.Checksum); err != nil {
+			return "", fmt.Errorf("完整性校验失败：%w", err)
+		}
+	}
+	preparedPath, err := s.prepareArtifact(artifactPath, logger)
+	if err != nil {
+		return "", fmt.Errorf("准备恢复文件失败：%w", err)
+	}
+	return preparedPath, nil
 }

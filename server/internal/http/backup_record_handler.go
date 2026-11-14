@@ -156,9 +156,13 @@ func (h *BackupRecordHandler) Restore(c *gin.Context) {
 	var body struct {
 		SelectedPaths []string `json:"selectedPaths"`
 		TargetPath    string   `json:"targetPath"`
+		RestoreTime   string   `json:"restoreTime"`
 	}
-	_ = c.ShouldBindJSON(&body)
-	detail, err := h.restoreService.StartSelective(c.Request.Context(), id, body.SelectedPaths, strings.TrimSpace(body.TargetPath), triggeredBy)
+	if err := c.ShouldBindJSON(&body); err != nil && err != io.EOF {
+		response.Error(c, apperror.BadRequest("INVALID_INPUT", "恢复请求格式不合法", err))
+		return
+	}
+	detail, err := h.restoreService.StartSelective(c.Request.Context(), id, body.SelectedPaths, strings.TrimSpace(body.TargetPath), triggeredBy, body.RestoreTime)
 	if err != nil {
 		response.Error(c, err)
 		return

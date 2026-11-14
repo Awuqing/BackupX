@@ -3,6 +3,7 @@ import type { BackupLogEvent } from './backup-records'
 export type RestoreRecordStatus = 'running' | 'success' | 'failed'
 
 export interface RestoreRecordSummary {
+  restoreTime?: string
   id: number
   backupRecordId: number
   taskId: number

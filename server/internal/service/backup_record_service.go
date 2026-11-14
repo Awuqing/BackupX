@@ -43,6 +43,7 @@ type BackupRecordSummary struct {
 }
 
 type BackupRecordDetail struct {
+	MySQLCheckpoint *backup.MySQLCheckpoint `json:"mysqlCheckpoint,omitempty"`
 	BackupRecordSummary
 	LogContent           string                    `json:"logContent"`
 	LogEvents            []backup.LogEvent         `json:"logEvents,omitempty"`
@@ -203,6 +204,12 @@ func toBackupRecordSummary(item *model.BackupRecord) BackupRecordSummary {
 
 func toBackupRecordDetail(item *model.BackupRecord, logHub *backup.LogHub) *BackupRecordDetail {
 	detail := &BackupRecordDetail{BackupRecordSummary: toBackupRecordSummary(item), LogContent: item.LogContent}
+	if item.MySQLCheckpoint != "" {
+		var checkpoint backup.MySQLCheckpoint
+		if err := json.Unmarshal([]byte(item.MySQLCheckpoint), &checkpoint); err == nil {
+			detail.MySQLCheckpoint = &checkpoint
+		}
+	}
 	if item.Status == "running" && logHub != nil {
 		events := logHub.Snapshot(item.ID)
 		detail.LogEvents = events

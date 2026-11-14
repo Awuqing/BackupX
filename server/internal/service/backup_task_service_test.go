@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"backupx/server/internal/apperror"
@@ -61,7 +60,7 @@ func newBackupTaskServiceForTest(t *testing.T) (*BackupTaskService, repository.S
 	return service, targets, tasks
 }
 
-func TestBackupTaskServiceRejectsEncryptedRemoteTasks(t *testing.T) {
+func TestBackupTaskServiceAcceptsEncryptedRemoteTasks(t *testing.T) {
 	ctx := context.Background()
 	service, targets, _ := newBackupTaskServiceForTest(t)
 	service.SetNodeRepository(&nodeRepoStub{nodes: []model.Node{
@@ -84,8 +83,8 @@ func TestBackupTaskServiceRejectsEncryptedRemoteTasks(t *testing.T) {
 		MaxBackups:      10,
 		Encrypt:         true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "远程节点暂不支持加密备份") {
-		t.Fatalf("expected encrypted node-pool task to be rejected, got %v", err)
+	if err != nil {
+		t.Fatalf("expected encrypted node-pool task to be accepted, got %v", err)
 	}
 
 	created, err := service.Create(ctx, BackupTaskUpsertInput{
@@ -132,8 +131,8 @@ func TestBackupTaskServiceRejectsEncryptedRemoteTasks(t *testing.T) {
 		MaxBackups:      10,
 		Encrypt:         true,
 	})
-	if err == nil || !strings.Contains(err.Error(), "远程节点暂不支持加密备份") {
-		t.Fatalf("expected encrypted fixed-node update to be rejected, got %v", err)
+	if err != nil {
+		t.Fatalf("expected encrypted fixed-node update to be accepted, got %v", err)
 	}
 }
 
@@ -311,6 +310,35 @@ func TestSQLServerTaskValidation(t *testing.T) {
 		change(&invalid)
 		if err := validateTaskTypeSpecificFields(invalid, true); err == nil {
 			t.Fatalf("accepted invalid SQL Server configuration: %+v", invalid)
+		}
+	}
+}
+
+func TestMySQLPITRTaskValidation(t *testing.T) {
+	ctx := context.Background()
+	svc, targets, _ := newBackupTaskServiceForTest(t)
+	if err := targets.Create(ctx, &model.StorageTarget{Name: "local", Type: "local_disk", Enabled: true, ConfigCiphertext: "ciphertext", ConfigVersion: 1, LastTestStatus: "unknown"}); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		db     string
+		pool   string
+		verify bool
+		extra  map[string]any
+		valid  bool
+	}{
+		{name: "valid", db: "*", extra: map[string]any{"mysqlPitr": true, "fullIntervalHours": float64(24)}, valid: true},
+		{name: "one-db", db: "app", extra: map[string]any{"mysqlPitr": true}},
+		{name: "node-pool", db: "*", pool: "db", extra: map[string]any{"mysqlPitr": true}},
+		{name: "auto-verify", db: "*", verify: true, extra: map[string]any{"mysqlPitr": true}},
+		{name: "invalid-toggle", db: "*", extra: map[string]any{"mysqlPitr": "true"}},
+		{name: "fractional-interval", db: "*", extra: map[string]any{"mysqlPitr": true, "fullIntervalHours": 1.5}},
+	}
+	for _, tc := range cases {
+		_, err := svc.Create(ctx, BackupTaskUpsertInput{Name: tc.name, Type: "mysql", Enabled: true, DBHost: "db", DBPort: 3306, DBUser: "backup", DBPassword: "secret", DBName: tc.db, StorageTargetID: 1, NodePoolTag: tc.pool, VerifyEnabled: tc.verify, ExtraConfig: tc.extra, Compression: "gzip"})
+		if (err == nil) != tc.valid {
+			t.Fatalf("%s: valid=%v err=%v", tc.name, tc.valid, err)
 		}
 	}
 }

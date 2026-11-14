@@ -11,6 +11,7 @@ const (
 )
 
 type RestoreRecord struct {
+	RestoreTime    *time.Time   `gorm:"column:restore_time" json:"restoreTime,omitempty"`
 	ID             uint         `gorm:"primaryKey" json:"id"`
 	BackupRecordID uint         `gorm:"column:backup_record_id;index;not null" json:"backupRecordId"`
 	BackupRecord   BackupRecord `json:"backupRecord,omitempty"`

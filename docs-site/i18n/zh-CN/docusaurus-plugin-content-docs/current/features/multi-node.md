@@ -222,6 +222,6 @@ backupx agent --help
 ## 已知限制
 
 - Master 使用内置 SQLite，只支持单活。
-- 加密备份仅支持 Master 本机执行，因为 Agent 不持有 Master 加密密钥。
+- 远程加密备份需同时升级 Master 与 Agent。Agent 只获取当前备份记录的派生密钥，Master 主密钥不下发。新远程归档可在获授权的恢复 Agent 或 Master 解密；旧版 Master BXENC1 加密归档仍需在 Master 恢复。请备份 Master 配置加密密钥，丢失或更换会导致旧加密备份不可读。Agent 通信应使用 HTTPS。
 - 远程目录浏览是同步队列 RPC，默认超时 15 秒。
 - Agent 领取后长期不更新的命令会由 Master 超时监控处理。

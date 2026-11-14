@@ -1,7 +1,9 @@
 package retention
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"backupx/server/internal/model"
 )
@@ -51,5 +53,39 @@ func TestProtectDifferentialBasesNoDiffsPassThrough(t *testing.T) {
 	got := protectDifferentialBases(all, candidates)
 	if len(got) != 1 || got[0].ID != 1 {
 		t.Fatalf("no diffs should pass through unchanged, got %v", retentionRecIDs(got))
+	}
+}
+
+func TestProtectMySQLBinlogBaseline(t *testing.T) {
+	all := []model.BackupRecord{{ID: 1, BackupKind: model.BackupKindFull}, {ID: 2, BackupKind: model.BackupKindBinlog, BaseRecordID: 1}}
+	if got := protectDifferentialBases(all, all[:1]); len(got) != 0 {
+		t.Fatal("deleted live binlog baseline")
+	}
+	if got := protectDifferentialBases(all, all); len(got) != 2 {
+		t.Fatal("expired chain not reclaimable")
+	}
+}
+
+func TestFailedBinlogDeletionKeepsBaseline(t *testing.T) {
+	now := time.Now().UTC()
+	old := now.Add(-72 * time.Hour)
+	repo := &fakeRecordRepository{records: []model.BackupRecord{
+		{ID: 3, BackupKind: model.BackupKindFull, StorageTargetID: 1, StoragePath: "new", CompletedAt: &now},
+		{ID: 2, BackupKind: model.BackupKindBinlog, BaseRecordID: 1, StorageTargetID: 1, StoragePath: "logs", CompletedAt: &old},
+		{ID: 1, BackupKind: model.BackupKindFull, StorageTargetID: 1, StoragePath: "full", CompletedAt: &old},
+	}}
+	provider := &fakeProvider{failKey: "logs"}
+	if _, err := NewService(repo).Cleanup(context.Background(), &model.BackupTask{ID: 1, MaxBackups: 1}, provider); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range repo.deleted {
+		if id == 1 {
+			t.Fatal("deleted full baseline after dependent cleanup failure")
+		}
+	}
+	for _, key := range provider.deleted {
+		if key == "full" {
+			t.Fatal("deleted baseline object")
+		}
 	}
 }

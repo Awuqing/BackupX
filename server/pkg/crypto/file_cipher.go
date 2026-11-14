@@ -70,6 +70,24 @@ func EncryptFile(key []byte, sourcePath string) (string, error) {
 }
 
 func DecryptFile(key []byte, sourcePath string) (string, error) {
+	probe, err := os.Open(sourcePath)
+	if err != nil {
+		return "", err
+	}
+	probeHeader := make([]byte, len(recordFileMagic)+8)
+	_, readErr := io.ReadFull(probe, probeHeader)
+	closeErr := probe.Close()
+	if closeErr != nil {
+		return "", closeErr
+	}
+	if readErr == nil && string(probeHeader[:len(recordFileMagic)]) == recordFileMagic {
+		id := binary.BigEndian.Uint64(probeHeader[len(recordFileMagic):])
+		if uint64(uint(id)) != id {
+			return "", fmt.Errorf("invalid encrypted record ID")
+		}
+		return DecryptRecordFile(RecordKey(key, uint(id)), uint(id), sourcePath)
+	}
+
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", fmt.Errorf("create cipher: %w", err)

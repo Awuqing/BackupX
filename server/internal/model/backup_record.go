@@ -11,12 +11,14 @@ const (
 const (
 	// BackupKindFull 全量归档；BackupKindDifferential 差异归档；
 	// BackupKindRepository 为可独立恢复的 CDC 内容寻址快照。
+	BackupKindBinlog       = "binlog"
 	BackupKindFull         = "full"
 	BackupKindDifferential = "differential"
 	BackupKindRepository   = "repository"
 )
 
 type BackupRecord struct {
+	MySQLCheckpoint string        `gorm:"column:mysql_checkpoint;type:text" json:"-"`
 	ID              uint          `gorm:"primaryKey" json:"id"`
 	TaskID          uint          `gorm:"column:task_id;index;not null" json:"taskId"`
 	Task            BackupTask    `json:"task,omitempty"`
@@ -37,9 +39,9 @@ type BackupRecord struct {
 	// Locked 保留锁定（法律保留）：为 true 时该备份不参与保留期/数量自动清理，
 	// 且禁止手动删除，直到显式解锁。用于保护合规快照、迁移前基线等关键备份。
 	Locked bool `gorm:"column:locked;not null;default:false;index" json:"locked"`
-	// BackupKind 备份类型：full（全量）/ differential（差异）/ repository（CDC 快照）。
+	// BackupKind 备份类型：full / differential / repository / binlog（MySQL 日志归档）。
 	BackupKind string `gorm:"column:backup_kind;size:16;not null;default:'full';index" json:"backupKind"`
-	// BaseRecordID 差异备份所基于的全量备份记录 ID（全量记录为 0）。
+	// BaseRecordID 差异或 MySQL 日志备份依赖的全量记录 ID（全量记录为 0）。
 	BaseRecordID uint `gorm:"column:base_record_id;index;not null;default:0" json:"baseRecordId"`
 	// Manifest 全量备份的条目清单（JSON），供后续差异备份比对；差异记录为空。
 	Manifest     string     `gorm:"column:manifest;type:text" json:"-"`

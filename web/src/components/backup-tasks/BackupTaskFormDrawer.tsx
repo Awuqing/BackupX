@@ -737,6 +737,43 @@ export function BackupTaskFormDrawer({
             }
           />
         </div>
+        {draft.type === 'mysql' && (
+          <div>
+            <Typography.Text>MySQL 日志增量 / 指定时间点恢复（PITR）</Typography.Text>
+            <Switch
+              checked={draft.extraConfig?.mysqlPitr === true}
+              onChange={(mysqlPitr) =>
+                updateDraft({
+                  dbName: mysqlPitr ? '*' : '',
+                  nodePoolTag: mysqlPitr ? '' : draft.nodePoolTag,
+                  verifyEnabled: mysqlPitr ? false : draft.verifyEnabled,
+                  extraConfig: { ...draft.extraConfig, mysqlPitr, fullIntervalHours: 24 },
+                })
+              }
+            />
+            {draft.extraConfig?.mysqlPitr === true && (
+              <Space direction="vertical" style={{ width: '100%', marginTop: 8 }}>
+                <Typography.Text type="secondary">
+                  备份整个 MySQL 实例（数据库名称为 *）。周期性创建全量基线，其间归档基线以来的
+                  binlog；恢复自动应用基线与日志。 需要 MySQL 8.0+ 客户端工具、开启 binlog
+                  和复制读取权限；仅保证 InnoDB，备份期间避免 DDL。归档间隔由任务计划决定。
+                </Typography.Text>
+                <InputNumber
+                  prefix="全量间隔（小时）"
+                  min={1}
+                  max={720}
+                  precision={0}
+                  value={Number(draft.extraConfig.fullIntervalHours ?? 24)}
+                  onChange={(fullIntervalHours) =>
+                    updateDraft({
+                      extraConfig: { ...draft.extraConfig, fullIntervalHours },
+                    })
+                  }
+                />
+              </Space>
+            )}
+          </div>
+        )}
         {isFileBackupTask(draft.type) && (
           <div>
             <Typography.Text>备份模式</Typography.Text>

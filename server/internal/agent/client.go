@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"backupx/server/internal/backup"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -150,22 +151,26 @@ func (c *MasterClient) SubmitCommandResult(ctx context.Context, cmdID uint, succ
 
 // TaskSpec 与 service.AgentTaskSpec 对齐
 type TaskSpec struct {
-	TaskID          uint                  `json:"taskId"`
-	Name            string                `json:"name"`
-	Type            string                `json:"type"`
-	SourcePath      string                `json:"sourcePath"`
-	SourcePaths     string                `json:"sourcePaths"`
-	ExcludePatterns string                `json:"excludePatterns"`
-	DBHost          string                `json:"dbHost"`
-	DBPort          int                   `json:"dbPort"`
-	DBUser          string                `json:"dbUser"`
-	DBPassword      string                `json:"dbPassword"`
-	DBName          string                `json:"dbName"`
-	DBPath          string                `json:"dbPath"`
-	ExtraConfig     string                `json:"extraConfig"`
-	Compression     string                `json:"compression"`
-	Encrypt         bool                  `json:"encrypt"`
-	StorageTargets  []StorageTargetConfig `json:"storageTargets"`
+	MySQLPITR       bool                    `json:"mysqlPitr"`
+	MySQLBase       *backup.MySQLCheckpoint `json:"mysqlBase,omitempty"`
+	BaseRecordID    uint                    `json:"baseRecordId,omitempty"`
+	TaskID          uint                    `json:"taskId"`
+	Name            string                  `json:"name"`
+	Type            string                  `json:"type"`
+	SourcePath      string                  `json:"sourcePath"`
+	SourcePaths     string                  `json:"sourcePaths"`
+	ExcludePatterns string                  `json:"excludePatterns"`
+	DBHost          string                  `json:"dbHost"`
+	DBPort          int                     `json:"dbPort"`
+	DBUser          string                  `json:"dbUser"`
+	DBPassword      string                  `json:"dbPassword"`
+	DBName          string                  `json:"dbName"`
+	DBPath          string                  `json:"dbPath"`
+	ExtraConfig     string                  `json:"extraConfig"`
+	Compression     string                  `json:"compression"`
+	EncryptionKey   string                  `json:"encryptionKey,omitempty"`
+	Encrypt         bool                    `json:"encrypt"`
+	StorageTargets  []StorageTargetConfig   `json:"storageTargets"`
 }
 
 // StorageTargetConfig 与 service.AgentStorageTargetConfig 对齐
@@ -178,9 +183,12 @@ type StorageTargetConfig struct {
 }
 
 // GetTaskSpec 拉取任务规格
-func (c *MasterClient) GetTaskSpec(ctx context.Context, taskID uint) (*TaskSpec, error) {
+func (c *MasterClient) GetTaskSpec(ctx context.Context, taskID uint, recordIDs ...uint) (*TaskSpec, error) {
 	var spec TaskSpec
 	path := fmt.Sprintf("/api/agent/tasks/%d", taskID)
+	if len(recordIDs) > 0 {
+		path += fmt.Sprintf("?recordId=%d", recordIDs[0])
+	}
 	if err := c.do(ctx, http.MethodGet, path, nil, &spec); err != nil {
 		return nil, err
 	}
@@ -189,16 +197,18 @@ func (c *MasterClient) GetTaskSpec(ctx context.Context, taskID uint) (*TaskSpec,
 
 // RecordUpdate 与 service.AgentRecordUpdate 对齐
 type RecordUpdate struct {
-	Status               string              `json:"status,omitempty"`
-	FileName             string              `json:"fileName,omitempty"`
-	FileSize             int64               `json:"fileSize,omitempty"`
-	Checksum             string              `json:"checksum,omitempty"`
-	StoragePath          string              `json:"storagePath,omitempty"`
-	StorageTargetID      uint                `json:"storageTargetId,omitempty"`
-	StorageTransferMode  string              `json:"storageTransferMode,omitempty"`
-	StorageUploadResults []StorageResultItem `json:"storageUploadResults,omitempty"`
-	ErrorMessage         string              `json:"errorMessage,omitempty"`
-	LogAppend            string              `json:"logAppend,omitempty"`
+	MySQLCheckpoint      *backup.MySQLCheckpoint `json:"mysqlCheckpoint,omitempty"`
+	BaseRecordID         uint                    `json:"baseRecordId,omitempty"`
+	Status               string                  `json:"status,omitempty"`
+	FileName             string                  `json:"fileName,omitempty"`
+	FileSize             int64                   `json:"fileSize,omitempty"`
+	Checksum             string                  `json:"checksum,omitempty"`
+	StoragePath          string                  `json:"storagePath,omitempty"`
+	StorageTargetID      uint                    `json:"storageTargetId,omitempty"`
+	StorageTransferMode  string                  `json:"storageTransferMode,omitempty"`
+	StorageUploadResults []StorageResultItem     `json:"storageUploadResults,omitempty"`
+	ErrorMessage         string                  `json:"errorMessage,omitempty"`
+	LogAppend            string                  `json:"logAppend,omitempty"`
 }
 
 type StorageResultItem struct {
@@ -251,7 +261,18 @@ func (c *MasterClient) UploadArtifact(ctx context.Context, recordID, targetID ui
 }
 
 // RestoreSpec 与 service.AgentRestoreSpec 对齐
+type RestoreArtifact struct {
+	BackupRecordID uint                `json:"backupRecordId"`
+	FileName       string              `json:"fileName"`
+	StoragePath    string              `json:"storagePath"`
+	Checksum       string              `json:"checksum"`
+	EncryptionKey  string              `json:"encryptionKey,omitempty"`
+	Storage        StorageTargetConfig `json:"storage"`
+}
+
 type RestoreSpec struct {
+	RestoreTime     *time.Time          `json:"restoreTime,omitempty"`
+	Artifacts       []RestoreArtifact   `json:"artifacts,omitempty"`
 	RestoreRecordID uint                `json:"restoreRecordId"`
 	BackupRecordID  uint                `json:"backupRecordId"`
 	TaskID          uint                `json:"taskId"`
@@ -267,6 +288,7 @@ type RestoreSpec struct {
 	DBPath          string              `json:"dbPath,omitempty"`
 	ExtraConfig     string              `json:"extraConfig,omitempty"`
 	Compression     string              `json:"compression"`
+	EncryptionKey   string              `json:"encryptionKey,omitempty"`
 	Encrypt         bool                `json:"encrypt"`
 	Storage         StorageTargetConfig `json:"storage"`
 	StoragePath     string              `json:"storagePath"`
@@ -291,8 +313,11 @@ func (c *MasterClient) GetRestoreSpec(ctx context.Context, restoreRecordID uint)
 	return &spec, nil
 }
 
-func (c *MasterClient) DownloadRestoreArtifact(ctx context.Context, restoreRecordID uint) (io.ReadCloser, error) {
+func (c *MasterClient) DownloadRestoreArtifact(ctx context.Context, restoreRecordID uint, recordIDs ...uint) (io.ReadCloser, error) {
 	path := fmt.Sprintf("/api/agent/restores/%d/artifact", restoreRecordID)
+	if len(recordIDs) > 0 {
+		path += fmt.Sprintf("?recordId=%d", recordIDs[0])
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
 	if err != nil {
 		return nil, err

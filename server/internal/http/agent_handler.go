@@ -114,6 +114,7 @@ func (h *AgentHandler) SubmitCommandResult(c *gin.Context) {
 
 // GetTaskSpec Agent 拉取任务规格（含解密后的存储配置）。
 func (h *AgentHandler) GetTaskSpec(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	node, err := h.agentService.AuthenticatedNode(c.Request.Context(), extractToken(c))
 	if err != nil {
 		response.Error(c, err)
@@ -124,7 +125,16 @@ func (h *AgentHandler) GetTaskSpec(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	spec, err := h.agentService.GetTaskSpec(c.Request.Context(), node, uint(id))
+	var recordIDs []uint
+	if value := c.Query("recordId"); value != "" {
+		recordID, parseErr := strconv.ParseUint(value, 10, 32)
+		if parseErr != nil || recordID == 0 {
+			c.JSON(stdhttp.StatusBadRequest, gin.H{"code": "INVALID_INPUT", "message": "无效的备份记录 ID"})
+			return
+		}
+		recordIDs = []uint{uint(recordID)}
+	}
+	spec, err := h.agentService.GetTaskSpec(c.Request.Context(), node, uint(id), recordIDs...)
 	if err != nil {
 		response.Error(c, err)
 		return
@@ -196,6 +206,7 @@ func (h *AgentHandler) UploadArtifact(c *gin.Context) {
 
 // GetRestoreSpec Agent 拉取恢复规格。
 func (h *AgentHandler) GetRestoreSpec(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
 	if h.restoreService == nil {
 		c.JSON(stdhttp.StatusServiceUnavailable, gin.H{"code": "RESTORE_SERVICE_DISABLED", "message": "restore service is not enabled"})
 		return
@@ -263,7 +274,16 @@ func (h *AgentHandler) DownloadRestoreArtifact(c *gin.Context) {
 		response.Error(c, err)
 		return
 	}
-	artifact, err := h.restoreService.DownloadAgentArtifact(c.Request.Context(), node, uint(restoreID))
+	var recordIDs []uint
+	if value := c.Query("recordId"); value != "" {
+		id, err := strconv.ParseUint(value, 10, 32)
+		if err != nil || id == 0 {
+			c.JSON(stdhttp.StatusBadRequest, gin.H{"code": "INVALID_INPUT", "message": "无效的备份记录 ID"})
+			return
+		}
+		recordIDs = []uint{uint(id)}
+	}
+	artifact, err := h.restoreService.DownloadAgentArtifact(c.Request.Context(), node, uint(restoreID), recordIDs...)
 	if err != nil {
 		response.Error(c, err)
 		return
