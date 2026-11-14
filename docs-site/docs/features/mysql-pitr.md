@@ -19,6 +19,8 @@ This is logical full backup plus binlog archiving, not XtraBackup or MariaBackup
 - Keep source binlogs longer than the full-backup interval, archive interval and expected outage combined. BackupX does not change source log retention or purge logs. Missing logs, numbering gaps and changed server identity fail the archive. After correcting retention, wait for the next periodic full dump or create a new PITR task.
 - Compression, multiple storage targets, retention and encryption use the normal task controls. Remote encryption requires upgrading both Master and Agent. Protect Agent-to-MySQL connections with a trusted network or database TLS tunnel.
 
+The default Alpine Docker image supplies the MariaDB-compatible `mysql-client` package, not Oracle MySQL clients. For PITR, select a fixed Agent with Oracle MySQL 8.0.26+ clients installed, or supply a custom execution image with those tools. The default image's existing full-dump mode is unchanged. See the [Alpine package definition](https://pkgs.alpinelinux.org/package/v3.24/main/x86/mysql-client).
+
 ## Restore
 
 Open a successful **MySQL binlog** record and choose Restore. Enter an optional RFC3339 timestamp with a time zone, such as `2026-11-14T12:30:00+08:00`. It must fall between baseline completion and the archive cutoff, excluding the cutoff second. Leave it empty to restore to the captured binary log position.
